@@ -1,0 +1,118 @@
+# A Github Actions Workflow for Rust project
+#
+# This workflow runs whenever a PR is opened or updated, or a commit is pushed to main. It runs
+# several checks:
+# - fmt: checks that the code is formatted according to rustfmt
+# - clippy: checks that the code does not contain any clippy warnings
+# - msrv: checks that the msrv is correct.
+# - minimal-versions: checks that the code works with the minimal versions of dependencies.
+#
+# ref:
+# - https://github.com/jonhoo/rust-ci-conf
+# - https://github.com/tokio-rs/tokio
+
+name: check
+
+permissions:
+  contents: read
+
+# This configuration allows maintainers of this repo to create a branch and pull request based on
+# the new branch. Restricting the push trigger to the main branch ensures that the PR only gets
+# built once.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR. Ensures that
+# we don't waste CI time, and returns results quicker.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  rust_nightly: nightly-2026-01-30
+  rust_clippy: '1.93'
+  rust_min: '1.66.1'
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --check --all
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: ${{ env.rust_clippy }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust ${{ env.rust_nightly }}
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: ${{ env.rust_nightly }}
+      - name: Install Rust ${{ env.rust_min }}
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: ${{ env.rust_min }}
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check
+        run: |
+          # Generate lock file with mimimal versions and check the MSRV
+          cargo +nightly update -Z minimal-versions
+          cargo +${{ env.rust_min }} check --locked
+
+  minimal-versions:
+    name: minimal-versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust ${{ env.rust_nightly }}
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: ${{ env.rust_nightly }}
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2.67.17
+        with:
+          tool: cargo-hack
+      - uses: Swatinem/rust-cache@v2
+      - name: check -Z minimal-versions
+        run: |
+          # Remove dev-dependencies from Cargo.toml to prevent the next `cargo update` from
+          # determining minimal versions based on dev-dependencies.
+          cargo hack --remove-dev-deps
+          # Update Cargo.lock to minimal version dependencies.
+          cargo update -Z minimal-versions
+          cargo hack --locked --feature-powerset check

@@ -1,0 +1,80 @@
+# A Github Actions Workflow for Rust project
+#
+# This is the main CI workflow that runs the test suite on all pushes to main and all pull requests.
+# It runs the following jobs:
+# - required: runs the test suite on ubuntu
+# - coverage: runs the test suite and collects coverage information via llvm-cov then sends the
+#   result to codeconv.io
+#
+# ref:
+# - https://github.com/jonhoo/rust-ci-conf
+
+name: test
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  required:
+    name: required
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: stable
+      - name: cargo generate-lockfile
+        # enable this ci template to run regardless of whether the lockfile is checked in or not
+        if: hashFiles('Cargo.lock') == ''
+        run: cargo generate-lockfile
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --locked
+        run: cargo test --locked --all-features --all-targets
+      - name: cargo test --doc
+        run: cargo test --locked --all-features --doc
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - name: cargo install cargo-llvm-cov
+        uses: taiki-e/install-action@v2.67.17
+        with:
+          tool: cargo-llvm-cov
+      - name: cargo generate-lockfile
+        if: hashFiles('Cargo.lock') == ''
+        run: cargo generate-lockfile
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo llvm-cov
+        run: cargo llvm-cov --locked --all-features --lcov --output-path lcov.info
+      - name: Record Rust version
+        run: echo "RUST=$(rustc --version)" >> "$GITHUB_ENV"
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v5.5.2
+        with:
+          disable_search: true
+          env_vars: OS,RUST
+          fail_ci_if_error: true
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: false

@@ -1,0 +1,33 @@
+[package]
+name = "syn-sem"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "An experimental semantic analyzer for a subset of Rust"
+readme = "README.md"
+repository = "https://github.com/ecoricemon/naga-rs"
+license = "Apache-2.0 OR MIT"
+keywords = ["syn", "semantic"]
+
+[dependencies]
+syn-locator = { version = "0.1.7", features = ["find"] }
+logic-eval = "0.1.5"
+logic-eval-util = "0.1.5"
+any-intern = "0.1.4"
+my-utils = "0.1.1"
+syn = { version = "2.0.106", features = ["extra-traits"] }
+proc-macro2 = "1.0.91"
+quote = "1.0.35"
+smallvec = "1.15.1"
+parking_lot = "0.10.2"
+const_format = "0.2.35"
+log = "0.4.28"
+hashlink = "0.11.0"
+indexmap = "2.11.4"
+fxhash = "0.2.1"
+once_cell = "1.21.3"
+bitflags = "2.11.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+env_logger = "0.10.2"
