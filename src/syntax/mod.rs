@@ -3,7 +3,7 @@ pub(crate) mod file;
 
 use crate::Map;
 use common::{InsertRelation, ParentFinder, SynId};
-use file::SmFile;
+use file::File;
 use std::{
     any::{Any, TypeId},
     borrow::Borrow,
@@ -17,7 +17,7 @@ pub struct SyntaxTree {
     /// Mapping between a file path and AST of a file.
     ///
     /// Syntax tree will never change after it is constructed.
-    files: Map<PathBuf, Pin<Box<SmFile>>>,
+    files: Map<PathBuf, Pin<Box<File>>>,
 
     /// Mapping between a file path and AST of an impl block.
     ///
@@ -48,7 +48,7 @@ impl SyntaxTree {
         self.files.contains_key(path)
     }
 
-    pub(crate) fn get_file<Q>(&self, path: &Q) -> Option<&SmFile>
+    pub(crate) fn get_file<Q>(&self, path: &Q) -> Option<&File>
     where
         PathBuf: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -56,7 +56,7 @@ impl SyntaxTree {
         self.files.get(path).map(|pinned| &**pinned)
     }
 
-    pub(crate) fn insert_file(&mut self, path: PathBuf, file: Pin<Box<SmFile>>) {
+    pub(crate) fn insert_file(&mut self, path: PathBuf, file: Pin<Box<File>>) {
         file.insert_relation(&mut self.parent_finder);
         self.files.insert(path, file);
     }

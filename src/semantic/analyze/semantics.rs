@@ -64,6 +64,15 @@ impl<'gcx> Analyzer<'gcx> {
         self.files.insert_virtual_file(path.into(), code.into())
     }
 
+    pub fn add_virtual_item<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        item: &syn::Item,
+    ) -> Option<Arc<str>> {
+        let code = quote::quote!(#item).to_string();
+        self.add_virtual_file(path, code)
+    }
+
     pub fn set_known_library<N, P>(&mut self, name: N, path: P) -> Result<()>
     where
         N: Into<Box<str>>,
@@ -492,14 +501,11 @@ mod tests {
             let ptree = &sem.ptree;
             let crate_ = ptree.crate_name();
 
-            let b = pitem!(ptree, "{crate_}::mod::b");
-            assert_eq!(b.as_use().unwrap().dst, pid!(ptree, "{crate_}::mod::a::b"));
+            let b = pitem!(ptree, "{crate_}::b");
+            assert_eq!(b.as_use().unwrap().dst, pid!(ptree, "{crate_}::a::b"));
 
-            let c = pitem!(ptree, "{crate_}::mod::C");
-            assert_eq!(
-                c.as_use().unwrap().dst,
-                pid!(ptree, "{crate_}::mod::a::b::C")
-            );
+            let c = pitem!(ptree, "{crate_}::C");
+            assert_eq!(c.as_use().unwrap().dst, pid!(ptree, "{crate_}::a::b::C"));
         }
 
         #[test]
@@ -531,9 +537,9 @@ mod tests {
             let ptree = &sem.ptree;
             let crate_ = ptree.crate_name();
 
-            let node_a = pnode!(ptree, "{crate_}::mod::a::A");
-            let node_b = pnode!(ptree, "{crate_}::mod::b::B");
-            let node_c = pnode!(ptree, "{crate_}::mod::c::C");
+            let node_a = pnode!(ptree, "{crate_}::a::A");
+            let node_b = pnode!(ptree, "{crate_}::b::B");
+            let node_c = pnode!(ptree, "{crate_}::c::C");
 
             assert_eq!(ptree.node(node_a).iter().count(), 1);
             assert_eq!(ptree.node(node_b).iter().count(), 1);
@@ -556,20 +562,20 @@ mod tests {
                 assert_eq!(value.as_use().unwrap().dst, expected_dst);
             };
 
-            test("mod::a::B", pid_b);
-            test("mod::a::C", pid_c);
-            test("mod::b::A", pid_a);
-            test("mod::b::C", pid_c);
-            test("mod::c::A", pid_a);
-            test("mod::c::B", pid_b);
+            test("a::B", pid_b);
+            test("a::C", pid_c);
+            test("b::A", pid_a);
+            test("b::C", pid_c);
+            test("c::A", pid_a);
+            test("c::B", pid_b);
 
             let root = PubPathTree::ROOT;
-            assert!(ptree.search(root, "crate::mod::a::BB").is_none());
-            assert!(ptree.search(root, "crate::mod::a::CC").is_none());
-            assert!(ptree.search(root, "crate::mod::b::AA").is_none());
-            assert!(ptree.search(root, "crate::mod::b::CC").is_none());
-            assert!(ptree.search(root, "crate::mod::c::AA").is_none());
-            assert!(ptree.search(root, "crate::mod::c::BB").is_none());
+            assert!(ptree.search(root, "crate::a::BB").is_none());
+            assert!(ptree.search(root, "crate::a::CC").is_none());
+            assert!(ptree.search(root, "crate::b::AA").is_none());
+            assert!(ptree.search(root, "crate::b::CC").is_none());
+            assert!(ptree.search(root, "crate::c::AA").is_none());
+            assert!(ptree.search(root, "crate::c::BB").is_none());
         }
 
         #[test]
@@ -599,9 +605,9 @@ mod tests {
             let ptree = &sem.ptree;
             let crate_ = ptree.crate_name();
 
-            let vis_node = pnode!(ptree, "{crate_}::mod");
-            let node_a_x = pnode!(ptree, "{crate_}::mod::a::x");
-            let node_b_x = pnode!(ptree, "{crate_}::mod::b::x");
+            let vis_node = pnode!(ptree, "{crate_}");
+            let node_a_x = pnode!(ptree, "{crate_}::a::x");
+            let node_b_x = pnode!(ptree, "{crate_}::b::x");
 
             let mut expected = vec![
                 (NodeIndex(0), node_a_x.to_path_id(0)),
@@ -611,7 +617,7 @@ mod tests {
             ];
             expected.sort_unstable();
 
-            let node_x = pnode!(ptree, "{crate_}::mod::x");
+            let node_x = pnode!(ptree, "{crate_}::x");
             let mut use_values = ptree
                 .node(node_x)
                 .iter()

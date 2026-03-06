@@ -77,17 +77,31 @@ impl AbstractFiles {
         let crate_name = util::get_crate_name();
         buf.push_str(&crate_name);
         buf.push_str("::");
+
         for segment in rel_path.components() {
             if matches!(segment, std::path::Component::RootDir) {
                 continue;
             }
+
+            // `mod.rs`, `lib.rs`, and `main.rs` represent the module they reside in, not a child
+            // module named after the file. Skip them so that e.g. "lib.rs" maps to "crate" and
+            // "a/mod.rs" maps to "crate::a" rather than "crate::lib" / "crate::a::mod".
+            let segment = util::os_str_to_str(segment.as_os_str())?;
+            let segment = segment.trim_end_matches(".rs");
+            if matches!(segment, "mod" | "lib" | "main") {
+                continue;
+            }
+
             if !buf.ends_with("::") {
                 buf.push_str("::");
             }
-            let segment = util::os_str_to_str(segment.as_os_str())?;
-            let segment = segment.trim_end_matches(".rs");
             buf.push_str(segment);
         }
+
+        if buf.ends_with("::") {
+            buf.truncate(buf.len() - 2);
+        }
+
         Ok(buf)
     }
 

@@ -4,16 +4,14 @@ use quote::ToTokens;
 use std::{hash, marker::PhantomPinned, path::PathBuf, pin::Pin};
 use syn_locator::{Locate, LocateEntry, Location};
 
-// === SmFile ===
-
 #[derive(Clone, Debug)]
-pub(crate) struct SmFile {
+pub(crate) struct File {
     pub(crate) file: syn::File,
     pub(crate) abs_path: PathBuf,
     _pin: PhantomPinned,
 }
 
-impl SmFile {
+impl File {
     pub(crate) fn new(abs_path: PathBuf, code: &str) -> Result<Pin<Box<Self>>> {
         let this = Box::pin(Self {
             file: syn::parse_str(code)?,
@@ -34,7 +32,7 @@ impl SmFile {
     }
 }
 
-impl Locate for SmFile {
+impl Locate for File {
     fn find_loc(
         &self,
         locator: &mut syn_locator::Locator,
@@ -46,21 +44,21 @@ impl Locate for SmFile {
     }
 }
 
-impl ToTokens for SmFile {
+impl ToTokens for File {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         self.file.to_tokens(tokens);
     }
 }
 
-impl PartialEq for SmFile {
+impl PartialEq for File {
     fn eq(&self, other: &Self) -> bool {
         self.abs_path == other.abs_path
     }
 }
 
-impl Eq for SmFile {}
+impl Eq for File {}
 
-impl hash::Hash for SmFile {
+impl hash::Hash for File {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.abs_path.hash(state)
     }

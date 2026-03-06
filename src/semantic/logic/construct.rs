@@ -1759,7 +1759,7 @@ pub(crate) mod tests {
         ImplLogic,
     };
     use crate::{
-        syntax::file::SmFile,
+        syntax::file::File,
         semantic::{
             logic::test_help::TestLogicHost,
             entry::GlobalCx,
@@ -2079,7 +2079,7 @@ pub(crate) mod tests {
         let gcx = GlobalCx::default();
         let mut logic = ImplLogic::new(&gcx);
         let mut host = TestLogicHost::new();
-        let file = SmFile::new(file.into(), code).unwrap();
+        let file = File::new(file.into(), code).unwrap();
         logic.load_file(&mut host, &file.file).unwrap();
         logic
             .db

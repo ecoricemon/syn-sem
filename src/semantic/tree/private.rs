@@ -77,8 +77,8 @@ impl<'gcx> PrivPathTree<'gcx> {
         self.inner[pid] = item;
     }
 
-    pub(crate) fn get_mut_item(&mut self, pid: PathId) -> MutItem<'_, 'gcx> {
-        MutItem { tree: self, pid }
+    pub(crate) fn get_mut_item(&mut self, pid: PathId) -> ItemMut<'_, 'gcx> {
+        ItemMut { tree: self, pid }
     }
 
     pub(crate) fn take_item(&mut self, pid: PathId) -> PrivItem {
@@ -139,15 +139,15 @@ impl ops::Index<NodeIndex> for PrivPathTree<'_> {
     }
 }
 
-/// This type only supports methods that cannot change the whole items. In
-/// other words, you can only modify some fields of items, not the items
-/// themselves. Use [`PrivPathTree::set_item`] to change the whole item.
-pub(crate) struct MutItem<'a, 'gcx> {
+/// This type only supports methods that cannot change the whole items. In other words, you can only
+/// modify some fields of items, not the items themselves. Use [`PrivPathTree::set_item`] to change
+/// the whole item.
+pub(crate) struct ItemMut<'a, 'gcx> {
     tree: &'a mut PrivPathTree<'gcx>,
     pid: PathId,
 }
 
-impl MutItem<'_, '_> {
+impl ItemMut<'_, '_> {
     pub(crate) fn as_mod(&mut self) -> &mut item::Mod {
         self.tree.inner[self.pid].as_mut_mod()
     }

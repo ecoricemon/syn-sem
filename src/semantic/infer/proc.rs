@@ -538,6 +538,7 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
                 is_return = true;
                 self.solve_expr_return(v)?
             }
+            syn::Expr::Field(v) => self.solve_expr_field(v)?,
             syn::Expr::Struct(v) => self.solve_expr_struct(v)?,
             syn::Expr::Tuple(v) => self.solve_expr_tuple(v)?,
             syn::Expr::Unary(v) => self.solve_expr_unary(v)?,
@@ -805,6 +806,19 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
             self.inner.types.insert_type(Type::Unit)
         };
         Ok(tid)
+    }
+
+    fn solve_expr_field(&mut self, expr_field: &syn::ExprField) -> TriResult<TypeId, ()> {
+        let base = self.solve_expr(&expr_field.base)?.tid;
+        let name = match &expr_field.member {
+            syn::Member::Named(ident) => ident.to_string(),
+            syn::Member::Unnamed(index) => index.index.to_string(),
+        };
+        let output = self.inner.types.new_type_var();
+        self.inner
+            .cons
+            .push_back(Constraint::Field { base, name, output });
+        Ok(output)
     }
 
     fn solve_expr_struct(&mut self, expr_struct: &syn::ExprStruct) -> TriResult<TypeId, ()> {
@@ -1083,6 +1097,9 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
                 }
                 Constraint::ApplyByType { target, params } => {
                     self.unify_apply_by_type(target, &params);
+                }
+                Constraint::Field { base, name, output } => {
+                    self.unify_field(base, &name, output)?;
                 }
             }
         }
@@ -1504,12 +1521,50 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
         }
     }
 
+    fn unify_field(&mut self, base: TypeId, name: &str, output: TypeId) -> TriResult<(), ()> {
+        let field_tid = {
+            let base_ty = self.inner.types.find_type(base);
+            match base_ty {
+                Type::Var(_) => {
+                    // Base not yet resolved — defer until the type becomes known.
+                    self.add_candidate_constraint(Constraint::Field {
+                        base,
+                        name: name.into(),
+                        output,
+                    });
+                    return Ok(());
+                }
+                Type::Named(TypeNamed { params, .. }) => params.iter().find_map(|p| {
+                    if let Param::Other { name: n, tid } = p {
+                        (&**n == name).then_some(*tid)
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            }
+        };
+
+        let Some(tid) = field_tid else {
+            return err!(soft, ());
+        };
+
+        self.inner.cons.push_front(Constraint::Equal {
+            lhs: output,
+            rhs: tid,
+        });
+        Ok(())
+    }
+
     fn add_candidate_constraint(&mut self, con: Constraint) {
         match &con {
             Constraint::ReplicatedApplyMethod { params, .. } => {
                 for param in params.iter() {
                     add(self, con.clone(), *param);
                 }
+            }
+            Constraint::Field { base, .. } => {
+                add(self, con.clone(), *base);
             }
             _ => unreachable!(),
         }
@@ -1613,7 +1668,7 @@ impl<'a, 'gcx> TypeToTermCx<'a, 'gcx> {
     fn type_to_term(&mut self, ty: &'a Type) -> TermIn<'gcx> {
         match ty {
             Type::Scalar(scalar) => self.scalar_to_term(scalar),
-            Type::Named(_named) => todo!(),
+            Type::Named(_named) => todo!("{_named:?}"),
             Type::Tuple(TypeTuple { elems }) => {
                 let elems = elems
                     .iter()
@@ -1807,6 +1862,12 @@ pub(crate) enum Constraint {
         target: TypeId,
         params: BoxedSlice<TypeId>,
     },
+    /// Field access: `base.name` produces `output`.
+    Field {
+        base: TypeId,
+        name: String,
+        output: TypeId,
+    },
 }
 
 struct TypeIdWithCtrl {
@@ -1815,6 +1876,7 @@ struct TypeIdWithCtrl {
 }
 
 #[cfg(test)]
+#[rustfmt::skip]
 pub(crate) mod tests {
     use super::{Host, Inferer};
     use crate::{
@@ -1835,48 +1897,11 @@ pub(crate) mod tests {
     };
     use std::pin::Pin;
     use syn_locator::{Find, LocateEntry};
-
-    fn type_of_local_stmt(inferer: &Inferer, stmt: &syn::Stmt) -> OwnedType {
-        let syn::Stmt::Local(local) = stmt else {
-            unreachable!()
-        };
-        let syn::Pat::Ident(pat_ident) = &local.pat else {
-            unreachable!()
-        };
-        inferer
-            .get_owned_type_of_ident(&pat_ident.ident)
-            .unwrap()
-            .clone()
-    }
-
-    fn type_of_local_stmt_with_type(inferer: &Inferer, stmt: &syn::Stmt) -> OwnedType {
-        let syn::Stmt::Local(local) = stmt else {
-            unreachable!()
-        };
-        let syn::Pat::Type(syn::PatType { pat, .. }) = &local.pat else {
-            unreachable!()
-        };
-        let syn::Pat::Ident(pat_ident) = &**pat else {
-            unreachable!()
-        };
-        inferer
-            .get_owned_type_of_ident(&pat_ident.ident)
-            .unwrap()
-            .clone()
-    }
-
-    fn type_of_ident<P>(inferer: &Inferer, parent: &P, ident: &str) -> OwnedType
-    where
-        P: Find<syn::Ident> + ?Sized,
-    {
-        let ident: &syn::Ident = parent.find(ident).unwrap();
-        inferer.get_owned_type_of_ident(ident).unwrap()
-    }
+    use syn::{Ident, Expr, Block, ItemFn, Stmt, ExprBlock, Item, Pat, PatType};
 
     #[test]
-    #[rustfmt::skip]
-    fn test_infer_primitives() {
-        let code = r#"{
+    fn test_infer_primitive_types() {
+        let code = r"{
             // Primitive types
             let a: i8 = 0;
             let a: i16 = 0;
@@ -1893,17 +1918,10 @@ pub(crate) mod tests {
             let a: f32 = 0.;
             let a: f64 = 0.;
             let a: bool = false;
-        }"#;
+        }";
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
         let gcx = GlobalCx::default();
-        let mut inferer = test_inferer(&gcx);
-        let mut logic = test_logic(&gcx);
-        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
-        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
-
-        // Is symbol table empty?
-        assert!(inferer.symbols.is_empty());
+        let (inferer, block) = basic_setup(code, &gcx);
 
         // let a: i8 = 0;
         let mut stmt_i = 0;
@@ -1982,9 +2000,80 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[rustfmt::skip]
-    fn test_infer_operators() {
-        let code = r#"{
+    fn test_infer_custom_types() {
+        let code = r"{
+            struct A { a: i32 }
+            let x = A { a: 0 };
+            let x = x.a;
+        }";
+
+        trait InferLogicHost<'gcx>: Host<'gcx> + logic::Host<'gcx> {}
+
+        impl<'gcx, T: Host<'gcx> + logic::Host<'gcx>> InferLogicHost<'gcx> for T {}
+
+        struct TestHost<'gcx> {
+            gcx: &'gcx GlobalCx<'gcx>,
+            inner: Box<dyn InferLogicHost<'gcx> + 'gcx>,
+        }
+
+        impl<'gcx> Host<'gcx> for TestHost<'gcx> {
+            fn syn_path_to_type(
+                &mut self,
+                _: SynPath,
+                types: &mut UniqueTypes<'gcx>,
+            ) -> TriResult<Type<'gcx>, ()> {
+                let tid_i32 = types.insert_type(Type::Scalar(TypeScalar::I32));
+                let param0 = Param::Self_;
+                let param1 = Param::Other { name: self.gcx.intern_str("a"), tid: tid_i32 };
+                Ok(Type::Named(TypeNamed {
+                    name: self.gcx.intern_str("A"),
+                    params: [param0, param1].into(),
+                }))
+            }
+        }
+
+        impl<'gcx> logic::Host<'gcx> for TestHost<'gcx> {
+            fn ident_to_npath(&mut self, ident: &Ident) -> TriResult<String, ()> {
+                logic::Host::ident_to_npath(&mut *self.inner, ident)
+            }
+        }
+
+        impl<'gcx> EvaluateArrayLength<'gcx> for TestHost<'gcx> {
+            fn eval_array_len(&mut self, expr: &Expr) -> TriResult<crate::ArrayLen, ()> {
+                EvaluateArrayLength::eval_array_len(&mut *self.inner, expr)
+            }
+        }
+
+        crate::impl_empty_method_host!(TestHost<'_>);
+        crate::impl_empty_scoping!(TestHost<'_>);
+
+        let block = syn::parse_str::<Block>(code).unwrap();
+        let gcx = GlobalCx::default();
+        let mut inferer = test_inferer(&gcx);
+        let mut logic = test_logic(&gcx);
+        let mut infer_logic_host = TestHost {
+            gcx: &gcx,
+            inner: Box::new(TestInferLogicHost::new(&gcx)),
+        };
+        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
+
+        // Is symbol table empty?
+        assert!(inferer.symbols.is_empty());
+
+        // let x = A { a: 0 };
+        let mut stmt_i = 1;
+        let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
+        assert!(matches!(lhs, OwnedType::Named { name, .. } if &name == "A"));
+        stmt_i += 1;
+
+        // let x = x.a;
+        let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
+        assert_eq!(lhs, OwnedType::Named { name: "i32".into(), params: [].into() });
+    }
+
+    #[test]
+    fn test_infer_result_of_primitive_binary_operations() {
+        let code = r"{
             // Binary operators
             let a = 0_u32 + 0;
             let a = 0_u32 - 0;
@@ -2016,17 +2105,10 @@ pub(crate) mod tests {
             // Unary operators
             let a = !false;
             let a = -0_i32;
-        }"#;
+        }";
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
         let gcx = GlobalCx::default();
-        let mut inferer = test_inferer(&gcx);
-        let mut logic = test_logic(&gcx);
-        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
-        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
-
-        // Is symbol table empty?
-        assert!(inferer.symbols.is_empty());
+        let (inferer, block) = basic_setup(code, &gcx);
 
         // let a = 0_u32 + 0;
         let mut stmt_i = 0;
@@ -2131,10 +2213,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_infer_function_type() {
-        let code = r#"{
+        let code = r"{
             fn f(i: u32) -> u32 { i }
             let a = f;
-        }"#;
+        }";
 
         trait InferLogicHost<'gcx>: Host<'gcx> + logic::Host<'gcx> {}
 
@@ -2152,30 +2234,23 @@ pub(crate) mod tests {
                 types: &mut UniqueTypes<'gcx>,
             ) -> TriResult<Type<'gcx>, ()> {
                 let tid_u32 = types.insert_type(Type::Scalar(TypeScalar::U32));
-                let output = Param::Other {
-                    name: self.gcx.intern_str("0"),
-                    tid: tid_u32,
-                };
-                let input = Param::Other {
-                    name: self.gcx.intern_str("i"),
-                    tid: tid_u32,
-                };
-                let res = Type::Named(TypeNamed {
+                let output = Param::Other { name: self.gcx.intern_str("0"), tid: tid_u32 };
+                let input = Param::Other { name: self.gcx.intern_str("i"), tid: tid_u32 };
+                Ok(Type::Named(TypeNamed {
                     name: self.gcx.intern_str("f"),
                     params: [output, input].into(),
-                });
-                Ok(res)
+                }))
             }
         }
 
         impl<'gcx> logic::Host<'gcx> for TestHost<'gcx> {
-            fn ident_to_npath(&mut self, ident: &syn::Ident) -> TriResult<String, ()> {
+            fn ident_to_npath(&mut self, ident: &Ident) -> TriResult<String, ()> {
                 logic::Host::ident_to_npath(&mut *self.inner, ident)
             }
         }
 
         impl<'gcx> EvaluateArrayLength<'gcx> for TestHost<'gcx> {
-            fn eval_array_len(&mut self, expr: &syn::Expr) -> TriResult<crate::ArrayLen, ()> {
+            fn eval_array_len(&mut self, expr: &Expr) -> TriResult<crate::ArrayLen, ()> {
                 EvaluateArrayLength::eval_array_len(&mut *self.inner, expr)
             }
         }
@@ -2183,7 +2258,7 @@ pub(crate) mod tests {
         crate::impl_empty_method_host!(TestHost<'_>);
         crate::impl_empty_scoping!(TestHost<'_>);
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
+        let block = syn::parse_str::<Block>(code).unwrap();
         let gcx = GlobalCx::default();
         let mut inferer = test_inferer(&gcx);
         let mut logic = test_logic(&gcx);
@@ -2191,9 +2266,7 @@ pub(crate) mod tests {
             gcx: &gcx,
             inner: Box::new(TestInferLogicHost::new(&gcx)),
         };
-        inferer
-            .infer_block(&mut logic, &mut infer_logic_host, &block, None)
-            .unwrap();
+        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
 
         // Is symbol table empty?
         assert!(inferer.symbols.is_empty());
@@ -2204,37 +2277,30 @@ pub(crate) mod tests {
         assert_eq!(
             lhs,
             OwnedType::Named {
-                name: "f".into(),
+                name: "f".to_owned(),
                 params: [
                     OwnedParam::Other {
                         name: "0".into(),
-                        ty: OwnedType::Named {
-                            name: "u32".into(),
-                            params: [].into()
-                        }
+                        ty: OwnedType::Named { name: "u32".into(), params: [].into() }
                     },
                     OwnedParam::Other {
                         name: "i".into(),
-                        ty: OwnedType::Named {
-                            name: "u32".into(),
-                            params: [].into()
-                        }
+                        ty: OwnedType::Named { name: "u32".into(), params: [].into() }
                     },
-                ]
-                .into()
+                ].into()
             }
         );
     }
 
-    // TODO: Test host related functionalities like function, struct
-    // constructor, etc in the host implementation.
+    // TODO: Test host related functionalities like function, struct constructor, etc in the host
+    // implementation.
     #[test]
     fn test_infer_by_function_parameters() {
-        let code = r#"{
+        let code = r"{
             fn foo(a: u32) -> u32 { a }
             let a = 0;
             let b = foo(a);
-        }"#;
+        }";
 
         trait InferLogicHost<'gcx>: Host<'gcx> + logic::Host<'gcx> {}
 
@@ -2252,30 +2318,23 @@ pub(crate) mod tests {
                 types: &mut UniqueTypes<'gcx>,
             ) -> TriResult<Type<'gcx>, ()> {
                 let tid_u32 = types.insert_type(Type::Scalar(TypeScalar::U32));
-                let output = Param::Other {
-                    name: self.gcx.intern_str("0"),
-                    tid: tid_u32,
-                };
-                let input = Param::Other {
-                    name: self.gcx.intern_str("a"),
-                    tid: tid_u32,
-                };
-                let res = Type::Named(TypeNamed {
+                let output = Param::Other { name: self.gcx.intern_str("0"), tid: tid_u32 };
+                let input = Param::Other { name: self.gcx.intern_str("a"), tid: tid_u32 };
+                Ok(Type::Named(TypeNamed {
                     name: self.gcx.intern_str("foo"),
                     params: [output, input].into(),
-                });
-                Ok(res)
+                }))
             }
         }
 
         impl<'gcx> logic::Host<'gcx> for TestHost<'gcx> {
-            fn ident_to_npath(&mut self, ident: &syn::Ident) -> TriResult<String, ()> {
+            fn ident_to_npath(&mut self, ident: &Ident) -> TriResult<String, ()> {
                 logic::Host::ident_to_npath(&mut *self.inner, ident)
             }
         }
 
         impl<'gcx> EvaluateArrayLength<'gcx> for TestHost<'gcx> {
-            fn eval_array_len(&mut self, expr: &syn::Expr) -> TriResult<crate::ArrayLen, ()> {
+            fn eval_array_len(&mut self, expr: &Expr) -> TriResult<crate::ArrayLen, ()> {
                 EvaluateArrayLength::eval_array_len(&mut *self.inner, expr)
             }
         }
@@ -2283,7 +2342,7 @@ pub(crate) mod tests {
         crate::impl_empty_method_host!(TestHost<'_>);
         crate::impl_empty_scoping!(TestHost<'_>);
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
+        let block = syn::parse_str::<Block>(code).unwrap();
         let gcx = GlobalCx::default();
         let mut inferer = test_inferer(&gcx);
         let mut logic = test_logic(&gcx);
@@ -2291,9 +2350,7 @@ pub(crate) mod tests {
             gcx: &gcx,
             inner: Box::new(TestInferLogicHost::new(&gcx)),
         };
-        inferer
-            .infer_block(&mut logic, &mut infer_logic_host, &block, None)
-            .unwrap();
+        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
 
         // Is symbol table empty?
         assert!(inferer.symbols.is_empty());
@@ -2301,49 +2358,33 @@ pub(crate) mod tests {
         // let a = 0;
         let mut stmt_i = 1;
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        assert_eq!(
-            lhs,
-            OwnedType::Named {
-                name: "u32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(lhs, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
         // let b = foo(a);
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        assert_eq!(
-            lhs,
-            OwnedType::Named {
-                name: "u32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(lhs, OwnedType::Named { name: "u32".into(), params: [].into() });
     }
 
     #[test]
-    #[rustfmt::skip]
-    fn test_infer_function_block() {
-        let code = r#"
-        fn f(x: u32) -> u64 { 
+    fn test_infer_local_variables_in_function_block() {
+        let code = r"
+        fn f(x: u32) -> u64 {
             let a = x;
             let b = 0;
             return b;
             let c = 0;
             c
-        }
-        "#;
+        }";
 
-        let f = syn::parse_str::<syn::ItemFn>(code).unwrap();
+        let f = syn::parse_str::<ItemFn>(code).unwrap();
         let gcx = GlobalCx::default();
         let mut inferer = test_inferer(&gcx);
         let mut logic = test_logic(&gcx);
         let mut infer_logic_host = TestInferLogicHost::new(&gcx);
         let sig = &f.sig;
         let block = &f.block;
-        inferer
-            .infer_signature_and_block(&mut logic, &mut infer_logic_host, sig, block)
-            .unwrap();
+        inferer.infer_signature_and_block(&mut logic, &mut infer_logic_host, sig, block).unwrap();
 
         // Is symbol table empty?
         assert!(inferer.symbols.is_empty());
@@ -2365,30 +2406,20 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[rustfmt::skip]
     fn test_infer_references() {
-        let code = r#"{
+        let code = r"{
             let a: u32 = 0;
             let b = &a;
             let c = b + 0;
-        }"#;
+        }";
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
         let gcx = GlobalCx::default();
-        let mut inferer = test_inferer(&gcx);
-        let mut logic = test_logic(&gcx);
-        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
-        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
-
-        // Is symbol table empty?
-        assert!(inferer.symbols.is_empty());
+        let (inferer, block) = basic_setup(code, &gcx);
 
         // let b = &a;
         let mut stmt_i = 1;
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        let OwnedType::Ref { elem, .. } = lhs else {
-            panic!("{lhs:?} is not a reference");
-        };
+        let OwnedType::Ref { elem, .. } = lhs else { panic!() };
         assert_eq!(*elem, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
@@ -2398,14 +2429,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[rustfmt::skip]
     fn test_infer_etc() {
-        let code = r#"{
+        let code = r"{
             // Literal only
             let a = 0;
             // Suffix
             let a = 0_u32;
-            // Explicit type 
+            // Explict type
             let a: u32 = 0;
             // Array
             let a = [0; 1];
@@ -2430,17 +2460,10 @@ pub(crate) mod tests {
             a = 0_u32 + b;
             // Inference inside a block
             { let a = 0_u32; }
-        }"#;
+        }";
 
-        let block = syn::parse_str::<syn::Block>(code).unwrap();
         let gcx = GlobalCx::default();
-        let mut inferer = test_inferer(&gcx);
-        let mut logic = test_logic(&gcx);
-        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
-        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
-
-        // Is symbol table empty?
-        assert!(inferer.symbols.is_empty());
+        let (inferer, block) = basic_setup(code, &gcx);
 
         // let a = 0;
         let mut stmt_i = 0;
@@ -2460,9 +2483,7 @@ pub(crate) mod tests {
 
         // let a = [0; 1];
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        let OwnedType::Array { elem, len } = lhs else {
-            panic!("{lhs:?} is not an array");
-        };
+        let OwnedType::Array { elem, len } = lhs else { panic!() };
         assert_eq!(*elem, OwnedType::Named { name: "int".into(), params: [].into() });
         assert_eq!(len, InferArrayLen::Fixed(1));
         stmt_i += 1;
@@ -2470,24 +2491,18 @@ pub(crate) mod tests {
         // let a = [];
         // let b: &[u32; 0] = &a;
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        let OwnedType::Array { elem, len } = lhs else {
-            panic!("{lhs:?} is not an array");
-        };
+        let OwnedType::Array { elem, len } = lhs else { panic!() };
         assert_eq!(*elem, OwnedType::Named { name: "u32".into(), params: [].into() });
         assert_eq!(len, InferArrayLen::Fixed(0));
         stmt_i += 2;
 
         // let a = (0_u32, 1);
         let lhs = type_of_local_stmt(&inferer, &block.stmts[stmt_i]);
-        let OwnedType::Tuple(elems) = lhs else {
-            panic!("{lhs:?} is not a tuple");
-        };
+        let OwnedType::Tuple(elems) = lhs else { panic!() };
         assert_eq!(
             *elems,
-            [
-                OwnedType::Named { name: "u32".into(), params: [].into() },
-                OwnedType::Named { name: "int".into(), params: [].into() },
-            ]
+            [ OwnedType::Named { name: "u32".into(), params: [].into() },
+              OwnedType::Named { name: "int".into(), params: [].into() } ]
         );
         stmt_i += 1;
 
@@ -2514,15 +2529,15 @@ pub(crate) mod tests {
         stmt_i += 3;
 
         // { let a = 0_u32; }
-        let syn::Stmt::Expr(syn::Expr::Block(syn::ExprBlock { block: inner_block, .. }), _) = 
-            &block.stmts[stmt_i] else { unreachable!() };
+        let Stmt::Expr(Expr::Block(ExprBlock { block: inner_block, .. }), _) =
+            &block.stmts[stmt_i] else { panic!() };
         let lhs = type_of_local_stmt(&inferer, &inner_block.stmts[0]);
         assert_eq!(lhs, OwnedType::Named { name: "u32".into(), params: [].into() });
     }
 
     #[test]
     fn test_infer_various_pat() {
-        let code = r#"{
+        let code = r"{
             // Struct pattern
             struct T { i: i32, u: u32 }
             fn f1(T { i, u }: T) {}
@@ -2534,7 +2549,7 @@ pub(crate) mod tests {
             // Slice pattern
             let [a, b] = [0_i8, 1];
             let [a, ..] = [0_u8, 1, 2];
-        }"#;
+        }";
 
         trait InferLogicHost<'gcx>: Host<'gcx> + logic::Host<'gcx> {}
 
@@ -2563,25 +2578,24 @@ pub(crate) mod tests {
                         name: self.gcx.intern_str("u"),
                         tid: tid_u32,
                     };
-                    let res = Type::Named(TypeNamed {
+                    Ok(Type::Named(TypeNamed {
                         name: self.gcx.intern_str("T"),
                         params: [i, u].into(),
-                    });
-                    Ok(res)
+                    }))
                 } else {
-                    unreachable!()
+                    panic!()
                 }
             }
         }
 
         impl<'gcx> logic::Host<'gcx> for TestHost<'gcx> {
-            fn ident_to_npath(&mut self, ident: &syn::Ident) -> TriResult<String, ()> {
+            fn ident_to_npath(&mut self, ident: &Ident) -> TriResult<String, ()> {
                 logic::Host::ident_to_npath(&mut *self.inner, ident)
             }
         }
 
         impl<'gcx> EvaluateArrayLength<'gcx> for TestHost<'gcx> {
-            fn eval_array_len(&mut self, expr: &syn::Expr) -> TriResult<crate::ArrayLen, ()> {
+            fn eval_array_len(&mut self, expr: &Expr) -> TriResult<crate::ArrayLen, ()> {
                 EvaluateArrayLength::eval_array_len(&mut *self.inner, expr)
             }
         }
@@ -2589,7 +2603,7 @@ pub(crate) mod tests {
         crate::impl_empty_method_host!(TestHost<'_>);
         crate::impl_empty_scoping!(TestHost<'_>);
 
-        let top_block = syn::parse_str::<syn::Block>(code).unwrap();
+        let top_block = syn::parse_str::<Block>(code).unwrap();
 
         let pinned = Pin::new(&top_block);
         pinned.locate_as_entry(crate::cur_path!(), code).unwrap();
@@ -2601,155 +2615,68 @@ pub(crate) mod tests {
             gcx: &gcx,
             inner: Box::new(TestInferLogicHost::new(&gcx)),
         };
-        inferer
-            .infer_block(&mut logic, &mut infer_logic_host, &top_block, None)
-            .unwrap();
+        inferer.infer_block(&mut logic, &mut infer_logic_host, &top_block, None).unwrap();
 
         // stmt0: struct T { i: i32, u: u32 }
         // stmt1: fn f1(T { i, u }: T) {}
         let mut stmt_i = 1;
-        let syn::Stmt::Item(syn::Item::Fn(item_fn)) = &top_block.stmts[stmt_i] else {
+        let Stmt::Item(Item::Fn(item_fn)) = &top_block.stmts[stmt_i] else {
             unreachable!()
         };
         let i = type_of_ident(&inferer, &item_fn.sig, "i");
-        assert_eq!(
-            i,
-            OwnedType::Named {
-                name: "i32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(i, OwnedType::Named { name: "i32".into(), params: [].into() });
         let u = type_of_ident(&inferer, &item_fn.sig, "u");
-        assert_eq!(
-            u,
-            OwnedType::Named {
-                name: "u32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!( u, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
         // let T { i, .. } = T { i: 0, u: 0 };
         let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
-        assert_eq!(
-            i,
-            OwnedType::Named {
-                name: "i32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(i, OwnedType::Named { name: "i32".into(), params: [].into() });
         stmt_i += 1;
 
         // let T { u, .. } = T { i: 0, u: 0 };
         let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
-        assert_eq!(
-            u,
-            OwnedType::Named {
-                name: "u32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(u, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
         // let (i, u) = (0_i16, 0_u16);
         let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
-        assert_eq!(
-            i,
-            OwnedType::Named {
-                name: "i16".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(i, OwnedType::Named { name: "i16".into(), params: [].into() });
         let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
-        assert_eq!(
-            u,
-            OwnedType::Named {
-                name: "u16".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(u, OwnedType::Named { name: "u16".into(), params: [].into() });
         stmt_i += 1;
 
         // let (i, u, .., b, f) = (0_i8, 0_u8, 0, 0, true, 0_f32);
         let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
-        assert_eq!(
-            i,
-            OwnedType::Named {
-                name: "i8".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(i, OwnedType::Named { name: "i8".into(), params: [].into() });
         let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
-        assert_eq!(
-            u,
-            OwnedType::Named {
-                name: "u8".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(u, OwnedType::Named { name: "u8".into(), params: [].into() });
         let b = type_of_ident(&inferer, &top_block.stmts[stmt_i], "b");
-        assert_eq!(
-            b,
-            OwnedType::Named {
-                name: "bool".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(b, OwnedType::Named { name: "bool".into(), params: [].into() });
         let f = type_of_ident(&inferer, &top_block.stmts[stmt_i], "f");
-        assert_eq!(
-            f,
-            OwnedType::Named {
-                name: "f32".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(f, OwnedType::Named { name: "f32".into(), params: [].into() });
         stmt_i += 1;
 
         // let [a, b] = [0_i8, 1];
         let a = type_of_ident(&inferer, &top_block.stmts[stmt_i], "a");
-        assert_eq!(
-            a,
-            OwnedType::Named {
-                name: "i8".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(a, OwnedType::Named { name: "i8".into(), params: [].into() });
         let b = type_of_ident(&inferer, &top_block.stmts[stmt_i], "b");
-        assert_eq!(
-            b,
-            OwnedType::Named {
-                name: "i8".into(),
-                params: [].into()
-            }
-        );
-        let expr: &syn::Expr = top_block.stmts[stmt_i].find("1").unwrap();
+        assert_eq!(b, OwnedType::Named { name: "i8".into(), params: [].into() });
+        let expr: &Expr = top_block.stmts[stmt_i].find("1").unwrap();
         let one = inferer.get_owned_type_of_expr(expr).unwrap();
-        assert_eq!(
-            one,
-            OwnedType::Named {
-                name: "i8".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(one, OwnedType::Named { name: "i8".into(), params: [].into() });
         stmt_i += 1;
 
         // let [a, ..] = [0_u8, 1, 2];
         let a = type_of_ident(&inferer, &top_block.stmts[stmt_i], "a");
-        assert_eq!(
-            a,
-            OwnedType::Named {
-                name: "u8".into(),
-                params: [].into()
-            }
-        );
+        assert_eq!(a, OwnedType::Named { name: "u8".into(), params: [].into() });
     }
 
     #[test]
-    #[rustfmt::skip]
-    fn test_infer_expr() {
+    fn test_infer_expressions() {
         let code = "1_u32 + 2";
 
-        let expr = syn::parse_str::<syn::Expr>(code).unwrap();
+        let expr = syn::parse_str::<Expr>(code).unwrap();
         let gcx = GlobalCx::default();
         let mut inferer = test_inferer(&gcx);
         let mut logic = test_logic(&gcx);
@@ -2761,5 +2688,39 @@ pub(crate) mod tests {
 
         let ty = inferer.get_owned_type_of_expr(&expr).unwrap();
         assert_eq!(ty, OwnedType::Named { name: "u32".into(), params: [].into() });
+    }
+
+    fn basic_setup<'gcx>(block_code: &str, gcx: &'gcx GlobalCx<'gcx>) -> (Inferer<'gcx>, Block) {
+        let block = syn::parse_str::<Block>(block_code).unwrap();
+        let mut inferer = test_inferer(&gcx);
+        let mut logic = test_logic(&gcx);
+        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
+        inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
+
+        // Is symbol table empty?
+        assert!(inferer.symbols.is_empty());
+
+        (inferer, block)
+    }
+
+    fn type_of_local_stmt(inferer: &Inferer, stmt: &Stmt) -> OwnedType {
+        let Stmt::Local(local) = stmt else { panic!() };
+        let Pat::Ident(pat_ident) = &local.pat else { panic!() };
+        inferer.get_owned_type_of_ident(&pat_ident.ident).unwrap().clone()
+    }
+
+    fn type_of_local_stmt_with_type(inferer: &Inferer, stmt: &Stmt) -> OwnedType {
+        let Stmt::Local(local) = stmt else { panic!() };
+        let Pat::Type(PatType { pat, .. }) = &local.pat else { panic!() };
+        let Pat::Ident(pat_ident) = &**pat else { panic!() };
+        inferer.get_owned_type_of_ident(&pat_ident.ident).unwrap().clone()
+    }
+
+    fn type_of_ident<P>(inferer: &Inferer, parent: &P, ident: &str) -> OwnedType
+    where
+        P: Find<syn::Ident> + ?Sized,
+    {
+        let ident: &syn::Ident = parent.find(ident).unwrap();
+        inferer.get_owned_type_of_ident(ident).unwrap()
     }
 }

@@ -832,7 +832,7 @@ mod impls {
 
     // === Implement for this crate ===
 
-    impl_all_simple!(crate::syntax::file::SmFile, file);
+    impl_all_simple!(crate::syntax::file::File, file);
 
     // === Implement for syn ===
 

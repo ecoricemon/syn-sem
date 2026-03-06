@@ -9,7 +9,7 @@ use crate::{
     },
     syntax::{
         common::{AttributeHelper, IdentifySyn, SynId},
-        file::SmFile,
+        file::File,
         SyntaxTree,
     },
     Result, TriResult, Which2,
@@ -44,7 +44,7 @@ impl<'gcx> Constructor<'_, 'gcx> {
         }
 
         let code = self.files.read(&fpath)?;
-        let file = SmFile::new(fpath.clone(), code)?;
+        let file = File::new(fpath.clone(), code)?;
         self.stree.insert_file(fpath.clone(), file);
 
         let mut cx = ConstructCx {
@@ -93,24 +93,33 @@ struct ConstructCx<'a, 'gcx> {
 }
 
 impl<'gcx> ConstructCx<'_, 'gcx> {
-    fn add_file(&mut self, file: &SmFile) -> Result<()> {
+    fn add_file(&mut self, file: &File) -> Result<()> {
         let sid = file.file.syn_id();
         if let Some(ni) = self.ptree.search(TREE_ROOT, self.path.as_str()) {
             // If the file was loaded by 'mod' from another file, we just set the file pointer.
             for (ii, item) in self.ptree[ni].iter() {
+                let pid = ni.to_path_id(ii);
                 match item {
                     PrivItem::Mod(_) => {
-                        self.ptree.get_mut_item(ni.to_path_id(ii)).as_mod().ptr_file =
-                            Some((&file.file).into());
-                        self.s2p.add_syn_to_path(sid, ni.to_path_id(ii));
+                        let mut item = self.ptree.get_mut_item(pid);
+                        let mod_ = item.as_mod();
+
+                        // The crate root is initialized with an empty fpath; update it with the
+                        // real entry file path so that child modules can compute their directory
+                        // correctly.
+                        if mod_.fpath.as_os_str().is_empty() {
+                            mod_.fpath = file.abs_path.clone();
+                            mod_.mod_rs = self.files.is_mod_rs(&file.abs_path);
+                        }
+
+                        mod_.ptr_file = Some((&file.file).into());
+                        self.s2p.add_syn_to_path(sid, pid);
                         break; // No more mods can exist in the same node.
                     }
                     PrivItem::RawMod(_) => {
-                        self.ptree
-                            .get_mut_item(ni.to_path_id(ii))
-                            .as_raw_mod()
-                            .ptr_file = Some((&file.file).into());
-                        self.s2p.add_syn_to_path(sid, ni.to_path_id(ii));
+                        self.ptree.get_mut_item(pid).as_raw_mod().ptr_file =
+                            Some((&file.file).into());
+                        self.s2p.add_syn_to_path(sid, pid);
                         break; // No more mods can exist in the same node.
                     }
                     _ => {}
