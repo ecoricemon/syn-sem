@@ -1,0 +1,33 @@
+[package]
+name = "syn-sem"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "An experimental semantic analyzer for a subset of Rust"
+readme = "README.md"
+repository = "https://github.com/ecoricemon/syn-sem"
+license = "Apache-2.0 OR MIT"
+keywords = ["syn", "semantic"]
+
+[dependencies]
+syn-locator = { workspace = true, features = ["find"] }
+logic-eval = { workspace = true }
+logic-eval-util = { workspace = true }
+any-intern = { workspace = true }
+my-utils = { workspace = true }
+syn = { workspace = true, features = ["extra-traits"] }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+smallvec = { workspace = true }
+parking_lot = { workspace = true }
+const_format = { workspace = true }
+log = { workspace = true }
+hashlink = { workspace = true }
+indexmap = { workspace = true }
+fxhash = { workspace = true }
+once_cell = { workspace = true }
+bitflags = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+env_logger = "0.10.2"

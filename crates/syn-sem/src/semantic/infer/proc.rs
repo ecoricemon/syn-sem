@@ -2692,9 +2692,9 @@ pub(crate) mod tests {
 
     fn basic_setup<'gcx>(block_code: &str, gcx: &'gcx GlobalCx<'gcx>) -> (Inferer<'gcx>, Block) {
         let block = syn::parse_str::<Block>(block_code).unwrap();
-        let mut inferer = test_inferer(&gcx);
-        let mut logic = test_logic(&gcx);
-        let mut infer_logic_host = TestInferLogicHost::new(&gcx);
+        let mut inferer = test_inferer(gcx);
+        let mut logic = test_logic(gcx);
+        let mut infer_logic_host = TestInferLogicHost::new(gcx);
         inferer.infer_block(&mut logic, &mut infer_logic_host, &block, None).unwrap();
 
         // Is symbol table empty?

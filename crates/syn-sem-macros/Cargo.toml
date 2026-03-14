@@ -1,0 +1,17 @@
+[package]
+name = "syn-sem-macros"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "macros for syn-sem"
+readme = "README.md"
+repository = "https://github.com/ecoricemon/syn-sem"
+license = "Apache-2.0 OR MIT"
+
+[lib]
+proc-macro = true
+doctest = false
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }

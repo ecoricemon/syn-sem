@@ -26,9 +26,64 @@ env:
   rust_nightly: nightly-2026-01-30
 
 jobs:
+  discover-crates:
+    name: discover-crates
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Discover sub-crates
+        id: discover
+        run: |
+          # Get all directories under crates/ that have Cargo.toml
+          crates=$(find crates -maxdepth 2 -name "Cargo.toml" -exec dirname {} \; | xargs -I {} basename {})
+          # Convert to JSON array for matrix
+          matrix_json=$(echo "$crates" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "matrix=$matrix_json" >> "$GITHUB_OUTPUT"
+
+  discover-unsafe-crates:
+    name: discover-unsafe-crates
+    runs-on: ubuntu-latest
+    needs: discover-crates
+    outputs:
+      unsafe_crates: ${{ steps.discover-unsafe.outputs.unsafe_crates }}
+    steps:
+      - uses: actions/checkout@v6.0.1
+        with:
+          submodules: true
+      - name: Check for unsafe code
+        id: discover-unsafe
+        run: |
+          # Parse the matrix output from the discover-crates job
+          crates=$(echo '${{ needs.discover-crates.outputs.matrix }}' | jq -r '.[]')
+          unsafe_crates=()
+          for crate in $crates; do
+            echo "Checking crate: $crate"
+            cd crates/$crate
+            # Count occurrences of the "unsafe" keyword in the source files
+            unsafe_count=$(grep -r "unsafe" . | wc -l)
+            if [ "$unsafe_count" -gt 0 ]; then
+              echo "Crate $crate contains unsafe code!"
+              unsafe_crates+=("\"$crate\"") # Add quotes around crate names
+            else
+              echo "Crate $crate is safe."
+            fi
+            cd - > /dev/null
+          done
+          # Convert the unsafe crates array to a properly formatted JSON array
+          unsafe_crates_json=$(printf "[%s]" "$(IFS=,; echo "${unsafe_crates[*]}")")
+          echo "unsafe_crates=$unsafe_crates_json" >> "$GITHUB_OUTPUT"
+
   sanitizers:
     name: sanitizers
     runs-on: ubuntu-latest
+    needs: discover-unsafe-crates
+    strategy:
+      matrix:
+        crate: ${{ fromJson(needs.discover-unsafe-crates.outputs.unsafe_crates) }}
     steps:
       - uses: actions/checkout@v6.0.1
         with:
@@ -54,22 +109,28 @@ jobs:
           sed -i '/^\s*\[profile.dev\]/a opt-level = 1' Cargo.toml
           cat Cargo.toml
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test -Zsanitizer=address
+      - name: cargo test -Zsanitizer=address in ${{ matrix.crate }}
         # only --lib --tests b/c of https://github.com/rust-lang/rust/issues/53945
         run: cargo test --lib --tests --all-features --target x86_64-unknown-linux-gnu
         env:
           ASAN_OPTIONS: "detect_odr_violation=0:detect_leaks=0"
           RUSTFLAGS: "-Z sanitizer=address"
-      - name: cargo test -Zsanitizer=leak
+        working-directory: crates/${{ matrix.crate }}
+      - name: cargo test -Zsanitizer=leak in ${{ matrix.crate }}
         if: always()
         run: cargo test --all-features --target x86_64-unknown-linux-gnu
         env:
           LSAN_OPTIONS: "suppressions=lsan-suppressions.txt"
           RUSTFLAGS: "-Z sanitizer=leak"
+        working-directory: crates/${{ matrix.crate }}
 
   miri:
     name: miri
     runs-on: ubuntu-latest
+    needs: discover-unsafe-crates
+    strategy:
+      matrix:
+        crate: ${{ fromJson(needs.discover-unsafe-crates.outputs.unsafe_crates) }}
     steps:
       - uses: actions/checkout@v6.0.1
         with:
@@ -81,7 +142,8 @@ jobs:
           components: miri
       - uses: Swatinem/rust-cache@v2
       - name: cargo miri test
-        # These test cases are tailored for miri.
+        # These tests are tailored for miri
         run: cargo miri test semantic::analyze::semantics::tests
         env:
           MIRIFLAGS: ""
+        working-directory: crates/${{ matrix.crate }}
