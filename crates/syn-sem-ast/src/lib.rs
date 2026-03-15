@@ -26,7 +26,7 @@ pub use ty::*;
 
 #[cfg(test)]
 pub(crate) mod test_util {
-    use crate::{FromSyn, SyntaxContext};
+    use crate::{FromSyn, SyntaxCx};
     use any_intern::DroplessInterner;
     use std::{
         path::PathBuf,
@@ -36,7 +36,7 @@ pub(crate) mod test_util {
     use syn_locator::LocateEntry;
 
     pub(crate) fn parse<'scx, T: Parse + LocateEntry, U: FromSyn<'scx, T>>(
-        scx: &'scx SyntaxContext,
+        scx: &'scx SyntaxCx,
         text: &str,
     ) -> U {
         static ID: AtomicU32 = AtomicU32::new(0);
@@ -50,8 +50,8 @@ pub(crate) mod test_util {
         U::from_syn(scx, syn)
     }
 
-    pub(crate) fn create_context() -> SyntaxContext {
+    pub(crate) fn create_context() -> SyntaxCx {
         let interner = DroplessInterner::new();
-        SyntaxContext::new(interner)
+        SyntaxCx::new(interner)
     }
 }

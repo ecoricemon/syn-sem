@@ -1,4 +1,4 @@
-use crate::{FromSyn, Path, Span, SyntaxContext};
+use crate::{FromSyn, Path, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
@@ -9,7 +9,7 @@ pub enum Visibility<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Visibility> for Visibility<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::Visibility) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Visibility) -> Self {
         match input {
             syn::Visibility::Public(v) => Self::Public(Span::from_locatable(scx, v)),
             syn::Visibility::Restricted(v) => Self::PublicPath(Path::from_syn(scx, &v.path)),

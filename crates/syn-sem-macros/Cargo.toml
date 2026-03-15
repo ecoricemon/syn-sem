@@ -1,6 +1,6 @@
 [package]
 name = "syn-sem-macros"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.66.1"
 description = "macros for syn-sem"

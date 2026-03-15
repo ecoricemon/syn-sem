@@ -1,15 +1,17 @@
-use crate::SyntaxContext;
+use crate::SyntaxCx;
 use any_intern::Interned;
+use num_traits::ToPrimitive;
 use std::{mem, ops::Deref, path::Path};
 use syn::punctuated::Punctuated;
 use syn_locator::Locate;
+use syn_sem_macros::CheckDropless;
 
 pub trait FromSyn<'scx, Input: ?Sized>: 'scx {
-    fn from_syn(scx: &'scx SyntaxContext, input: &Input) -> Self;
+    fn from_syn(scx: &'scx SyntaxCx, input: &Input) -> Self;
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, [T]> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxContext, input: &[T]) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &[T]) -> Self {
         let len = input.len();
         let mut items = input.iter();
         scx.alloc_slice(len, |_| {
@@ -19,8 +21,14 @@ impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, [T]> for &'scx [U] {
     }
 }
 
+impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Vec<T>> for &'scx [U] {
+    fn from_syn(scx: &'scx SyntaxCx, input: &Vec<T>) -> Self {
+        Self::from_syn(scx, input.as_slice())
+    }
+}
+
 impl<'scx, U: FromSyn<'scx, T>, T, P> FromSyn<'scx, Punctuated<T, P>> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxContext, input: &Punctuated<T, P>) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &Punctuated<T, P>) -> Self {
         let len = input.len();
         let mut items = input.into_iter();
         scx.alloc_slice(len, |_| {
@@ -31,33 +39,31 @@ impl<'scx, U: FromSyn<'scx, T>, T, P> FromSyn<'scx, Punctuated<T, P>> for &'scx 
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Option<T>> for Option<U> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &Option<T>) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &Option<T>) -> Self {
         input.as_ref().map(|t| U::from_syn(scx, t))
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Ident<'scx> {
     pub inner: Interned<'scx, str>,
     pub span: Span<'scx>,
 }
 
 impl<'scx> Ident<'scx> {
-    pub fn empty(scx: &'scx SyntaxContext) -> Self {
-        Self {
-            inner: scx.intern(""),
-            span: Span::undefined(),
-        }
+    pub fn empty(scx: &'scx SyntaxCx) -> Self {
+        Self::from_str(scx, "", Span::empty())
     }
 
-    pub fn from_usize(scx: &'scx SyntaxContext, value: usize, span: Span<'scx>) -> Self {
+    pub fn from_str(scx: &'scx SyntaxCx, value: &str, span: Span<'scx>) -> Self {
         Self {
-            inner: scx.intern_formatted_str(&value, value % 10 + 1),
+            inner: scx.intern(value),
             span,
         }
     }
 
-    pub fn from_u32(scx: &'scx SyntaxContext, value: u32, span: Span<'scx>) -> Self {
+    pub fn from_number<T: ToPrimitive>(scx: &'scx SyntaxCx, value: T, span: Span<'scx>) -> Self {
+        let value = value.to_u64().unwrap();
         Self {
             inner: scx.intern_formatted_str(&value, (value % 10 + 1) as usize),
             span,
@@ -66,9 +72,18 @@ impl<'scx> Ident<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Ident> for Ident<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::Ident) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Ident) -> Self {
         Self {
             inner: scx.intern(&input.to_string()),
+            span: Span::from_locatable(scx, input),
+        }
+    }
+}
+
+impl<'scx> FromSyn<'scx, syn::Token![self]> for Ident<'scx> {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Token![self]) -> Self {
+        Self {
+            inner: scx.intern("self"),
             span: Span::from_locatable(scx, input),
         }
     }
@@ -82,7 +97,13 @@ impl<'scx> Deref for Ident<'scx> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct Isize<'scx> {
+    pub value: isize,
+    pub span: Span<'scx>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Span<'scx> {
     pub text: &'scx str,
     pub start: u32,
@@ -90,7 +111,7 @@ pub struct Span<'scx> {
 }
 
 impl<'scx> Span<'scx> {
-    pub fn undefined() -> Self {
+    pub fn empty() -> Self {
         Self {
             text: "",
             start: 0,
@@ -98,15 +119,15 @@ impl<'scx> Span<'scx> {
         }
     }
 
-    pub fn from_locatable<T: Locate>(scx: &'scx SyntaxContext, value: &T) -> Self {
+    pub fn from_locatable<T: Locate>(scx: &'scx SyntaxCx, value: &T) -> Self {
         let loc = value.location();
         let file_path = &*loc.file_path;
         let source = scx.get_source(Path::new(file_path));
         let text = &*source.text;
 
         // Change lifetime to 'scx.
-        // Safety: `Span<'scx>` cannot outlive the `SyntaxContext`. In other words, the text inside
-        // `SyntaxContext` is guaranteed to be valid while `Span<'scx>` is alive.
+        // Safety: `Span<'scx>` cannot outlive the `SyntaxCx`. In other words, the text inside
+        // `SyntaxCx` is guaranteed to be valid while `Span<'scx>` is alive.
         let text = unsafe { mem::transmute::<&str, &str>(text) };
 
         Self {
@@ -123,7 +144,7 @@ impl<'scx> Span<'scx> {
 
 impl Default for Span<'_> {
     fn default() -> Self {
-        Self::undefined()
+        Self::empty()
     }
 }
 

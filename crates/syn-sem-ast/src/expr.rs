@@ -1,11 +1,14 @@
-use crate::{FromSyn, Ident, Lit, Path, Span, SyntaxContext};
+use crate::{Block, FromSyn, Ident, Lit, Path, Span, SyntaxCx, Type};
 use syn_sem_macros::CheckDropless;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub enum Expr<'scx> {
     Array(ExprArray<'scx>),
+    Assign(ExprAssign<'scx>),
     Binary(ExprBinary<'scx>),
+    Block(ExprBlock<'scx>),
     Call(ExprCall<'scx>),
+    Cast(ExprCast<'scx>),
     Field(ExprField<'scx>),
     Index(ExprIndex<'scx>),
     Lit(ExprLit<'scx>),
@@ -16,11 +19,14 @@ pub enum Expr<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Expr> for Expr<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::Expr) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Expr) -> Self {
         match input {
             syn::Expr::Array(v) => Self::Array(ExprArray::from_syn(scx, v)),
+            syn::Expr::Assign(v) => Self::Assign(ExprAssign::from_syn(scx, v)),
             syn::Expr::Binary(v) => Self::Binary(ExprBinary::from_syn(scx, v)),
+            syn::Expr::Block(v) => Self::Block(ExprBlock::from_syn(scx, v)),
             syn::Expr::Call(v) => Self::Call(ExprCall::from_syn(scx, v)),
+            syn::Expr::Cast(v) => Self::Cast(ExprCast::from_syn(scx, v)),
             syn::Expr::Field(v) => Self::Field(ExprField::from_syn(scx, v)),
             syn::Expr::Index(v) => Self::Index(ExprIndex::from_syn(scx, v)),
             syn::Expr::Lit(v) => Self::Lit(ExprLit::from_syn(scx, v)),
@@ -40,9 +46,26 @@ pub struct ExprArray<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprArray> for ExprArray<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprArray) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprArray) -> Self {
         Self {
             elems: FromSyn::from_syn(scx, &input.elems),
+            span: Span::from_locatable(scx, input),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct ExprAssign<'scx> {
+    pub left: &'scx Expr<'scx>,
+    pub right: &'scx Expr<'scx>,
+    pub span: Span<'scx>,
+}
+
+impl<'scx> FromSyn<'scx, syn::ExprAssign> for ExprAssign<'scx> {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprAssign) -> Self {
+        Self {
+            left: scx.alloc(Expr::from_syn(scx, &input.left)),
+            right: scx.alloc(Expr::from_syn(scx, &input.right)),
             span: Span::from_locatable(scx, input),
         }
     }
@@ -56,10 +79,25 @@ pub struct ExprBinary<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprBinary> for ExprBinary<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprBinary) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprBinary) -> Self {
         Self {
             left: scx.alloc(Expr::from_syn(scx, &input.left)),
             right: scx.alloc(Expr::from_syn(scx, &input.right)),
+            span: Span::from_locatable(scx, input),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct ExprBlock<'scx> {
+    pub block: Block<'scx>,
+    pub span: Span<'scx>,
+}
+
+impl<'scx> FromSyn<'scx, syn::ExprBlock> for ExprBlock<'scx> {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprBlock) -> Self {
+        Self {
+            block: Block::from_syn(scx, &input.block),
             span: Span::from_locatable(scx, input),
         }
     }
@@ -73,10 +111,27 @@ pub struct ExprCall<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprCall> for ExprCall<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprCall) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprCall) -> Self {
         Self {
             func: scx.alloc(Expr::from_syn(scx, &input.func)),
             args: FromSyn::from_syn(scx, &input.args),
+            span: Span::from_locatable(scx, input),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct ExprCast<'scx> {
+    pub expr: &'scx Expr<'scx>,
+    pub ty: &'scx Type<'scx>,
+    pub span: Span<'scx>,
+}
+
+impl<'scx> FromSyn<'scx, syn::ExprCast> for ExprCast<'scx> {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprCast) -> Self {
+        Self {
+            expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
+            ty: scx.alloc(Type::from_syn(scx, &input.ty)),
             span: Span::from_locatable(scx, input),
         }
     }
@@ -90,11 +145,11 @@ pub struct ExprField<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprField> for ExprField<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprField) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprField) -> Self {
         let member = match &input.member {
             syn::Member::Named(ident) => Ident::from_syn(scx, ident),
             syn::Member::Unnamed(idx) => {
-                Ident::from_u32(scx, idx.index, Span::from_locatable(scx, idx))
+                Ident::from_number(scx, idx.index, Span::from_locatable(scx, idx))
             }
         };
         Self {
@@ -113,7 +168,7 @@ pub struct ExprIndex<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprIndex> for ExprIndex<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprIndex) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprIndex) -> Self {
         Self {
             expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
             index: scx.alloc(Expr::from_syn(scx, &input.index)),
@@ -129,7 +184,7 @@ pub struct ExprLit<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprLit> for ExprLit<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprLit) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprLit) -> Self {
         Self {
             lit: Lit::from_syn(scx, &input.lit),
             span: Span::from_locatable(scx, input),
@@ -146,7 +201,7 @@ pub struct ExprMethodCall<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprMethodCall> for ExprMethodCall<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprMethodCall) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprMethodCall) -> Self {
         Self {
             receiver: scx.alloc(Expr::from_syn(scx, &input.receiver)),
             method: Ident::from_syn(scx, &input.method),
@@ -163,7 +218,7 @@ pub struct ExprParen<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprParen> for ExprParen<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprParen) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprParen) -> Self {
         Self {
             expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
             span: Span::from_locatable(scx, input),
@@ -178,7 +233,7 @@ pub struct ExprPath<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprPath> for ExprPath<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprPath) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprPath) -> Self {
         Self {
             path: Path::from_syn(scx, &input.path),
             span: Span::from_locatable(scx, input),
@@ -193,7 +248,7 @@ pub struct ExprReference<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprReference> for ExprReference<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::ExprReference) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprReference) -> Self {
         Self {
             expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
             span: Span::from_locatable(scx, input),
