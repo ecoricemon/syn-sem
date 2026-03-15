@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub mod ds;
 pub(crate) mod etc;
 pub(crate) mod semantic;
