@@ -12,13 +12,13 @@ use std::{
 use syn::parse::Parse;
 use syn_locator::LocateEntry;
 
-pub struct SyntaxContext {
+pub struct SyntaxCx {
     pub bump: Bump,
     pub interner: DroplessInterner,
     pub files: DashMap<PathBuf, Source>,
 }
 
-impl SyntaxContext {
+impl SyntaxCx {
     pub fn new(interner: DroplessInterner) -> Self {
         Self {
             bump: Bump::new(),

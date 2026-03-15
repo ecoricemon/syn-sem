@@ -64,8 +64,7 @@ jobs:
             echo "Checking crate: $crate"
             cd crates/$crate
             # Count occurrences of the "unsafe" keyword in the source files
-            unsafe_count=$(grep -r "unsafe" . | wc -l)
-            if [ "$unsafe_count" -gt 0 ]; then
+            if [ "$(grep -r "unsafe" . | wc -l)" -gt 0 ]; then
               echo "Crate $crate contains unsafe code!"
               unsafe_crates+=("\"$crate\"") # Add quotes around crate names
             else
@@ -95,7 +94,8 @@ jobs:
       - name: Enable debug symbols
         run: |
           # to get the symbolizer for debug symbol resolution
-          sudo apt install llvm
+          sudo apt-get update
+          sudo apt-get install -y llvm
           # to fix buggy leak analyzer:
           # https://github.com/japaric/rust-san#unrealiable-leaksanitizer
           # ensure there's a profile.dev section

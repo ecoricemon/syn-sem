@@ -1,4 +1,4 @@
-use crate::{FromSyn, Span, SyntaxContext};
+use crate::{FromSyn, Span, SyntaxCx};
 use any_intern::Interned;
 use std::str::FromStr;
 use syn_sem_macros::CheckDropless;
@@ -21,7 +21,7 @@ impl<'scx> Lit<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Lit> for Lit<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::Lit) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Lit) -> Self {
         match input {
             syn::Lit::Int(v) => Self::Int(LitInt::from_syn(scx, v)),
             syn::Lit::Float(v) => Self::Float(LitFloat::from_syn(scx, v)),
@@ -48,7 +48,7 @@ impl LitInt<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitInt> for LitInt<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::LitInt) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitInt) -> Self {
         Self {
             literal: scx.intern(input.base10_digits()),
             span: Span::from_locatable(scx, input),
@@ -73,7 +73,7 @@ impl LitFloat<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitFloat> for LitFloat<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::LitFloat) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitFloat) -> Self {
         Self {
             literal: scx.intern(input.base10_digits()),
             span: Span::from_locatable(scx, input),
@@ -97,7 +97,7 @@ impl LitBool<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitBool> for LitBool<'scx> {
-    fn from_syn(scx: &'scx SyntaxContext, input: &syn::LitBool) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitBool) -> Self {
         Self {
             value: input.value,
             span: Span::from_locatable(scx, input),

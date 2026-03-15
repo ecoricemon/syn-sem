@@ -1,6 +1,6 @@
 [package]
 name = "syn-sem-ast"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.66.1"
 description = "Syntax for syn-sem"
@@ -15,3 +15,4 @@ syn-locator = { workspace = true }
 bumpalo = { workspace = true }
 syn = { workspace = true, features = ["full", "extra-traits"] }
 dashmap = { workspace = true }
+num-traits = { workspace = true }
