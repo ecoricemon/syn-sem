@@ -6,6 +6,8 @@ An experimental semantic analyzer for a subset of Rust.
 perform deep semantic analysis of Rust source code, including type inference,
 constant evaluation, trait resolution, and monomorphization of generic code.
 
+![syn-sem overview](docs/syn-sem-diagram.svg)
+
 ## Status
 
 This is an early-stage experimental library (`0.0.1`). The API is unstable and
