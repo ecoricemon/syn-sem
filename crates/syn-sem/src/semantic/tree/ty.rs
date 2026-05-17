@@ -272,8 +272,11 @@ impl fmt::Display for OwnedType {
             Self::Path { name, .. } => f.write_str(name),
             Self::Tuple(elems) => {
                 f.write_char('(')?;
-                for elem in elems.iter() {
+                for (i, elem) in elems.iter().enumerate() {
                     fmt::Display::fmt(elem, f)?;
+                    if i + 1 < elems.len() {
+                        f.write_str(", ")?;
+                    }
                 }
                 f.write_char(')')
             }

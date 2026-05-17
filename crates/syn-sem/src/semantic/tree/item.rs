@@ -1242,6 +1242,10 @@ impl Local {
     pub fn syn_type<'o>(&self) -> Option<&'o syn::Type> {
         self.ptr_ty.map(|ptr| unsafe { ptr.as_ref() })
     }
+
+    pub fn type_id(&self) -> TypeId {
+        self.tid
+    }
 }
 
 impl fmt::Debug for Local {
