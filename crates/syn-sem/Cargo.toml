@@ -31,3 +31,15 @@ bitflags = { workspace = true }
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 env_logger = "0.10.2"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+name = "constant_evaluation"
+path = "examples/constant_evaluation.rs"
+
+[[example]]
+name = "type_inference"
+path = "examples/type_inference.rs"
