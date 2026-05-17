@@ -10,6 +10,10 @@ monomorphized generic code.
 This crate is early-stage (`0.0.1`). The API is useful for experiments, but it
 is still unstable and may change.
 
+## Architecture
+
+![syn-sem overview](https://raw.githubusercontent.com/ecoricemon/syn-sem/main/crates/syn-sem/docs/syn-sem-diagram.svg)
+
 ## What This Crate Is For
 
 Use `syn-sem` when you want to ask questions about Rust code that are deeper
