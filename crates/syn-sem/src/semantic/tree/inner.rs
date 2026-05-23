@@ -275,7 +275,7 @@ impl<'gcx, T: ItemTrait> PathTree<'gcx, T> {
 
                 // Looks into `Local` without checking the visibility (it doesn't have).
                 if item.effective_kind() == EffectiveItemKind::Local {
-                    let end = item.syn_id().unwrap().as_identify_syn().location().end;
+                    let end = item.local_end().unwrap();
                     if end < pivot && (pivot - end) < least_diff {
                         least_diff = pivot - end;
                         found.set(Some(pid));

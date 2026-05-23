@@ -1,6 +1,9 @@
 use crate::{Expr, FromSyn, InputDesc, Item, Pat, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
+/// A braced block of statements.
+///
+/// For example, `{ let x = 1; x }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Block<'scx> {
     pub stmts: &'scx [Stmt<'scx>],
@@ -22,6 +25,9 @@ impl<'scx> FromSyn<'scx, syn::Block> for Block<'scx> {
     }
 }
 
+/// A statement inside a block.
+///
+/// Examples include `let x = 1;`, an item like `fn f() {}`, and an expression statement.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub enum Stmt<'scx> {
     Local(Local<'scx>),
@@ -58,6 +64,9 @@ impl<'scx> FromSyn<'scx, syn::Stmt> for Stmt<'scx> {
     }
 }
 
+/// A local `let` binding.
+///
+/// For example, `let x: i32 = 1;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Local<'scx> {
     pub pat: Pat<'scx>,
@@ -87,6 +96,9 @@ impl<'scx> FromSyn<'scx, syn::Local> for Local<'scx> {
     }
 }
 
+/// The initializer expression of a local binding.
+///
+/// For example, `= 1` in `let x = 1;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct LocalInit<'scx> {
     pub expr: &'scx Expr<'scx>,

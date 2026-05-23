@@ -10,13 +10,13 @@ use crate::{
     },
     syntax::{
         common::{FindChildren, IdentifySyn, SynId},
-        SyntaxTree,
+        ClonedImpl, SyntaxTree,
     },
     Intern, Result, TriResult,
 };
 use any_intern::Interned;
 use std::{any, fmt::Write, mem};
-use syn_locator::{Locate, LocateEntry};
+use syn_locator::Locate;
 
 #[derive(Debug)]
 pub(super) struct Monomorphizer {/* Nothing for now */}
@@ -187,20 +187,25 @@ impl<'gcx> MonomorphizeCx<'_, 'gcx> {
         &mut self,
         item_impl: &syn::ItemImpl,
     ) -> Result<(SynId, syn::Generics)> {
-        let mut dst_code = item_impl.code();
-        let loc_impl = item_impl.location();
+        let locator = self
+            .stree
+            .locator_of(item_impl.syn_id())
+            .expect("failed to find locator for impl");
+        let mut dst_code = item_impl.code(locator);
+        let loc_impl = item_impl.location(locator);
+        let src_file_path = locator.file_path().to_owned();
 
         // Removes generics from the code.
         if let Some(where_clause) = &item_impl.generics.where_clause {
-            let loc_where = where_clause.location();
+            let loc_where = where_clause.location(locator);
             let l = loc_where.start - loc_impl.start;
             let r = loc_where.end - loc_impl.start;
             dst_code.replace_range(l..r, "");
         }
         if let Some(lt_token) = &item_impl.generics.lt_token {
             if let Some(gt_token) = &item_impl.generics.gt_token {
-                let l = lt_token.location().start - loc_impl.start;
-                let r = gt_token.location().end - loc_impl.start;
+                let l = lt_token.location(locator).start - loc_impl.start;
+                let r = gt_token.location(locator).end - loc_impl.start;
                 dst_code.replace_range(l..r, "");
             }
         }
@@ -211,10 +216,9 @@ impl<'gcx> MonomorphizeCx<'_, 'gcx> {
 
         // We made a new syntax tree and its code, so let's add it to `syn_locator` like
         // `syn::File`.
-        let pinned_impl = Box::pin(dst_impl);
-        let sid_impl = pinned_impl.as_ref().syn_id();
-        let file_path = format!("{}:{}", loc_impl.file_path, loc_impl.start);
-        pinned_impl.as_ref().locate_as_entry(&file_path, dst_code)?;
+        let file_path = format!("{}:{}", src_file_path, loc_impl.start);
+        let pinned_impl = ClonedImpl::new(dst_impl, &file_path, dst_code)?;
+        let sid_impl = pinned_impl.item_impl.syn_id();
         self.stree.insert_impl(file_path.into(), pinned_impl);
 
         Ok((sid_impl, generics))

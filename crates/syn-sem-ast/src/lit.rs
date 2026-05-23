@@ -3,6 +3,9 @@ use any_intern::Interned;
 use std::str::FromStr;
 use syn_sem_macros::CheckDropless;
 
+/// A literal expression value supported by the semantic AST.
+///
+/// Examples include `1`, `1.0`, and `true`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub enum Lit<'scx> {
     Int(LitInt<'scx>),
@@ -57,6 +60,9 @@ impl<'scx> FromSyn<'scx, syn::Lit> for Lit<'scx> {
     }
 }
 
+/// An integer literal.
+///
+/// For example, `42` or `0xff` is stored by its base-10 digits for semantic parsing.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct LitInt<'scx> {
     pub literal: Interned<'scx, str>,
@@ -82,6 +88,9 @@ impl<'scx> FromSyn<'scx, syn::LitInt> for LitInt<'scx> {
     }
 }
 
+/// A floating-point literal.
+///
+/// For example, `1.0` or `3.14` is stored by its base-10 digits for semantic parsing.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct LitFloat<'scx> {
     pub literal: Interned<'scx, str>,
@@ -107,6 +116,9 @@ impl<'scx> FromSyn<'scx, syn::LitFloat> for LitFloat<'scx> {
     }
 }
 
+/// A boolean literal.
+///
+/// Examples are `true` and `false`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct LitBool<'scx> {
     pub value: bool,
@@ -138,6 +150,7 @@ mod tests {
 
     #[test]
     fn test_lit_int() {
+        // Proves integer literals preserve their parsed numeric value.
         let scx = SyntaxCx::default();
         let value = parse::<syn::LitInt, LitInt>(&scx, "1");
         assert_eq!(value.base10_parse::<i32>().unwrap(), 1);
@@ -145,6 +158,7 @@ mod tests {
 
     #[test]
     fn test_lit_float() {
+        // Proves float literals preserve their parsed numeric value.
         let scx = SyntaxCx::default();
         let value = parse::<syn::LitFloat, LitFloat>(&scx, "1.");
         assert_eq!(value.base10_parse::<f32>().unwrap(), 1.);
@@ -152,6 +166,7 @@ mod tests {
 
     #[test]
     fn test_lit_bool() {
+        // Proves boolean literals preserve true and false values.
         let scx = SyntaxCx::default();
 
         let value = parse::<syn::LitBool, LitBool>(&scx, "true");

@@ -1,10 +1,14 @@
 use crate::{Expr, FromSyn, Ident, InputDesc, Span, SyntaxCx, Type, Visibility};
 use syn_sem_macros::CheckDropless;
 
+/// A struct or union field.
+///
+/// For example, `pub x: i32` in `struct S { pub x: i32 }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Field<'scx> {
     pub vis: Visibility<'scx>,
     pub ident: Ident<'scx>,
+    pub ty: Type<'scx>,
     pub span: Span<'scx>,
 }
 
@@ -32,7 +36,19 @@ impl<'scx> FromSyn<'scx, syn::Field> for Field<'scx> {
             })
             .unwrap_or(Ident::empty(scx));
         let span = Span::from_locatable(scx, desc.file_path, desc.input);
-        Self { vis, ident, span }
+        let ty = Type::from_syn(
+            scx,
+            InputDesc {
+                file_path: desc.file_path,
+                input: &desc.input.ty,
+            },
+        );
+        Self {
+            vis,
+            ident,
+            ty,
+            span,
+        }
     }
 }
 
@@ -67,6 +83,9 @@ impl<'scx> FromSyn<'scx, syn::Fields> for &'scx [Field<'scx>] {
     }
 }
 
+/// An enum variant.
+///
+/// Examples include `A`, `B(i32)`, `C { value: i32 }`, and `D = 1`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Variant<'scx> {
     pub ident: Ident<'scx>,
@@ -115,6 +134,9 @@ impl<'scx> FromSyn<'scx, syn::Variant> for Variant<'scx> {
     }
 }
 
+/// The payload shape of an enum variant.
+///
+/// For example, `Some(T)` has fields, `None` is unit, and `A = 1` has a discriminant.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub enum VariantKind<'scx> {
     Fields(&'scx [VariantField<'scx>]),
@@ -122,6 +144,9 @@ pub enum VariantKind<'scx> {
     Unit,
 }
 
+/// A field inside an enum variant payload.
+///
+/// For example, `value: i32` in `Variant { value: i32 }`, or synthesized index `0` in `Variant(i32)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct VariantField<'scx> {
     pub ident: Ident<'scx>,

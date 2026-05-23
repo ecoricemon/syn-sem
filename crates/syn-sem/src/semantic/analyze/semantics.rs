@@ -464,9 +464,6 @@ mod tests {
         gcx: &'gcx GlobalCx<'gcx>,
         files: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Analyzer<'gcx> {
-        syn_locator::enable_thread_local(true);
-        syn_locator::clear();
-
         util::set_crate_name(util::cargo_crate_name());
 
         let mut analyzer = Analyzer::new(gcx);

@@ -773,16 +773,10 @@ mod tests {
         Intern, Result, TriResult, TriResultHelper,
     };
     use logic_eval_util::str::StrPath;
-    use syn_locator::{Find, LocateEntry};
+    use syn_locator::Located;
 
-    fn parse(code: &str) -> syn::Expr {
-        syn_locator::enable_thread_local(true);
-        syn_locator::clear();
-
-        let expr: syn::Expr = syn::parse_str(code).unwrap();
-        let pinned = std::pin::Pin::new(&expr);
-        pinned.locate_as_entry("mod.rs", code).unwrap();
-        expr
+    fn parse(code: &str) -> Located<syn::Expr> {
+        syn_locator::locate("mod.rs", code).unwrap()
     }
 
     #[test]
@@ -1104,7 +1098,7 @@ mod tests {
 
         struct TestEvalHost<'a, 'gcx> {
             inferer: &'a mut Inferer<'gcx>,
-            expr: &'a syn::Expr,
+            expr: &'a Located<syn::Expr>,
         }
 
         impl<'gcx> Host<'gcx> for TestEvalHost<'_, 'gcx> {

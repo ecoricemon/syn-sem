@@ -9,7 +9,6 @@ fn test_read_file() {
     env_logger::init();
 
     test_read_physical_file();
-    syn_locator::clear();
     test_read_virtual_file()
 }
 

@@ -13,8 +13,8 @@ use crate::{
     ClauseIn, ExprIn, Map, NameIn, PredicateIn, Set, TermIn, TriResult,
 };
 use logic_eval::{Clause, ClauseIter, Database, Expr, Name, ProveCx, Term, VAR_PREFIX};
+use quote::ToTokens;
 use std::{borrow, hash::Hash, iter, ops};
-use syn_locator::Locate;
 
 /// Auto-generated variables will be named in order of '$#A', '$#B', ..., '$#Z', '$#0', '$#1', ...
 const AUTO_VAR_PREFIX: &str = "$#";
@@ -860,7 +860,7 @@ impl<'a, 'b, 'gcx, H: Host<'gcx>> Finder<'a, 'b, 'gcx, H> {
                     },
                     ArrayLen::Dynamic => unreachable!(),
                     ArrayLen::Generic => Term {
-                        functor: var_name(&len.code(), self.gcx), // TODO: if len is complex expr?
+                        functor: var_name(&len.to_token_stream().to_string(), self.gcx), // TODO: if len is complex expr?
                         args: [].into(),
                     },
                 };

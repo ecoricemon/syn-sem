@@ -4,6 +4,10 @@ use bumpalo::Bump;
 use std::{any::Any, fmt::Display, mem};
 use syn_locator::{LocateEntry, Locator};
 
+/// Allocation and interning context used by the semantic AST.
+///
+/// For example, parsing a virtual file stores its source text here and allocates AST slices from
+/// this context.
 pub struct SyntaxCx {
     pub bump: Bump,
     pub interner: DroplessInterner,
@@ -83,6 +87,9 @@ impl Default for SyntaxCx {
     }
 }
 
+/// Source text and locator state for one parsed file.
+///
+/// For example, a virtual file added for tests stores its full text and path in this value.
 pub struct Source {
     pub kind: SourceKind,
     pub text: Box<str>,
@@ -110,6 +117,9 @@ impl Source {
 }
 
 #[derive(Debug)]
+/// Distinguishes whether a source came from disk or was provided in memory.
+///
+/// For example, tests usually create `Virtual` sources while workspace files are `Physical`.
 pub enum SourceKind {
     Physical,
     Virtual,
