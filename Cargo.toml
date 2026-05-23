@@ -4,7 +4,7 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 syn-sem-macros = { version = "0.0.1", path = "crates/syn-sem-macros" }
-syn-locator = "0.1.7"
+syn-locator = "0.2.0"
 logic-eval = "0.1.5"
 logic-eval-util = "0.1.5"
 any-intern = "0.1.5"
@@ -24,3 +24,4 @@ bitflags = "2.11.0"
 bumpalo = "3.10.0"
 dashmap = "6.1.0"
 num-traits = "0.2.19"
+elsa = "1.11.2"

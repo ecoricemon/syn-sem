@@ -1,4 +1,4 @@
-use crate::{FromSyn, Ident, Span, SyntaxCx};
+use crate::{FromSyn, Ident, InputDesc, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
@@ -33,10 +33,16 @@ impl<'scx> Path<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Path> for Path<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Path) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Path>) -> Self {
         Self {
-            segments: FromSyn::from_syn(scx, &input.segments),
-            span: Span::from_locatable(scx, input),
+            segments: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.segments,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -57,10 +63,16 @@ impl<'scx> PathSegment<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::PathSegment> for PathSegment<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::PathSegment) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::PathSegment>) -> Self {
         Self {
-            ident: Ident::from_syn(scx, &input.ident),
-            span: Span::from_locatable(scx, input),
+            ident: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ident,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }

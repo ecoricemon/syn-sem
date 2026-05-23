@@ -1,6 +1,6 @@
 use crate::{
-    Block, Expr, Field, FromSyn, Ident, Pat, PatIdent, PatType, Span, SyntaxCx, Type, Variant,
-    Visibility,
+    Block, Expr, Field, FromSyn, Ident, InputDesc, Pat, PatIdent, PatType, Span, SyntaxCx, Type,
+    Variant, Visibility,
 };
 use std::iter;
 use syn_sem_macros::CheckDropless;
@@ -14,12 +14,36 @@ pub enum Item<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Item> for Item<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Item) -> Self {
-        match input {
-            syn::Item::Const(v) => Item::Const(ItemConst::from_syn(scx, v)),
-            syn::Item::Enum(v) => Item::Enum(ItemEnum::from_syn(scx, v)),
-            syn::Item::Fn(v) => Item::Fn(ItemFn::from_syn(scx, v)),
-            syn::Item::Struct(v) => Item::Struct(ItemStruct::from_syn(scx, v)),
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Item>) -> Self {
+        match desc.input {
+            syn::Item::Const(v) => Item::Const(ItemConst::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Item::Enum(v) => Item::Enum(ItemEnum::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Item::Fn(v) => Item::Fn(ItemFn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Item::Struct(v) => Item::Struct(ItemStruct::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
             _ => todo!(),
         }
     }
@@ -35,13 +59,37 @@ pub struct ItemConst<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ItemConst> for ItemConst<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ItemConst) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemConst>) -> Self {
         Self {
-            vis: Visibility::from_syn(scx, &input.vis),
-            ident: Ident::from_syn(scx, &input.ident),
-            ty: scx.alloc(Type::from_syn(scx, &input.ty)),
-            init: scx.alloc(Expr::from_syn(scx, &input.expr)),
-            span: Span::from_locatable(scx, input),
+            vis: Visibility::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.vis,
+                },
+            ),
+            ident: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ident,
+                },
+            ),
+            ty: scx.alloc(Type::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ty,
+                },
+            )),
+            init: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.expr,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -55,12 +103,30 @@ pub struct ItemEnum<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ItemEnum> for ItemEnum<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ItemEnum) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemEnum>) -> Self {
         Self {
-            vis: Visibility::from_syn(scx, &input.vis),
-            ident: Ident::from_syn(scx, &input.ident),
-            variants: FromSyn::from_syn(scx, &input.variants),
-            span: Span::from_locatable(scx, input),
+            vis: Visibility::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.vis,
+                },
+            ),
+            ident: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ident,
+                },
+            ),
+            variants: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.variants,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -74,12 +140,30 @@ pub struct ItemFn<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ItemFn> for ItemFn<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ItemFn) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemFn>) -> Self {
         Self {
-            vis: Visibility::from_syn(scx, &input.vis),
-            sig: Signature::from_syn(scx, &input.sig),
-            block: Block::from_syn(scx, &input.block),
-            span: Span::from_locatable(scx, input),
+            vis: Visibility::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.vis,
+                },
+            ),
+            sig: Signature::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.sig,
+                },
+            ),
+            block: Block::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.block,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -93,12 +177,30 @@ pub struct ItemStruct<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ItemStruct> for ItemStruct<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ItemStruct) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemStruct>) -> Self {
         Self {
-            vis: Visibility::from_syn(scx, &input.vis),
-            ident: Ident::from_syn(scx, &input.ident),
-            fields: FromSyn::from_syn(scx, &input.fields),
-            span: Span::from_locatable(scx, input),
+            vis: Visibility::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.vis,
+                },
+            ),
+            ident: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ident,
+                },
+            ),
+            fields: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.fields,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -111,17 +213,32 @@ pub struct Signature<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Signature> for Signature<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Signature) -> Self {
-        let output = Parameter::from_return_type(scx, &input.output, ParameterCx::Fn);
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Signature>) -> Self {
+        let output =
+            Parameter::from_return_type(scx, desc.file_path, &desc.input.output, ParameterCx::Fn);
         let output = iter::once(output);
-        let inputs = input.inputs.iter().map(|arg| Parameter::from_syn(scx, arg));
+        let inputs = desc.input.inputs.iter().map(|arg| {
+            Parameter::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: arg,
+                },
+            )
+        });
         let mut params = output.chain(inputs);
-        let len = input.inputs.len() + 1;
+        let len = desc.input.inputs.len() + 1;
 
         Self {
-            ident: Ident::from_syn(scx, &input.ident),
+            ident: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ident,
+                },
+            ),
             params: scx.alloc_slice(len, |_| params.next().unwrap()),
-            span: Span::from_locatable(scx, input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -136,18 +253,25 @@ impl<'scx> Parameter<'scx> {
     /// Creates a parameter with the ident `0`.
     pub fn from_return_type(
         scx: &'scx SyntaxCx,
+        file_path: &str,
         ret_ty: &syn::ReturnType,
         cx: ParameterCx,
     ) -> Self {
         const IDENT: u32 = 0;
 
-        let span = Span::from_locatable(scx, ret_ty);
+        let span = Span::from_locatable(scx, file_path, ret_ty);
         let ty = match ret_ty {
             syn::ReturnType::Default => match cx {
                 ParameterCx::Fn => Type::unit(span),
                 ParameterCx::Closure => Type::Infer(span),
             },
-            syn::ReturnType::Type(_, ty) => Type::from_syn(scx, ty),
+            syn::ReturnType::Type(_, ty) => Type::from_syn(
+                scx,
+                InputDesc {
+                    file_path,
+                    input: ty,
+                },
+            ),
         };
         let pat_ident = Pat::Ident(PatIdent::from_number(scx, IDENT, Span::empty()));
         let pat = PatType {
@@ -160,11 +284,23 @@ impl<'scx> Parameter<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::FnArg> for Parameter<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::FnArg) -> Self {
-        let span = Span::from_locatable(scx, input);
-        let pat = match input {
-            syn::FnArg::Receiver(v) => PatType::from_syn(scx, v),
-            syn::FnArg::Typed(v) => PatType::from_syn(scx, v),
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::FnArg>) -> Self {
+        let span = Span::from_locatable(scx, desc.file_path, desc.input);
+        let pat = match desc.input {
+            syn::FnArg::Receiver(v) => PatType::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            ),
+            syn::FnArg::Typed(v) => PatType::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            ),
         };
         Self { pat, span }
     }
@@ -185,7 +321,7 @@ mod tests {
     fn test_item_struct() {
         type T = syn::ItemStruct;
         type U<'a> = ItemStruct<'a>;
-        let scx = create_context();
+        let scx = SyntaxCx::default();
 
         // Empty struct
         let st = parse::<T, U>(&scx, "struct A;");

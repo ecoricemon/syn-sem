@@ -1,4 +1,4 @@
-use crate::{FromSyn, Span, SyntaxCx};
+use crate::{FromSyn, InputDesc, Span, SyntaxCx};
 use any_intern::Interned;
 use std::str::FromStr;
 use syn_sem_macros::CheckDropless;
@@ -18,14 +18,40 @@ impl<'scx> Lit<'scx> {
             Self::Bool(v) => v.as_str(),
         }
     }
+
+    pub fn span(&self) -> Span<'scx> {
+        match self {
+            Self::Int(v) => v.span,
+            Self::Float(v) => v.span,
+            Self::Bool(v) => v.span,
+        }
+    }
 }
 
 impl<'scx> FromSyn<'scx, syn::Lit> for Lit<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Lit) -> Self {
-        match input {
-            syn::Lit::Int(v) => Self::Int(LitInt::from_syn(scx, v)),
-            syn::Lit::Float(v) => Self::Float(LitFloat::from_syn(scx, v)),
-            syn::Lit::Bool(v) => Self::Bool(LitBool::from_syn(scx, v)),
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Lit>) -> Self {
+        match desc.input {
+            syn::Lit::Int(v) => Self::Int(LitInt::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Lit::Float(v) => Self::Float(LitFloat::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Lit::Bool(v) => Self::Bool(LitBool::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
             _ => todo!(),
         }
     }
@@ -48,10 +74,10 @@ impl LitInt<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitInt> for LitInt<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitInt) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitInt>) -> Self {
         Self {
-            literal: scx.intern(input.base10_digits()),
-            span: Span::from_locatable(scx, input),
+            literal: scx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -73,10 +99,10 @@ impl LitFloat<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitFloat> for LitFloat<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitFloat) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitFloat>) -> Self {
         Self {
-            literal: scx.intern(input.base10_digits()),
-            span: Span::from_locatable(scx, input),
+            literal: scx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -97,10 +123,10 @@ impl LitBool<'_> {
 }
 
 impl<'scx> FromSyn<'scx, syn::LitBool> for LitBool<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::LitBool) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitBool>) -> Self {
         Self {
-            value: input.value,
-            span: Span::from_locatable(scx, input),
+            value: desc.input.value,
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -112,21 +138,21 @@ mod tests {
 
     #[test]
     fn test_lit_int() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
         let value = parse::<syn::LitInt, LitInt>(&scx, "1");
         assert_eq!(value.base10_parse::<i32>().unwrap(), 1);
     }
 
     #[test]
     fn test_lit_float() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
         let value = parse::<syn::LitFloat, LitFloat>(&scx, "1.");
         assert_eq!(value.base10_parse::<f32>().unwrap(), 1.);
     }
 
     #[test]
     fn test_lit_bool() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
 
         let value = parse::<syn::LitBool, LitBool>(&scx, "true");
         assert!(value.value);

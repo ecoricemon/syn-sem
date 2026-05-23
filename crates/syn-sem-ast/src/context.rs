@@ -1,32 +1,16 @@
+use crate::AppendOnlyMap;
 use any_intern::{Dropless, DroplessInterner, Interned};
 use bumpalo::Bump;
-use dashmap::{mapref::one::Ref, DashMap};
-use std::{
-    any::Any,
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-};
-use syn::parse::Parse;
-use syn_locator::LocateEntry;
+use std::{any::Any, fmt::Display, mem};
+use syn_locator::{LocateEntry, Locator};
 
 pub struct SyntaxCx {
     pub bump: Bump,
     pub interner: DroplessInterner,
-    pub files: DashMap<PathBuf, Source>,
+    files: AppendOnlyMap<Box<str>, Box<Source>>,
 }
 
 impl SyntaxCx {
-    pub fn new(interner: DroplessInterner) -> Self {
-        Self {
-            bump: Bump::new(),
-            interner,
-            files: DashMap::default(),
-        }
-    }
-
     pub fn alloc<T>(&self, value: T) -> &T {
         assert!(!mem::needs_drop::<T>());
         self.bump.alloc(value)
@@ -57,52 +41,72 @@ impl SyntaxCx {
             .unwrap()
     }
 
-    pub fn get_source(&self, file_path: &Path) -> Ref<'_, PathBuf, Source> {
-        self.files.get(file_path).unwrap()
+    pub fn parse_physical_file(&self, file_path: Box<str>, text: Box<str>) {
+        self.parse_syntax::<syn::File>(file_path, text, SourceKind::Physical)
     }
 
-    pub fn insert_physical_source<T: Parse + LocateEntry>(
-        &self,
-        file_path: PathBuf,
-        text: Arc<str>,
-    ) {
-        self.insert_file::<T>(file_path, text, SourceKind::Physical)
+    pub fn parse_virtual_file(&self, file_path: Box<str>, text: Box<str>) {
+        self.parse_syntax::<syn::File>(file_path, text, SourceKind::Virtual)
     }
 
-    pub fn insert_virtual_source<T: Parse + LocateEntry>(
-        &self,
-        file_path: PathBuf,
-        text: Arc<str>,
-    ) {
-        self.insert_file::<T>(file_path, text, SourceKind::Virtual)
+    #[cfg(test)]
+    pub(crate) fn parse_virtual_syntax<T>(&self, file_path: Box<str>, text: Box<str>)
+    where
+        T: syn::parse::Parse + LocateEntry + 'static,
+    {
+        self.parse_syntax::<T>(file_path, text, SourceKind::Virtual)
     }
 
-    fn insert_file<T: Parse + LocateEntry>(
-        &self,
-        file_path: PathBuf,
-        text: Arc<str>,
-        kind: SourceKind,
-    ) {
-        let file: T = syn::parse_str(&text).unwrap();
-        let pinned = Box::pin(file);
-        pinned
-            .as_ref()
-            .locate_as_entry(file_path.to_string_lossy().as_ref(), text.clone())
-            .unwrap();
-
-        let source = Source {
-            kind,
-            text,
-            syn: pinned,
-        };
+    fn parse_syntax<T>(&self, file_path: Box<str>, text: Box<str>, kind: SourceKind)
+    where
+        T: syn::parse::Parse + LocateEntry + 'static,
+    {
+        let syntax = Box::new(syn::parse_str::<T>(&text).unwrap());
+        let mut locator = Locator::new(&file_path, text.clone());
+        syntax.locate_as_entry(&mut locator).unwrap();
+        let source = Box::new(Source::new(kind, text, locator, syntax));
         self.files.insert(file_path, source);
+    }
+
+    pub fn get_source(&self, file_path: &str) -> Option<&Source> {
+        self.files.get(file_path)
+    }
+}
+
+impl Default for SyntaxCx {
+    fn default() -> Self {
+        Self {
+            bump: Bump::new(),
+            interner: DroplessInterner::new(),
+            files: AppendOnlyMap::default(),
+        }
     }
 }
 
 pub struct Source {
     pub kind: SourceKind,
-    pub text: Arc<str>,
-    pub syn: Pin<Box<dyn Any>>,
+    pub text: Box<str>,
+    locator: Locator,
+    syntax: Box<dyn Any>,
+}
+
+impl Source {
+    fn new<T: Any>(kind: SourceKind, text: Box<str>, locator: Locator, syntax: Box<T>) -> Self {
+        Self {
+            kind,
+            text,
+            locator,
+            syntax,
+        }
+    }
+
+    pub fn locator(&self) -> &Locator {
+        &self.locator
+    }
+
+    pub fn syntax<T: 'static>(&self) -> Option<&T> {
+        self.syntax.downcast_ref()
+    }
 }
 
 #[derive(Debug)]

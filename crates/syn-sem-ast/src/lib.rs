@@ -24,34 +24,35 @@ pub use restriction::*;
 pub use stmt::*;
 pub use ty::*;
 
+//pub(crate) type Map<K, V> = fxhash::FxHashMap<K, V>;
+pub(crate) type AppendOnlyMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
+
 #[cfg(test)]
 pub(crate) mod test_util {
-    use crate::{FromSyn, SyntaxCx};
-    use any_intern::DroplessInterner;
-    use std::{
-        path::PathBuf,
-        sync::atomic::{AtomicU32, Ordering::Relaxed},
-    };
+    use crate::{FromSyn, InputDesc, SyntaxCx};
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
     use syn::parse::Parse;
     use syn_locator::LocateEntry;
 
-    pub(crate) fn parse<'scx, T: Parse + LocateEntry, U: FromSyn<'scx, T>>(
+    pub(crate) fn parse<'scx, T: Parse + LocateEntry + 'static, U: FromSyn<'scx, T>>(
         scx: &'scx SyntaxCx,
         text: &str,
     ) -> U {
+        // Creates a unique file path.
         static ID: AtomicU32 = AtomicU32::new(0);
         let id = ID.fetch_add(1, Relaxed);
-        let file_path = PathBuf::from(id.to_string());
+        let file_path = id.to_string().into_boxed_str();
 
-        scx.insert_virtual_source::<T>(file_path.clone(), text.into());
-        let source = scx.get_source(&file_path);
-        let syn: &T = source.syn.downcast_ref().unwrap();
-
-        U::from_syn(scx, syn)
-    }
-
-    pub(crate) fn create_context() -> SyntaxCx {
-        let interner = DroplessInterner::new();
-        SyntaxCx::new(interner)
+        // Parses `T` and generates `U`.
+        scx.parse_virtual_syntax::<T>(file_path.clone(), text.into());
+        let source = scx.get_source(&file_path).unwrap();
+        let syn = source.syntax::<T>().unwrap();
+        U::from_syn(
+            scx,
+            InputDesc {
+                file_path: &file_path,
+                input: syn,
+            },
+        )
     }
 }
