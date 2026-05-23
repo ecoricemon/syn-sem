@@ -1,46 +1,77 @@
 use crate::SyntaxCx;
 use any_intern::Interned;
 use num_traits::ToPrimitive;
-use std::{mem, ops::Deref, path::Path};
+use std::ops::Deref;
 use syn::punctuated::Punctuated;
 use syn_locator::Locate;
 use syn_sem_macros::CheckDropless;
 
 pub trait FromSyn<'scx, Input: ?Sized>: 'scx {
-    fn from_syn(scx: &'scx SyntaxCx, input: &Input) -> Self;
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Input>) -> Self;
+}
+
+pub struct InputDesc<'a, Input: ?Sized> {
+    pub file_path: &'a str,
+    pub input: &'a Input,
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, [T]> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, input: &[T]) -> Self {
-        let len = input.len();
-        let mut items = input.iter();
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, [T]>) -> Self {
+        let len = desc.input.len();
+        let mut items = desc.input.iter();
         scx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
-            U::from_syn(scx, t)
+            U::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: t,
+                },
+            )
         })
     }
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Vec<T>> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, input: &Vec<T>) -> Self {
-        Self::from_syn(scx, input.as_slice())
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Vec<T>>) -> Self {
+        Self::from_syn(
+            scx,
+            InputDesc {
+                file_path: desc.file_path,
+                input: desc.input.as_slice(),
+            },
+        )
     }
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T, P> FromSyn<'scx, Punctuated<T, P>> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, input: &Punctuated<T, P>) -> Self {
-        let len = input.len();
-        let mut items = input.into_iter();
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Punctuated<T, P>>) -> Self {
+        let len = desc.input.len();
+        let mut items = desc.input.into_iter();
         scx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
-            U::from_syn(scx, t)
+            U::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: t,
+                },
+            )
         })
     }
 }
 
 impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Option<T>> for Option<U> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &Option<T>) -> Self {
-        input.as_ref().map(|t| U::from_syn(scx, t))
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Option<T>>) -> Self {
+        desc.input.as_ref().map(|t| {
+            U::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: t,
+                },
+            )
+        })
     }
 }
 
@@ -72,19 +103,19 @@ impl<'scx> Ident<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Ident> for Ident<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Ident) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Ident>) -> Self {
         Self {
-            inner: scx.intern(&input.to_string()),
-            span: Span::from_locatable(scx, input),
+            inner: scx.intern(&desc.input.to_string()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
 
 impl<'scx> FromSyn<'scx, syn::Token![self]> for Ident<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Token![self]) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Token![self]>) -> Self {
         Self {
             inner: scx.intern("self"),
-            span: Span::from_locatable(scx, input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -105,9 +136,12 @@ pub struct Isize<'scx> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Span<'scx> {
-    pub text: &'scx str,
-    pub start: u32,
-    pub end: u32,
+    /// The whole source text.
+    //
+    // We do not intern about the whole text.
+    text: &'scx str,
+    start: u32,
+    end: u32,
 }
 
 impl<'scx> Span<'scx> {
@@ -119,16 +153,10 @@ impl<'scx> Span<'scx> {
         }
     }
 
-    pub fn from_locatable<T: Locate>(scx: &'scx SyntaxCx, value: &T) -> Self {
-        let loc = value.location();
-        let file_path = &*loc.file_path;
-        let source = scx.get_source(Path::new(file_path));
+    pub fn from_locatable<T: Locate>(scx: &'scx SyntaxCx, file_path: &str, item: &T) -> Self {
+        let source = scx.get_source(file_path).unwrap();
+        let loc = item.location(source.locator());
         let text = &*source.text;
-
-        // Change lifetime to 'scx.
-        // Safety: `Span<'scx>` cannot outlive the `SyntaxCx`. In other words, the text inside
-        // `SyntaxCx` is guaranteed to be valid while `Span<'scx>` is alive.
-        let text = unsafe { mem::transmute::<&str, &str>(text) };
 
         Self {
             text,
@@ -155,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_ident() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
 
         // Non-empty ident
         let ident = parse::<syn::Ident, Ident>(&scx, "A");

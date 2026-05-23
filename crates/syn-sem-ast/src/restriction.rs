@@ -1,4 +1,4 @@
-use crate::{FromSyn, Path, Span, SyntaxCx};
+use crate::{FromSyn, InputDesc, Path, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
@@ -9,10 +9,18 @@ pub enum Visibility<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Visibility> for Visibility<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Visibility) -> Self {
-        match input {
-            syn::Visibility::Public(v) => Self::Public(Span::from_locatable(scx, v)),
-            syn::Visibility::Restricted(v) => Self::PublicPath(Path::from_syn(scx, &v.path)),
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Visibility>) -> Self {
+        match desc.input {
+            syn::Visibility::Public(v) => {
+                Self::Public(Span::from_locatable(scx, desc.file_path, v))
+            }
+            syn::Visibility::Restricted(v) => Self::PublicPath(Path::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &v.path,
+                },
+            )),
             syn::Visibility::Inherited => Self::Private,
         }
     }
@@ -27,7 +35,7 @@ mod tests {
     fn test_visibility() {
         type T = syn::Visibility;
         type U<'a> = Visibility<'a>;
-        let scx = create_context();
+        let scx = SyntaxCx::default();
 
         // Public visibility
         let vis = parse::<T, U>(&scx, "pub");

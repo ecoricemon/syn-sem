@@ -1,4 +1,4 @@
-use crate::{Block, FromSyn, Ident, Lit, Path, Span, SyntaxCx, Type};
+use crate::{Block, FromSyn, Ident, InputDesc, Lit, Path, Span, SyntaxCx, Type};
 use syn_sem_macros::CheckDropless;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
@@ -19,21 +19,99 @@ pub enum Expr<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::Expr> for Expr<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::Expr) -> Self {
-        match input {
-            syn::Expr::Array(v) => Self::Array(ExprArray::from_syn(scx, v)),
-            syn::Expr::Assign(v) => Self::Assign(ExprAssign::from_syn(scx, v)),
-            syn::Expr::Binary(v) => Self::Binary(ExprBinary::from_syn(scx, v)),
-            syn::Expr::Block(v) => Self::Block(ExprBlock::from_syn(scx, v)),
-            syn::Expr::Call(v) => Self::Call(ExprCall::from_syn(scx, v)),
-            syn::Expr::Cast(v) => Self::Cast(ExprCast::from_syn(scx, v)),
-            syn::Expr::Field(v) => Self::Field(ExprField::from_syn(scx, v)),
-            syn::Expr::Index(v) => Self::Index(ExprIndex::from_syn(scx, v)),
-            syn::Expr::Lit(v) => Self::Lit(ExprLit::from_syn(scx, v)),
-            syn::Expr::MethodCall(v) => Self::MethodCall(ExprMethodCall::from_syn(scx, v)),
-            syn::Expr::Paren(v) => Self::Paren(ExprParen::from_syn(scx, v)),
-            syn::Expr::Path(v) => Self::Path(ExprPath::from_syn(scx, v)),
-            syn::Expr::Reference(v) => Self::Reference(ExprReference::from_syn(scx, v)),
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Expr>) -> Self {
+        match desc.input {
+            syn::Expr::Array(v) => Self::Array(ExprArray::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Assign(v) => Self::Assign(ExprAssign::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Binary(v) => Self::Binary(ExprBinary::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Block(v) => Self::Block(ExprBlock::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Call(v) => Self::Call(ExprCall::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Cast(v) => Self::Cast(ExprCast::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Field(v) => Self::Field(ExprField::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Index(v) => Self::Index(ExprIndex::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Lit(v) => Self::Lit(ExprLit::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::MethodCall(v) => Self::MethodCall(ExprMethodCall::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Paren(v) => Self::Paren(ExprParen::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Path(v) => Self::Path(ExprPath::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
+            syn::Expr::Reference(v) => Self::Reference(ExprReference::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: v,
+                },
+            )),
             o => todo!("{o:?}"),
         }
     }
@@ -46,10 +124,16 @@ pub struct ExprArray<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprArray> for ExprArray<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprArray) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprArray>) -> Self {
         Self {
-            elems: FromSyn::from_syn(scx, &input.elems),
-            span: Span::from_locatable(scx, input),
+            elems: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.elems,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -62,11 +146,23 @@ pub struct ExprAssign<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprAssign> for ExprAssign<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprAssign) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprAssign>) -> Self {
         Self {
-            left: scx.alloc(Expr::from_syn(scx, &input.left)),
-            right: scx.alloc(Expr::from_syn(scx, &input.right)),
-            span: Span::from_locatable(scx, input),
+            left: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.left,
+                },
+            )),
+            right: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.right,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -79,11 +175,23 @@ pub struct ExprBinary<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprBinary> for ExprBinary<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprBinary) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprBinary>) -> Self {
         Self {
-            left: scx.alloc(Expr::from_syn(scx, &input.left)),
-            right: scx.alloc(Expr::from_syn(scx, &input.right)),
-            span: Span::from_locatable(scx, input),
+            left: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.left,
+                },
+            )),
+            right: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.right,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -95,10 +203,16 @@ pub struct ExprBlock<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprBlock> for ExprBlock<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprBlock) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprBlock>) -> Self {
         Self {
-            block: Block::from_syn(scx, &input.block),
-            span: Span::from_locatable(scx, input),
+            block: Block::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.block,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -111,11 +225,23 @@ pub struct ExprCall<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprCall> for ExprCall<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprCall) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprCall>) -> Self {
         Self {
-            func: scx.alloc(Expr::from_syn(scx, &input.func)),
-            args: FromSyn::from_syn(scx, &input.args),
-            span: Span::from_locatable(scx, input),
+            func: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.func,
+                },
+            )),
+            args: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.args,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -128,11 +254,23 @@ pub struct ExprCast<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprCast> for ExprCast<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprCast) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprCast>) -> Self {
         Self {
-            expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
-            ty: scx.alloc(Type::from_syn(scx, &input.ty)),
-            span: Span::from_locatable(scx, input),
+            expr: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.expr,
+                },
+            )),
+            ty: scx.alloc(Type::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.ty,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -145,17 +283,31 @@ pub struct ExprField<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprField> for ExprField<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprField) -> Self {
-        let member = match &input.member {
-            syn::Member::Named(ident) => Ident::from_syn(scx, ident),
-            syn::Member::Unnamed(idx) => {
-                Ident::from_number(scx, idx.index, Span::from_locatable(scx, idx))
-            }
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprField>) -> Self {
+        let member = match &desc.input.member {
+            syn::Member::Named(ident) => Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: ident,
+                },
+            ),
+            syn::Member::Unnamed(idx) => Ident::from_number(
+                scx,
+                idx.index,
+                Span::from_locatable(scx, desc.file_path, idx),
+            ),
         };
         Self {
-            base: scx.alloc(Expr::from_syn(scx, &input.base)),
+            base: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.base,
+                },
+            )),
             member,
-            span: Span::from_locatable(scx, input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -168,11 +320,23 @@ pub struct ExprIndex<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprIndex> for ExprIndex<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprIndex) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprIndex>) -> Self {
         Self {
-            expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
-            index: scx.alloc(Expr::from_syn(scx, &input.index)),
-            span: Span::from_locatable(scx, input),
+            expr: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.expr,
+                },
+            )),
+            index: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.index,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -184,10 +348,16 @@ pub struct ExprLit<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprLit> for ExprLit<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprLit) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprLit>) -> Self {
         Self {
-            lit: Lit::from_syn(scx, &input.lit),
-            span: Span::from_locatable(scx, input),
+            lit: Lit::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.lit,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -201,12 +371,30 @@ pub struct ExprMethodCall<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprMethodCall> for ExprMethodCall<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprMethodCall) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprMethodCall>) -> Self {
         Self {
-            receiver: scx.alloc(Expr::from_syn(scx, &input.receiver)),
-            method: Ident::from_syn(scx, &input.method),
-            args: FromSyn::from_syn(scx, &input.args),
-            span: Span::from_locatable(scx, input),
+            receiver: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.receiver,
+                },
+            )),
+            method: Ident::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.method,
+                },
+            ),
+            args: FromSyn::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.args,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -218,10 +406,16 @@ pub struct ExprParen<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprParen> for ExprParen<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprParen) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprParen>) -> Self {
         Self {
-            expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
-            span: Span::from_locatable(scx, input),
+            expr: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.expr,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -233,10 +427,16 @@ pub struct ExprPath<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprPath> for ExprPath<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprPath) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprPath>) -> Self {
         Self {
-            path: Path::from_syn(scx, &input.path),
-            span: Span::from_locatable(scx, input),
+            path: Path::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.path,
+                },
+            ),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -248,10 +448,16 @@ pub struct ExprReference<'scx> {
 }
 
 impl<'scx> FromSyn<'scx, syn::ExprReference> for ExprReference<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, input: &syn::ExprReference) -> Self {
+    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ExprReference>) -> Self {
         Self {
-            expr: scx.alloc(Expr::from_syn(scx, &input.expr)),
-            span: Span::from_locatable(scx, input),
+            expr: scx.alloc(Expr::from_syn(
+                scx,
+                InputDesc {
+                    file_path: desc.file_path,
+                    input: &desc.input.expr,
+                },
+            )),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -263,7 +469,7 @@ mod tests {
 
     #[test]
     fn text_expr_call() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
         let expr = parse::<syn::ExprCall, ExprCall>(&scx, "invoke(a, b)");
         let Expr::Path(path) = expr.func else {
             panic!()
@@ -274,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_expr_lit() {
-        let scx = create_context();
+        let scx = SyntaxCx::default();
         let expr = parse::<syn::ExprLit, ExprLit>(&scx, "1");
         let Lit::Int(v) = expr.lit else { panic!() };
         assert_eq!(v.base10_parse::<i32>().unwrap(), 1);
