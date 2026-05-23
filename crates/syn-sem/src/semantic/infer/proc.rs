@@ -26,8 +26,8 @@ use indexmap::IndexMap;
 use logic_eval::{Name, Term, VAR_PREFIX};
 use logic_eval_util::{str::StrPath, symbol::SymbolTable};
 use proc_macro2::TokenStream as TokenStream2;
+use quote::ToTokens;
 use std::{collections::VecDeque, fmt, hash::Hash, iter};
-use syn_locator::Locate;
 
 pub(crate) trait Host<'gcx>:
     find_method::Host<'gcx> + Scoping + EvaluateArrayLength<'gcx>
@@ -913,7 +913,7 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
             .iter()
             .map(|elem| {
                 let tid = self.solve_pat(elem)?;
-                let code = self.gcx.intern_str(&elem.code());
+                let code = self.gcx.intern_str(&elem.to_token_stream().to_string());
                 Ok((code, tid))
             })
             .collect::<TriResult<BoxedSlice<(Interned<'gcx, str>, TypeId)>, ()>>()?;
@@ -982,7 +982,7 @@ impl<'gcx, H: Host<'gcx> + logic::Host<'gcx>> InferCx<'_, 'gcx, H> {
             .iter()
             .map(|elem| {
                 let tid = self.solve_pat(elem)?;
-                let code = self.gcx.intern_str(&elem.code());
+                let code = self.gcx.intern_str(&elem.to_token_stream().to_string());
                 Ok((code, tid))
             })
             .collect::<TriResult<BoxedSlice<(Interned<'gcx, str>, TypeId)>, ()>>()?;
@@ -1895,8 +1895,7 @@ pub(crate) mod tests {
         },
         Intern, TriResult,
     };
-    use std::pin::Pin;
-    use syn_locator::{Find, LocateEntry};
+    use syn_locator::Find;
     use syn::{Ident, Expr, Block, ItemFn, Stmt, ExprBlock, Item, Pat, PatType};
 
     #[test]
@@ -2603,10 +2602,7 @@ pub(crate) mod tests {
         crate::impl_empty_method_host!(TestHost<'_>);
         crate::impl_empty_scoping!(TestHost<'_>);
 
-        let top_block = syn::parse_str::<Block>(code).unwrap();
-
-        let pinned = Pin::new(&top_block);
-        pinned.locate_as_entry(crate::cur_path!(), code).unwrap();
+        let top_block = syn_locator::locate::<Block>(crate::cur_path!(), code).unwrap();
 
         let gcx = GlobalCx::default();
         let mut inferer = test_inferer(&gcx);
@@ -2623,52 +2619,52 @@ pub(crate) mod tests {
         let Stmt::Item(Item::Fn(item_fn)) = &top_block.stmts[stmt_i] else {
             unreachable!()
         };
-        let i = type_of_ident(&inferer, &item_fn.sig, "i");
+        let i = type_of_ident(&inferer, top_block.locator(), &item_fn.sig, "i");
         assert_eq!(i, OwnedType::Named { name: "i32".into(), params: [].into() });
-        let u = type_of_ident(&inferer, &item_fn.sig, "u");
+        let u = type_of_ident(&inferer, top_block.locator(), &item_fn.sig, "u");
         assert_eq!( u, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
         // let T { i, .. } = T { i: 0, u: 0 };
-        let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
+        let i = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "i");
         assert_eq!(i, OwnedType::Named { name: "i32".into(), params: [].into() });
         stmt_i += 1;
 
         // let T { u, .. } = T { i: 0, u: 0 };
-        let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
+        let u = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "u");
         assert_eq!(u, OwnedType::Named { name: "u32".into(), params: [].into() });
         stmt_i += 1;
 
         // let (i, u) = (0_i16, 0_u16);
-        let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
+        let i = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "i");
         assert_eq!(i, OwnedType::Named { name: "i16".into(), params: [].into() });
-        let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
+        let u = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "u");
         assert_eq!(u, OwnedType::Named { name: "u16".into(), params: [].into() });
         stmt_i += 1;
 
         // let (i, u, .., b, f) = (0_i8, 0_u8, 0, 0, true, 0_f32);
-        let i = type_of_ident(&inferer, &top_block.stmts[stmt_i], "i");
+        let i = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "i");
         assert_eq!(i, OwnedType::Named { name: "i8".into(), params: [].into() });
-        let u = type_of_ident(&inferer, &top_block.stmts[stmt_i], "u");
+        let u = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "u");
         assert_eq!(u, OwnedType::Named { name: "u8".into(), params: [].into() });
-        let b = type_of_ident(&inferer, &top_block.stmts[stmt_i], "b");
+        let b = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "b");
         assert_eq!(b, OwnedType::Named { name: "bool".into(), params: [].into() });
-        let f = type_of_ident(&inferer, &top_block.stmts[stmt_i], "f");
+        let f = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "f");
         assert_eq!(f, OwnedType::Named { name: "f32".into(), params: [].into() });
         stmt_i += 1;
 
         // let [a, b] = [0_i8, 1];
-        let a = type_of_ident(&inferer, &top_block.stmts[stmt_i], "a");
+        let a = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "a");
         assert_eq!(a, OwnedType::Named { name: "i8".into(), params: [].into() });
-        let b = type_of_ident(&inferer, &top_block.stmts[stmt_i], "b");
+        let b = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "b");
         assert_eq!(b, OwnedType::Named { name: "i8".into(), params: [].into() });
-        let expr: &Expr = top_block.stmts[stmt_i].find("1").unwrap();
+        let expr: &Expr = top_block.stmts[stmt_i].find(top_block.locator(), "1").unwrap();
         let one = inferer.get_owned_type_of_expr(expr).unwrap();
         assert_eq!(one, OwnedType::Named { name: "i8".into(), params: [].into() });
         stmt_i += 1;
 
         // let [a, ..] = [0_u8, 1, 2];
-        let a = type_of_ident(&inferer, &top_block.stmts[stmt_i], "a");
+        let a = type_of_ident(&inferer, top_block.locator(), &top_block.stmts[stmt_i], "a");
         assert_eq!(a, OwnedType::Named { name: "u8".into(), params: [].into() });
     }
 
@@ -2716,11 +2712,16 @@ pub(crate) mod tests {
         inferer.get_owned_type_of_ident(&pat_ident.ident).unwrap().clone()
     }
 
-    fn type_of_ident<P>(inferer: &Inferer, parent: &P, ident: &str) -> OwnedType
+    fn type_of_ident<P>(
+        inferer: &Inferer,
+        locator: &syn_locator::Locator,
+        parent: &P,
+        ident: &str,
+    ) -> OwnedType
     where
         P: Find<syn::Ident> + ?Sized,
     {
-        let ident: &syn::Ident = parent.find(ident).unwrap();
+        let ident: &syn::Ident = parent.find(locator, ident).unwrap();
         inferer.get_owned_type_of_ident(ident).unwrap()
     }
 }

@@ -16,7 +16,6 @@ use crate::{
 };
 use quote::ToTokens;
 use std::{fmt::Write, path::PathBuf};
-use syn_locator::Locate;
 
 const TREE_ROOT: NodeIndex = PathTree::<()>::ROOT;
 
@@ -199,7 +198,10 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
 
     fn add_item_enum(&mut self, item_enum: &syn::ItemEnum) -> Result<()> {
         if !item_enum.generics.params.is_empty() {
-            return err!("generic is not allowed yet: `{}`", item_enum.ident.code());
+            return err!(
+                "generic is not allowed yet: `{}`",
+                self.stree.code(&item_enum.ident)
+            );
         }
 
         let org_len = self.path.len();
@@ -227,7 +229,10 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
 
     fn add_item_fn(&mut self, item_fn: &syn::ItemFn) -> Result<()> {
         if !item_fn.sig.generics.params.is_empty() {
-            return err!("generic is not allowed for now: `{}`", item_fn.sig.code());
+            return err!(
+                "generic is not allowed for now: `{}`",
+                self.stree.code(&item_fn.sig)
+            );
         }
 
         let org_len = self.path.len();
@@ -315,7 +320,10 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
         unscoped_base: NodeIndex,
     ) -> Result<()> {
         if !item_fn.sig.generics.params.is_empty() {
-            return err!("generic is not allowed for now: `{}`", item_fn.sig.code());
+            return err!(
+                "generic is not allowed for now: `{}`",
+                self.stree.code(&item_fn.sig)
+            );
         }
 
         let org_len = self.path.len();
@@ -472,7 +480,7 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
         if !item_struct.generics.params.is_empty() {
             return err!(
                 "generic is not allowed for now: `{}`",
-                item_struct.ident.code()
+                self.stree.code(&item_struct.ident)
             );
         }
 
@@ -694,6 +702,7 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
                 ptr_attr: (&recv.attrs).into(),
                 ptr_ident: Which2::B(recv.into()),
                 ptr_ty: Some((&*recv.ty).into()),
+                end: self.stree.location(recv).end,
                 mut_: false, // TODO: Remove me
             }),
         );
@@ -827,6 +836,7 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
                 ptr_attr: attr.into(),
                 ptr_ident: Which2::A(pat_ident.into()),
                 ptr_ty: ty.map(|ty| ty.into()),
+                end: self.stree.location(pat_ident).end,
                 mut_: pat_ident.mutability.is_some(),
             }),
         );

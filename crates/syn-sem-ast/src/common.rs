@@ -10,6 +10,10 @@ pub trait FromSyn<'scx, Input: ?Sized>: 'scx {
     fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Input>) -> Self;
 }
 
+/// Input passed while converting from `syn` into this AST.
+///
+/// For example, converting a parsed `syn::ItemStruct` receives the source file path and the
+/// borrowed `syn` node here.
 pub struct InputDesc<'a, Input: ?Sized> {
     pub file_path: &'a str,
     pub input: &'a Input,
@@ -75,6 +79,9 @@ impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Option<T>> for Option<U> {
     }
 }
 
+/// An identifier in source code.
+///
+/// Examples include `foo`, `Self`, or a synthesized tuple-field name like `0`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Ident<'scx> {
     pub inner: Interned<'scx, str>,
@@ -128,12 +135,18 @@ impl<'scx> Deref for Ident<'scx> {
     }
 }
 
+/// A signed integer value with source span information.
+///
+/// For example, tuple-field indexes can be represented as source-like numeric identifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Isize<'scx> {
     pub value: isize,
     pub span: Span<'scx>,
 }
 
+/// A byte range into the original source text.
+///
+/// For example, the span for `foo` in `let foo = 1;` points back to exactly that identifier text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Span<'scx> {
     /// The whole source text.
@@ -183,6 +196,7 @@ mod tests {
 
     #[test]
     fn test_ident() {
+        // Proves `Ident` preserves the parsed identifier text.
         let scx = SyntaxCx::default();
 
         // Non-empty ident

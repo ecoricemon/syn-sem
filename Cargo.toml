@@ -3,7 +3,8 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.dependencies]
-syn-sem-macros = { version = "0.0.1", path = "crates/syn-sem-macros" }
+syn-sem-ast = { path = "crates/syn-sem-ast" }
+syn-sem-macros = { path = "crates/syn-sem-macros" }
 syn-locator = "0.2.0"
 logic-eval = "0.1.5"
 logic-eval-util = "0.1.5"

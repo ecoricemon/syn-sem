@@ -24,7 +24,7 @@ pub(crate) mod test_help {
         },
         Intern, TriResult,
     };
-    use syn_locator::Locate;
+    use quote::ToTokens;
 
     pub(crate) fn test_inferer<'gcx>(gcx: &'gcx GlobalCx<'gcx>) -> Inferer<'gcx> {
         Inferer::new(gcx)
@@ -71,7 +71,9 @@ pub(crate) mod test_help {
             }
 
             let res = Type::Named(TypeNamed {
-                name: self.gcx.intern_str(&syn_path.path.code()),
+                name: self
+                    .gcx
+                    .intern_str(&syn_path.path.to_token_stream().to_string()),
                 params: [].into(),
             });
             Ok(res)

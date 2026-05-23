@@ -1,6 +1,9 @@
 use crate::{FromSyn, InputDesc, Path, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
+/// Visibility of an item or field.
+///
+/// Examples include `pub`, private inherited visibility, and restricted forms like `pub(crate)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub enum Visibility<'scx> {
     Public(Span<'scx>),
@@ -33,6 +36,7 @@ mod tests {
 
     #[test]
     fn test_visibility() {
+        // Proves public, inherited, and restricted visibilities are distinguished.
         type T = syn::Visibility;
         type U<'a> = Visibility<'a>;
         let scx = SyntaxCx::default();

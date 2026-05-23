@@ -1201,6 +1201,8 @@ pub struct Local {
     /// Optional explicit syn type that may attach to the local.
     pub(crate) ptr_ty: Option<NonNull<syn::Type>>,
 
+    pub(crate) end: usize,
+
     /// Type of this item.
     pub(crate) tid: TypeId,
 }
@@ -1300,6 +1302,8 @@ pub struct RawLocal {
 
     /// Optional explicit syn type that may attach to the local.
     pub(crate) ptr_ty: Option<NonNull<syn::Type>>,
+
+    pub(crate) end: usize,
 
     pub(crate) mut_: bool,
 }
@@ -2194,6 +2198,7 @@ pub trait ItemTrait {
     fn vis_node(&self) -> TriOption<NodeIndex, ()>;
     fn type_id(&self) -> TriOption<TypeId, ()>;
     fn syn_id(&self) -> Option<SynId>;
+    fn local_end(&self) -> Option<usize>;
 
     fn as_fn(&self) -> Option<&Fn>;
     fn as_struct(&self) -> Option<&Struct>;
@@ -2357,6 +2362,14 @@ impl ItemTrait for PrivItem {
                 .unwrap_or(TriOption::NotYet(())),
 
             Self::Block(_) | Self::Local(_) | Self::RawLocal(_) | Self::None => TriOption::None,
+        }
+    }
+
+    fn local_end(&self) -> Option<usize> {
+        match self {
+            Self::Local(local) => Some(local.end),
+            Self::RawLocal(raw) => Some(raw.end),
+            _ => None,
         }
     }
 
@@ -2544,6 +2557,13 @@ impl ItemTrait for PubItem<'_> {
             Self::Variant(v) => v.syn_id(),
         };
         Some(sid)
+    }
+
+    fn local_end(&self) -> Option<usize> {
+        match self {
+            Self::Local(local) => Some(local.end),
+            _ => None,
+        }
     }
 
     fn as_fn(&self) -> Option<&Fn> {

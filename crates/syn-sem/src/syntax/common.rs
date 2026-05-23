@@ -8,9 +8,8 @@ mod identify {
         any::{Any, TypeId},
         fmt, hash,
     };
-    use syn_locator::Locate;
 
-    pub trait IdentifySyn: Any + Locate {
+    pub trait IdentifySyn: Any {
         fn as_any(&self) -> &dyn Any;
 
         fn syn_id(&self) -> SynId
@@ -24,7 +23,7 @@ mod identify {
         }
 
         fn content(&self) -> String {
-            Locate::code(self)
+            self.type_name().to_owned()
         }
 
         fn type_name(&self) -> &'static str;

@@ -45,7 +45,8 @@ pub mod value {
     pub use super::semantic::eval::{ConstGeneric, Enum, Field, Fn, Scalar, Value};
 }
 pub mod locator {
-    pub use syn_locator::{clear, enable_thread_local};
+    pub use syn_locator::Find;
+    pub use syn_locator::{locate, Locate, LocateEntry, Located, Location, Locator};
 }
 
 use std::{

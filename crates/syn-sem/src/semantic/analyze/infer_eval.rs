@@ -24,7 +24,6 @@ use crate::{
     Map, TriOption, TriResult,
 };
 use logic_eval_util::str::StrPath;
-use syn_locator::Locate;
 
 #[derive(Debug)]
 pub(super) struct Inspector<'gcx> {
@@ -749,9 +748,11 @@ impl<'gcx, T: ItemTrait> eval::Host<'gcx> for EvalHost<'_, 'gcx, T> {
             Ok(value.clone())
         }
         // Or an item like constant declared outside?
-        else if let Some(pid) =
-            ptree.norm_search_item(*base, key.as_str(), syn_path.path.location().start)
-        {
+        else if let Some(pid) = ptree.norm_search_item(
+            *base,
+            key.as_str(),
+            self.stree.location(syn_path.path).start,
+        ) {
             eval::Value::from_path_id(pid, ptree, evaluated, self.gcx)
         } else {
             err!(soft, ())

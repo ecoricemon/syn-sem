@@ -407,6 +407,7 @@ impl<'a, 'gcx> ResolveCx<'a, 'gcx> {
                 ptr_attr: raw.ptr_attr,
                 ptr_ident: raw.ptr_ident,
                 ptr_ty: raw.ptr_ty,
+                end: raw.end,
                 tid,
             });
             self.ptree.set_item(local_pid, resolved);
@@ -1294,6 +1295,7 @@ impl<'gcx> FnArgResolver<'_, 'gcx> {
             ptr_attr: raw.ptr_attr,
             ptr_ident: raw.ptr_ident,
             ptr_ty: raw.ptr_ty,
+            end: raw.end,
             tid,
         });
         self.ptree.set_item(self.local_pid, resolved);
@@ -1379,6 +1381,7 @@ impl<'gcx> FnArgResolver<'_, 'gcx> {
             ptr_attr: raw.ptr_attr,
             ptr_ident: raw.ptr_ident,
             ptr_ty: raw.ptr_ty,
+            end: raw.end,
             tid,
         });
         self.ptree.set_item(self.local_pid, resolved);
