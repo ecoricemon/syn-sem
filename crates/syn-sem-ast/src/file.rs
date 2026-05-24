@@ -6,22 +6,24 @@ use syn_sem_macros::CheckDropless;
 /// For example, `mod a; fn main() {}` is represented as a file containing module and function
 /// items.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct File<'scx> {
-    pub items: &'scx [Item<'scx>],
-    pub span: Span<'scx>,
+pub struct File<'cx> {
+    /// Top-level items in the file.
+    pub items: &'cx [Item<'cx>],
+    /// Source span of the whole file.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::File> for File<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::File>) -> Self {
+impl<'cx> FromSyn<'cx, syn::File> for File<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::File>) -> Self {
         Self {
             items: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &*desc.input.items,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }

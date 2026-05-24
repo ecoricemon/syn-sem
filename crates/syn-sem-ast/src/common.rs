@@ -4,29 +4,34 @@ use num_traits::ToPrimitive;
 use std::ops::Deref;
 use syn::punctuated::Punctuated;
 use syn_locator::Locate;
+use syn_sem_common::FilePath;
 use syn_sem_macros::CheckDropless;
 
-pub trait FromSyn<'scx, Input: ?Sized>: 'scx {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Input>) -> Self;
+/// Converts a `syn` syntax node into the semantic AST representation.
+pub trait FromSyn<'cx, Input: ?Sized>: 'cx {
+    /// Builds `Self` from a borrowed `syn` input and conversion context.
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Input>) -> Self;
 }
 
 /// Input passed while converting from `syn` into this AST.
 ///
 /// For example, converting a parsed `syn::ItemStruct` receives the source file path and the
 /// borrowed `syn` node here.
-pub struct InputDesc<'a, Input: ?Sized> {
-    pub file_path: &'a str,
-    pub input: &'a Input,
+pub struct InputDesc<'cx, Input: ?Sized> {
+    /// Interned path of the source file that owns `input`.
+    pub file_path: FilePath<'cx>,
+    /// Borrowed syntax node being converted.
+    pub input: &'cx Input,
 }
 
-impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, [T]> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, [T]>) -> Self {
+impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, [T]> for &'cx [U] {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, [T]>) -> Self {
         let len = desc.input.len();
         let mut items = desc.input.iter();
-        scx.alloc_slice(len, |_| {
+        cx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
             U::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -36,10 +41,10 @@ impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, [T]> for &'scx [U] {
     }
 }
 
-impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Vec<T>> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Vec<T>>) -> Self {
+impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, Vec<T>> for &'cx [U] {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Vec<T>>) -> Self {
         Self::from_syn(
-            scx,
+            cx,
             InputDesc {
                 file_path: desc.file_path,
                 input: desc.input.as_slice(),
@@ -48,14 +53,14 @@ impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Vec<T>> for &'scx [U] {
     }
 }
 
-impl<'scx, U: FromSyn<'scx, T>, T, P> FromSyn<'scx, Punctuated<T, P>> for &'scx [U] {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Punctuated<T, P>>) -> Self {
+impl<'cx, U: FromSyn<'cx, T>, T, P> FromSyn<'cx, Punctuated<T, P>> for &'cx [U] {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Punctuated<T, P>>) -> Self {
         let len = desc.input.len();
         let mut items = desc.input.into_iter();
-        scx.alloc_slice(len, |_| {
+        cx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
             U::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -65,11 +70,11 @@ impl<'scx, U: FromSyn<'scx, T>, T, P> FromSyn<'scx, Punctuated<T, P>> for &'scx 
     }
 }
 
-impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Option<T>> for Option<U> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, Option<T>>) -> Self {
+impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, Option<T>> for Option<U> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Option<T>>) -> Self {
         desc.input.as_ref().map(|t| {
             U::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -83,51 +88,56 @@ impl<'scx, U: FromSyn<'scx, T>, T> FromSyn<'scx, Option<T>> for Option<U> {
 ///
 /// Examples include `foo`, `Self`, or a synthesized tuple-field name like `0`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Ident<'scx> {
-    pub inner: Interned<'scx, str>,
-    pub span: Span<'scx>,
+pub struct Ident<'cx> {
+    /// Interned identifier text.
+    pub inner: Interned<'cx, str>,
+    /// Source span of the identifier.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> Ident<'scx> {
-    pub fn empty(scx: &'scx SyntaxCx) -> Self {
-        Self::from_str(scx, "", Span::empty())
+impl<'cx> Ident<'cx> {
+    /// Creates an empty synthesized identifier.
+    pub fn empty(cx: &'cx SyntaxCx<'cx>) -> Self {
+        Self::from_str(cx, "", Span::empty())
     }
 
-    pub fn from_str(scx: &'scx SyntaxCx, value: &str, span: Span<'scx>) -> Self {
+    /// Creates an identifier by interning `value`.
+    pub fn from_str(cx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
         Self {
-            inner: scx.intern(value),
+            inner: cx.intern(value),
             span,
         }
     }
 
-    pub fn from_number<T: ToPrimitive>(scx: &'scx SyntaxCx, value: T, span: Span<'scx>) -> Self {
+    /// Creates a numeric synthesized identifier.
+    pub fn from_number<T: ToPrimitive>(cx: &'cx SyntaxCx<'cx>, value: T, span: Span<'cx>) -> Self {
         let value = value.to_u64().unwrap();
         Self {
-            inner: scx.intern_formatted_str(&value, (value % 10 + 1) as usize),
+            inner: cx.intern_formatted_str(&value, (value % 10 + 1) as usize),
             span,
         }
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::Ident> for Ident<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Ident>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Ident> for Ident<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Ident>) -> Self {
         Self {
-            inner: scx.intern(&desc.input.to_string()),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            inner: cx.intern(&desc.input.to_string()),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::Token![self]> for Ident<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Token![self]>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Token![self]> for Ident<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Token![self]>) -> Self {
         Self {
-            inner: scx.intern("self"),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            inner: cx.intern("self"),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
 
-impl<'scx> Deref for Ident<'scx> {
+impl<'cx> Deref for Ident<'cx> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -139,25 +149,28 @@ impl<'scx> Deref for Ident<'scx> {
 ///
 /// For example, tuple-field indexes can be represented as source-like numeric identifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Isize<'scx> {
+pub struct Isize<'cx> {
+    /// Numeric value.
     pub value: isize,
-    pub span: Span<'scx>,
+    /// Source span of the value.
+    pub span: Span<'cx>,
 }
 
 /// A byte range into the original source text.
 ///
 /// For example, the span for `foo` in `let foo = 1;` points back to exactly that identifier text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Span<'scx> {
+pub struct Span<'cx> {
     /// The whole source text.
     //
     // We do not intern about the whole text.
-    text: &'scx str,
+    text: &'cx str,
     start: u32,
     end: u32,
 }
 
-impl<'scx> Span<'scx> {
+impl<'cx> Span<'cx> {
+    /// Creates an empty span.
     pub fn empty() -> Self {
         Self {
             text: "",
@@ -166,10 +179,15 @@ impl<'scx> Span<'scx> {
         }
     }
 
-    pub fn from_locatable<T: Locate>(scx: &'scx SyntaxCx, file_path: &str, item: &T) -> Self {
-        let source = scx.get_source(file_path).unwrap();
+    /// Creates a span for a `syn_locator` node in the given file.
+    pub fn from_locatable<T: Locate>(
+        cx: &'cx SyntaxCx<'cx>,
+        file_path: FilePath<'cx>,
+        item: &T,
+    ) -> Self {
+        let source = cx.get_source(file_path).unwrap();
         let loc = item.location(source.locator());
-        let text = &*source.text;
+        let text = source.text.as_ref();
 
         Self {
             text,
@@ -178,7 +196,8 @@ impl<'scx> Span<'scx> {
         }
     }
 
-    pub fn source_text(&self) -> &'scx str {
+    /// Returns the source text covered by this span.
+    pub fn source_text(&self) -> &'cx str {
         &self.text[self.start as usize..self.end as usize]
     }
 }
@@ -197,10 +216,11 @@ mod tests {
     #[test]
     fn test_ident() {
         // Proves `Ident` preserves the parsed identifier text.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
         // Non-empty ident
-        let ident = parse::<syn::Ident, Ident>(&scx, "A");
+        let ident = parse::<syn::Ident, Ident>(&cx, "A");
         assert_eq!(&*ident, "A");
     }
 }

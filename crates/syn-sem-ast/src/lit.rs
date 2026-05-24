@@ -7,13 +7,17 @@ use syn_sem_macros::CheckDropless;
 ///
 /// Examples include `1`, `1.0`, and `true`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum Lit<'scx> {
-    Int(LitInt<'scx>),
-    Float(LitFloat<'scx>),
-    Bool(LitBool<'scx>),
+pub enum Lit<'cx> {
+    /// Integer literal.
+    Int(LitInt<'cx>),
+    /// Floating-point literal.
+    Float(LitFloat<'cx>),
+    /// Boolean literal.
+    Bool(LitBool<'cx>),
 }
 
-impl<'scx> Lit<'scx> {
+impl<'cx> Lit<'cx> {
+    /// Returns the normalized literal text.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Int(v) => v.base10_digits(),
@@ -22,7 +26,8 @@ impl<'scx> Lit<'scx> {
         }
     }
 
-    pub fn span(&self) -> Span<'scx> {
+    /// Returns the source span of the literal.
+    pub fn span(&self) -> Span<'cx> {
         match self {
             Self::Int(v) => v.span,
             Self::Float(v) => v.span,
@@ -31,25 +36,25 @@ impl<'scx> Lit<'scx> {
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::Lit> for Lit<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Lit>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Lit> for Lit<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Lit>) -> Self {
         match desc.input {
             syn::Lit::Int(v) => Self::Int(LitInt::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Lit::Float(v) => Self::Float(LitFloat::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Lit::Bool(v) => Self::Bool(LitBool::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -64,26 +69,30 @@ impl<'scx> FromSyn<'scx, syn::Lit> for Lit<'scx> {
 ///
 /// For example, `42` or `0xff` is stored by its base-10 digits for semantic parsing.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct LitInt<'scx> {
-    pub literal: Interned<'scx, str>,
-    pub span: Span<'scx>,
+pub struct LitInt<'cx> {
+    /// Normalized base-10 digits.
+    pub literal: Interned<'cx, str>,
+    /// Source span of the literal.
+    pub span: Span<'cx>,
 }
 
 impl LitInt<'_> {
+    /// Returns the normalized base-10 digits.
     pub fn base10_digits(&self) -> &str {
         &self.literal
     }
 
+    /// Parses the normalized base-10 digits.
     pub fn base10_parse<F: FromStr>(&self) -> Result<F, F::Err> {
         self.base10_digits().parse()
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::LitInt> for LitInt<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitInt>) -> Self {
+impl<'cx> FromSyn<'cx, syn::LitInt> for LitInt<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitInt>) -> Self {
         Self {
-            literal: scx.intern(desc.input.base10_digits()),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            literal: cx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -92,26 +101,30 @@ impl<'scx> FromSyn<'scx, syn::LitInt> for LitInt<'scx> {
 ///
 /// For example, `1.0` or `3.14` is stored by its base-10 digits for semantic parsing.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct LitFloat<'scx> {
-    pub literal: Interned<'scx, str>,
-    pub span: Span<'scx>,
+pub struct LitFloat<'cx> {
+    /// Normalized base-10 digits.
+    pub literal: Interned<'cx, str>,
+    /// Source span of the literal.
+    pub span: Span<'cx>,
 }
 
 impl LitFloat<'_> {
+    /// Returns the normalized base-10 digits.
     pub fn base10_digits(&self) -> &str {
         &self.literal
     }
 
+    /// Parses the normalized base-10 digits.
     pub fn base10_parse<F: FromStr>(&self) -> Result<F, F::Err> {
         self.base10_digits().parse()
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::LitFloat> for LitFloat<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitFloat>) -> Self {
+impl<'cx> FromSyn<'cx, syn::LitFloat> for LitFloat<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitFloat>) -> Self {
         Self {
-            literal: scx.intern(desc.input.base10_digits()),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            literal: cx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -120,12 +133,15 @@ impl<'scx> FromSyn<'scx, syn::LitFloat> for LitFloat<'scx> {
 ///
 /// Examples are `true` and `false`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct LitBool<'scx> {
+pub struct LitBool<'cx> {
+    /// Boolean value.
     pub value: bool,
-    pub span: Span<'scx>,
+    /// Source span of the literal.
+    pub span: Span<'cx>,
 }
 
 impl LitBool<'_> {
+    /// Returns `true` or `false`.
     pub fn as_str(&self) -> &'static str {
         match self.value {
             true => "true",
@@ -134,11 +150,11 @@ impl LitBool<'_> {
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::LitBool> for LitBool<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::LitBool>) -> Self {
+impl<'cx> FromSyn<'cx, syn::LitBool> for LitBool<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitBool>) -> Self {
         Self {
             value: desc.input.value,
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -151,27 +167,30 @@ mod tests {
     #[test]
     fn test_lit_int() {
         // Proves integer literals preserve their parsed numeric value.
-        let scx = SyntaxCx::default();
-        let value = parse::<syn::LitInt, LitInt>(&scx, "1");
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
+        let value = parse::<syn::LitInt, LitInt>(&cx, "1");
         assert_eq!(value.base10_parse::<i32>().unwrap(), 1);
     }
 
     #[test]
     fn test_lit_float() {
         // Proves float literals preserve their parsed numeric value.
-        let scx = SyntaxCx::default();
-        let value = parse::<syn::LitFloat, LitFloat>(&scx, "1.");
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
+        let value = parse::<syn::LitFloat, LitFloat>(&cx, "1.");
         assert_eq!(value.base10_parse::<f32>().unwrap(), 1.);
     }
 
     #[test]
     fn test_lit_bool() {
         // Proves boolean literals preserve true and false values.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let value = parse::<syn::LitBool, LitBool>(&scx, "true");
+        let value = parse::<syn::LitBool, LitBool>(&cx, "true");
         assert!(value.value);
-        let value = parse::<syn::LitBool, LitBool>(&scx, "false");
+        let value = parse::<syn::LitBool, LitBool>(&cx, "false");
         assert!(!value.value);
     }
 }

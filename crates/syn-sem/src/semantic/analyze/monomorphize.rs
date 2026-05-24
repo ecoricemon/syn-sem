@@ -9,7 +9,7 @@ use crate::{
         tree::{PrivPathTree, SynToPath, TypeId},
     },
     syntax::{
-        common::{FindChildren, IdentifySyn, SynId},
+        common::{FindChild, IdentifySyn, SynId},
         ClonedImpl, SyntaxTree,
     },
     Intern, Result, TriResult,

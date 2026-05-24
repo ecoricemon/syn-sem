@@ -10,6 +10,7 @@ repository = "https://github.com/ecoricemon/syn-sem"
 license = "Apache-2.0 OR MIT"
 
 [dependencies]
+syn-sem-common = { workspace = true }
 syn-sem-macros = { workspace = true }
 any-intern = { workspace = true }
 syn-locator = { workspace = true }
