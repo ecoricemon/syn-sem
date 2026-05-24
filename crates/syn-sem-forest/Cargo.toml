@@ -4,10 +4,8 @@ publish = false
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.66.1"
-description = "Syntax layer for syn-sem"
-readme = "README.md"
+description = "Syntax forest and locator support for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
-license = "Apache-2.0 OR MIT"
 
 [dependencies]
 fxhash = { workspace = true }

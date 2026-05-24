@@ -3,23 +3,29 @@ use std::mem;
 
 // Allow dead code for future use
 #[allow(dead_code)]
+/// Convenience accessors for `syn` nodes that carry attributes.
 pub trait AttributeHelper {
+    /// Returns immutable attributes if this node has an attribute list.
     fn get_attributes(&self) -> Option<&Vec<syn::Attribute>>;
 
+    /// Returns mutable attributes if this node has an attribute list.
     fn get_mut_attributes(&mut self) -> Option<&mut Vec<syn::Attribute>>;
 
+    /// Finds an attribute with the given path.
     fn get_attribute(&self, path: &str) -> Option<&syn::Attribute> {
         self.get_attributes()?
             .iter()
             .find(|attr| attr.path().is_ident(path))
     }
 
+    /// Finds a mutable attribute with the given path.
     fn get_mut_attribute(&mut self, path: &str) -> Option<&mut syn::Attribute> {
         self.get_mut_attributes()?
             .iter_mut()
             .find(|attr| attr.path().is_ident(path))
     }
 
+    /// Returns whether this node has an attribute with the given path.
     fn contains_attribute(&self, path: &str) -> bool {
         let Some(attrs) = self.get_attributes() else {
             return false;
@@ -27,6 +33,7 @@ pub trait AttributeHelper {
         attrs.iter().any(|attr| attr.path().is_ident(path))
     }
 
+    /// Removes all attributes with the given path.
     fn remove_attribute(&mut self, path: &str) {
         let Some(attrs) = self.get_mut_attributes() else {
             return;
@@ -34,6 +41,7 @@ pub trait AttributeHelper {
         attrs.retain(|attr| !attr.path().is_ident(path))
     }
 
+    /// Replaces all attributes and returns the previous list.
     fn replace_attributes(&mut self, new: Vec<syn::Attribute>) -> Vec<syn::Attribute> {
         let Some(old) = self.get_mut_attributes() else {
             return Vec::new();

@@ -13,16 +13,16 @@ pub struct Block<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Block> for Block<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Block>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Block>) -> Self {
         Self {
             stmts: FromSyn::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.stmts,
                 },
             ),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -41,24 +41,24 @@ pub enum Stmt<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Stmt> for Stmt<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Stmt>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Stmt>) -> Self {
         match desc.input {
             syn::Stmt::Local(v) => Self::Local(Local::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Stmt::Item(v) => Self::Item(Item::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Stmt::Expr(v, _) => Self::Expr(Expr::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -83,23 +83,23 @@ pub struct Local<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Local> for Local<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Local>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Local>) -> Self {
         Self {
             pat: Pat::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.pat,
                 },
             ),
             init: FromSyn::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.init,
                 },
             ),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -116,16 +116,16 @@ pub struct LocalInit<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::LocalInit> for LocalInit<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LocalInit>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LocalInit>) -> Self {
         Self {
-            expr: cx.alloc(Expr::from_syn(
-                cx,
+            expr: scx.alloc(Expr::from_syn(
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.expr,
                 },
             )),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }

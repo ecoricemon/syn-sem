@@ -6,12 +6,14 @@ use std::{any::TypeId, iter, slice};
 use syn::punctuated;
 
 #[derive(Debug, Clone, Default)]
+/// Parent lookup table for syntax nodes.
 pub struct ParentFinder {
     /// Mapping child -> parent.
     map: Map<SynId, SynId>,
 }
 
 impl ParentFinder {
+    /// Inserts a child-to-parent relationship.
     pub fn insert(&mut self, child: SynId, parent: SynId) {
         let _old_parent = self.map.insert(child, parent);
 
@@ -26,11 +28,12 @@ impl ParentFinder {
         }
     }
 
+    /// Returns the direct parent of `child`.
     pub fn get_parent(&self, child: SynId) -> Option<&SynId> {
         self.map.get(&child)
     }
 
-    /// Finds the nearest ancestor that is one type of the given types in the syntax tree.
+    /// Finds the nearest ancestor whose type is in `target_ancestors`.
     ///
     /// If found, returns its index to the `target_ancestors` and its syn id.
     pub fn get_ancestor(
@@ -53,6 +56,7 @@ impl ParentFinder {
     }
 }
 
+/// Inserts parent-child relationships into a [`ParentFinder`].
 pub trait InsertRelation {
     /// Inserts parent-child relations to the given `finder`.
     ///
@@ -71,13 +75,15 @@ impl<T: InsertRelation> InsertRelation for Option<T> {
 
 /// A helper trait for easy implementation of the [`InsertRelation`].
 ///
-/// Lots of nodes in [`syn`]'s syntax tree wrapped in `Box`, `Option`, and others. This trait
+/// Lots of nodes in [`syn`]'s syntax trees are wrapped in `Box`, `Option`, and others. This trait
 /// unwraps those shells so that you can ignore their existence.
 pub trait AsElements {
+    /// Iterator type over child nodes.
     type Output<'a>: Iterator<Item = Node>
     where
         Self: 'a;
 
+    /// Returns child nodes visible for parent-relation insertion.
     fn as_elements(&self) -> Self::Output<'_>;
 }
 
@@ -169,8 +175,11 @@ where
     }
 }
 
+/// Iterator over either an inner iterator or no elements.
 pub enum Elements<I> {
+    /// Inner iterator.
     Iter(I),
+    /// Empty iterator.
     Empty,
 }
 
@@ -185,6 +194,7 @@ impl<I: Iterator<Item = Node>> Iterator for Elements<I> {
     }
 }
 
+/// Flattens child-node iterators from a sequence of syntax elements.
 pub struct Flatten<'a, I, T: AsElements + 'a> {
     iters: I,
     nodes: Option<T::Output<'a>>,
@@ -219,6 +229,7 @@ where
 }
 
 #[derive(Clone, Copy)]
+/// Type-erased syntax node used while building parent relationships.
 pub struct Node {
     sid: SynId,
     ptr_rel: *const dyn InsertRelation,
@@ -226,6 +237,7 @@ pub struct Node {
 
 impl Node {
     #[inline]
+    /// Creates a type-erased node from an identifiable syntax node.
     pub fn from<T: IdentifySyn + InsertRelation>(t: &T) -> Self {
         Self {
             sid: t.syn_id(),
@@ -233,10 +245,12 @@ impl Node {
         }
     }
 
+    /// Returns this node's syntax identifier.
     pub const fn syn_id(&self) -> SynId {
         self.sid
     }
 
+    /// Returns this node as an [`InsertRelation`] trait object.
     pub fn as_dyn_insert_relation(&self) -> &dyn InsertRelation {
         unsafe { self.ptr_rel.as_ref().unwrap() }
     }

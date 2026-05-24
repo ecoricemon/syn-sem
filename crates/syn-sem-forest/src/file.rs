@@ -5,9 +5,13 @@ use std::{fmt, hash, marker::PhantomPinned, pin::Pin};
 use syn_locator::{LocateEntry, Locator};
 use syn_sem_common::FilePath;
 
+/// A pinned parsed Rust source file with locator state.
 pub struct File<'cx> {
+    /// Parsed `syn` file.
     pub file: syn::File,
+    /// Locator populated for nodes in the file.
     pub locator: Locator,
+    /// Interned source file path.
     pub file_path: FilePath<'cx>,
     _pin: PhantomPinned,
 }
@@ -22,6 +26,7 @@ impl fmt::Debug for File<'_> {
 }
 
 impl<'cx> File<'cx> {
+    /// Parses `code` and records source locations under `file_path`.
     pub fn new(file_path: FilePath<'cx>, code: &str) -> Result<Pin<Box<Self>>> {
         let mut this = Box::pin(Self {
             file: syn::parse_str(code)?,
