@@ -1,15 +1,33 @@
+//! Lifetime-bearing semantic AST built from `syn` syntax trees.
+//!
+//! This crate stores AST nodes in a [`SyntaxCx`] and ties interned source data to the shared
+//! `syn-sem-common` context lifetime.
+
+/// Shared conversion helpers and source span types.
 pub mod common;
+/// Syntax allocation and parsed-source context.
 pub mod context;
+/// Struct and enum data nodes.
 pub mod data;
+/// Expression AST nodes.
 pub mod expr;
+/// Source-file AST node.
 pub mod file;
+/// Generic parameter and where-clause nodes.
 pub mod generics;
+/// Item, signature, and parameter nodes.
 pub mod item;
+/// Literal AST nodes.
 pub mod lit;
+/// Pattern AST nodes.
 pub mod pat;
+/// Path and generic argument nodes.
 pub mod path;
+/// Visibility and restriction nodes.
 pub mod restriction;
+/// Statement and block nodes.
 pub mod stmt;
+/// Type AST nodes.
 pub mod ty;
 
 pub use common::*;
@@ -36,23 +54,23 @@ pub(crate) mod test_util {
     use syn::parse::Parse;
     use syn_locator::LocateEntry;
 
-    pub(crate) fn parse<'scx, T: Parse + LocateEntry + 'static, U: FromSyn<'scx, T>>(
-        scx: &'scx SyntaxCx,
+    pub(crate) fn parse<'cx, T: Parse + LocateEntry + 'static, U: FromSyn<'cx, T>>(
+        cx: &'cx SyntaxCx<'cx>,
         text: &str,
     ) -> U {
         // Creates a unique file path.
         static ID: AtomicU32 = AtomicU32::new(0);
         let id = ID.fetch_add(1, Relaxed);
-        let file_path = id.to_string().into_boxed_str();
+        let file_path = id.to_string();
 
         // Parses `T` and generates `U`.
-        scx.parse_virtual_syntax::<T>(file_path.clone(), text.into());
-        let source = scx.get_source(&file_path).unwrap();
+        let file_path = cx.parse_virtual_syntax::<T>(&file_path, text).unwrap();
+        let source = cx.get_source(file_path).unwrap();
         let syn = source.syntax::<T>().unwrap();
         U::from_syn(
-            scx,
+            cx,
             InputDesc {
-                file_path: &file_path,
+                file_path,
                 input: syn,
             },
         )

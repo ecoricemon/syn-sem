@@ -5,28 +5,33 @@ use syn_sem_macros::CheckDropless;
 ///
 /// Examples include `T`, `std::vec::Vec`, and `a::B<T>::C<U>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Path<'scx> {
-    pub segments: &'scx [PathSegment<'scx>],
-    pub span: Span<'scx>,
+pub struct Path<'cx> {
+    /// Path segments in order.
+    pub segments: &'cx [PathSegment<'cx>],
+    /// Source span of the path.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> Path<'scx> {
-    pub fn from_str(scx: &'scx SyntaxCx, value: &str, span: Span<'scx>) -> Self {
-        Self::from_iter(scx, value.split("::"), span)
+impl<'cx> Path<'cx> {
+    /// Creates a path from `::`-separated text.
+    pub fn from_str(cx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
+        Self::from_iter(cx, value.split("::"), span)
     }
 
-    pub fn from_iter<'a, I>(scx: &'scx SyntaxCx, mut iter: I, span: Span<'scx>) -> Self
+    /// Creates a path from segment strings.
+    pub fn from_iter<'a, I>(cx: &'cx SyntaxCx<'cx>, mut iter: I, span: Span<'cx>) -> Self
     where
         I: Iterator<Item = &'a str> + Clone,
     {
         let len = iter.clone().count();
-        let segments = scx.alloc_slice(len, |_| {
-            PathSegment::from_str(scx, iter.next().unwrap(), Span::empty())
+        let segments = cx.alloc_slice(len, |_| {
+            PathSegment::from_str(cx, iter.next().unwrap(), Span::empty())
         });
         Self { segments, span }
     }
 
-    pub fn get_ident(&self) -> Option<&Ident<'scx>> {
+    /// Returns the identifier if this path is a single plain segment.
+    pub fn get_ident(&self) -> Option<&Ident<'cx>> {
         if self.segments.len() == 1 && !self.segments[0].has_args() {
             Some(&self.segments[0].ident)
         } else {
@@ -34,27 +39,29 @@ impl<'scx> Path<'scx> {
         }
     }
 
-    pub fn last(&self) -> Option<&PathSegment<'scx>> {
+    /// Returns the last path segment.
+    pub fn last(&self) -> Option<&PathSegment<'cx>> {
         self.segments.last()
     }
 
-    pub fn parent_segments(&self) -> &'scx [PathSegment<'scx>] {
+    /// Returns all segments before the last segment.
+    pub fn parent_segments(&self) -> &'cx [PathSegment<'cx>] {
         let len = self.segments.len().saturating_sub(1);
         &self.segments[..len]
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::Path> for Path<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Path>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Path> for Path<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Path>) -> Self {
         Self {
             segments: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.segments,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -63,48 +70,54 @@ impl<'scx> FromSyn<'scx, syn::Path> for Path<'scx> {
 ///
 /// For example, `Vec<T>` is a segment with ident `Vec` and angle-bracketed arguments.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct PathSegment<'scx> {
-    pub ident: Ident<'scx>,
-    pub args: PathArguments<'scx>,
-    pub span: Span<'scx>,
+pub struct PathSegment<'cx> {
+    /// Segment identifier.
+    pub ident: Ident<'cx>,
+    /// Generic arguments on this segment.
+    pub args: PathArguments<'cx>,
+    /// Source span of the segment.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> PathSegment<'scx> {
-    pub fn from_str(scx: &'scx SyntaxCx, value: &str, span: Span<'scx>) -> Self {
+impl<'cx> PathSegment<'cx> {
+    /// Creates a plain path segment.
+    pub fn from_str(cx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
         Self {
-            ident: Ident::from_str(scx, value, span),
+            ident: Ident::from_str(cx, value, span),
             args: PathArguments::None,
             span,
         }
     }
 
+    /// Returns whether this segment has any generic arguments.
     pub fn has_args(&self) -> bool {
         !self.args.is_empty()
     }
 
+    /// Returns whether this segment is a bare identifier.
     pub fn is_plain_ident(&self) -> bool {
         !self.has_args()
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::PathSegment> for PathSegment<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::PathSegment>) -> Self {
+impl<'cx> FromSyn<'cx, syn::PathSegment> for PathSegment<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PathSegment>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             args: PathArguments::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.arguments,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -113,13 +126,17 @@ impl<'scx> FromSyn<'scx, syn::PathSegment> for PathSegment<'scx> {
 ///
 /// Examples include no arguments in `T` and angle-bracketed arguments in `Vec<T>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum PathArguments<'scx> {
+pub enum PathArguments<'cx> {
+    /// No generic arguments.
     None,
-    AngleBracketed(AngleBracketedGenericArguments<'scx>),
-    Unsupported(Span<'scx>),
+    /// Angle-bracketed generic arguments.
+    AngleBracketed(AngleBracketedGenericArguments<'cx>),
+    /// Unsupported argument form.
+    Unsupported(Span<'cx>),
 }
 
 impl PathArguments<'_> {
+    /// Returns supported generic arguments.
     pub fn args(&self) -> &[GenericArgument<'_>] {
         match self {
             Self::None => &[],
@@ -128,22 +145,24 @@ impl PathArguments<'_> {
         }
     }
 
+    /// Returns whether there are no supported generic arguments.
     pub fn is_empty(&self) -> bool {
         self.args().is_empty()
     }
 
+    /// Returns the number of supported generic arguments.
     pub fn len(&self) -> usize {
         self.args().len()
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::PathArguments> for PathArguments<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::PathArguments>) -> Self {
+impl<'cx> FromSyn<'cx, syn::PathArguments> for PathArguments<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PathArguments>) -> Self {
         match desc.input {
             syn::PathArguments::None => Self::None,
             syn::PathArguments::AngleBracketed(v) => {
                 Self::AngleBracketed(AngleBracketedGenericArguments::from_syn(
-                    scx,
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: v,
@@ -151,7 +170,7 @@ impl<'scx> FromSyn<'scx, syn::PathArguments> for PathArguments<'scx> {
                 ))
             }
             syn::PathArguments::Parenthesized(v) => {
-                Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                Self::Unsupported(Span::from_locatable(cx, desc.file_path, v))
             }
         }
     }
@@ -161,27 +180,29 @@ impl<'scx> FromSyn<'scx, syn::PathArguments> for PathArguments<'scx> {
 ///
 /// For example, `<K, V>` in `HashMap<K, V>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct AngleBracketedGenericArguments<'scx> {
-    pub args: &'scx [GenericArgument<'scx>],
-    pub span: Span<'scx>,
+pub struct AngleBracketedGenericArguments<'cx> {
+    /// Generic arguments.
+    pub args: &'cx [GenericArgument<'cx>],
+    /// Source span of the argument list.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::AngleBracketedGenericArguments>
-    for AngleBracketedGenericArguments<'scx>
+impl<'cx> FromSyn<'cx, syn::AngleBracketedGenericArguments>
+    for AngleBracketedGenericArguments<'cx>
 {
     fn from_syn(
-        scx: &'scx SyntaxCx,
-        desc: InputDesc<'_, syn::AngleBracketedGenericArguments>,
+        cx: &'cx SyntaxCx<'cx>,
+        desc: InputDesc<'cx, syn::AngleBracketedGenericArguments>,
     ) -> Self {
         Self {
             args: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.args,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -190,27 +211,33 @@ impl<'scx> FromSyn<'scx, syn::AngleBracketedGenericArguments>
 ///
 /// Examples include `T`, `N`, `Item = T`, `PANIC = false`, and `Item: Display`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum GenericArgument<'scx> {
-    Type(Type<'scx>),
-    Const(Expr<'scx>),
-    AssocType(AssocTypeArg<'scx>),
-    AssocConst(AssocConstArg<'scx>),
-    Constraint(ConstraintArg<'scx>),
-    Unsupported(Span<'scx>),
+pub enum GenericArgument<'cx> {
+    /// Type argument.
+    Type(Type<'cx>),
+    /// Const expression argument.
+    Const(Expr<'cx>),
+    /// Associated type equality.
+    AssocType(AssocTypeArg<'cx>),
+    /// Associated const equality.
+    AssocConst(AssocConstArg<'cx>),
+    /// Associated type constraint.
+    Constraint(ConstraintArg<'cx>),
+    /// Unsupported argument form.
+    Unsupported(Span<'cx>),
 }
 
-impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::GenericArgument>) -> Self {
+impl<'cx> FromSyn<'cx, syn::GenericArgument> for GenericArgument<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::GenericArgument>) -> Self {
         match desc.input {
             syn::GenericArgument::Type(v) => Self::Type(Type::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::GenericArgument::Const(v) => Self::Const(Expr::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -218,10 +245,10 @@ impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
             )),
             syn::GenericArgument::AssocType(v) => {
                 if v.generics.is_some() {
-                    Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                    Self::Unsupported(Span::from_locatable(cx, desc.file_path, v))
                 } else {
                     Self::AssocType(AssocTypeArg::from_syn(
-                        scx,
+                        cx,
                         InputDesc {
                             file_path: desc.file_path,
                             input: v,
@@ -231,10 +258,10 @@ impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
             }
             syn::GenericArgument::AssocConst(v) => {
                 if v.generics.is_some() {
-                    Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                    Self::Unsupported(Span::from_locatable(cx, desc.file_path, v))
                 } else {
                     Self::AssocConst(AssocConstArg::from_syn(
-                        scx,
+                        cx,
                         InputDesc {
                             file_path: desc.file_path,
                             input: v,
@@ -244,10 +271,10 @@ impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
             }
             syn::GenericArgument::Constraint(v) => {
                 if v.generics.is_some() {
-                    Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                    Self::Unsupported(Span::from_locatable(cx, desc.file_path, v))
                 } else {
                     Self::Constraint(ConstraintArg::from_syn(
-                        scx,
+                        cx,
                         InputDesc {
                             file_path: desc.file_path,
                             input: v,
@@ -256,9 +283,9 @@ impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
                 }
             }
             syn::GenericArgument::Lifetime(v) => {
-                Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                Self::Unsupported(Span::from_locatable(cx, desc.file_path, v))
             }
-            _ => Self::Unsupported(Span::from_locatable(scx, desc.file_path, desc.input)),
+            _ => Self::Unsupported(Span::from_locatable(cx, desc.file_path, desc.input)),
         }
     }
 }
@@ -267,30 +294,33 @@ impl<'scx> FromSyn<'scx, syn::GenericArgument> for GenericArgument<'scx> {
 ///
 /// For example, `Item = T` in `Iterator<Item = T>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct AssocTypeArg<'scx> {
-    pub ident: Ident<'scx>,
-    pub ty: Type<'scx>,
-    pub span: Span<'scx>,
+pub struct AssocTypeArg<'cx> {
+    /// Associated type name.
+    pub ident: Ident<'cx>,
+    /// Assigned type.
+    pub ty: Type<'cx>,
+    /// Source span of the argument.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::AssocType> for AssocTypeArg<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::AssocType>) -> Self {
+impl<'cx> FromSyn<'cx, syn::AssocType> for AssocTypeArg<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::AssocType>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             ty: Type::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -299,30 +329,33 @@ impl<'scx> FromSyn<'scx, syn::AssocType> for AssocTypeArg<'scx> {
 ///
 /// For example, `PANIC = false` in `Trait<PANIC = false>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct AssocConstArg<'scx> {
-    pub ident: Ident<'scx>,
-    pub value: Expr<'scx>,
-    pub span: Span<'scx>,
+pub struct AssocConstArg<'cx> {
+    /// Associated const name.
+    pub ident: Ident<'cx>,
+    /// Assigned value.
+    pub value: Expr<'cx>,
+    /// Source span of the argument.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::AssocConst> for AssocConstArg<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::AssocConst>) -> Self {
+impl<'cx> FromSyn<'cx, syn::AssocConst> for AssocConstArg<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::AssocConst>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             value: Expr::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.value,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -331,30 +364,33 @@ impl<'scx> FromSyn<'scx, syn::AssocConst> for AssocConstArg<'scx> {
 ///
 /// For example, `Item: Display` in `Iterator<Item: Display>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ConstraintArg<'scx> {
-    pub ident: Ident<'scx>,
-    pub bounds: &'scx [TypeParamBound<'scx>],
-    pub span: Span<'scx>,
+pub struct ConstraintArg<'cx> {
+    /// Associated type name.
+    pub ident: Ident<'cx>,
+    /// Required bounds.
+    pub bounds: &'cx [TypeParamBound<'cx>],
+    /// Source span of the constraint.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::Constraint> for ConstraintArg<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Constraint>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Constraint> for ConstraintArg<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Constraint>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             bounds: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.bounds,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -367,16 +403,17 @@ mod tests {
     #[test]
     fn test_path() {
         // Proves paths preserve segments and expose helper accessors.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&scx, "A");
+        let path = parse::<syn::Path, Path>(&cx, "A");
         assert_eq!(&**path.get_ident().unwrap(), "A");
         assert!(!path.segments[0].has_args());
         assert!(path.segments[0].is_plain_ident());
         assert_eq!(&*path.last().unwrap().ident, "A");
         assert!(path.parent_segments().is_empty());
 
-        let path = parse::<syn::Path, Path>(&scx, "a::B<T>::C<U>");
+        let path = parse::<syn::Path, Path>(&cx, "a::B<T>::C<U>");
         assert_eq!(path.segments.len(), 3);
         assert!(!path.segments[0].has_args());
         assert!(path.segments[1].has_args());
@@ -388,9 +425,10 @@ mod tests {
     #[test]
     fn test_path_arguments() {
         // Proves path arguments preserve single and multiple type arguments.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&scx, "A<T>");
+        let path = parse::<syn::Path, Path>(&cx, "A<T>");
         assert!(path.get_ident().is_none());
         assert_eq!(&*path.segments[0].ident, "A");
 
@@ -402,7 +440,7 @@ mod tests {
         assert_eq!(path.segments[0].args.args().len(), 1);
         assert!(matches!(args.args[0], GenericArgument::Type(_)));
 
-        let path = parse::<syn::Path, Path>(&scx, "HashMap<K, V>");
+        let path = parse::<syn::Path, Path>(&cx, "HashMap<K, V>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -414,16 +452,17 @@ mod tests {
     #[test]
     fn test_generic_argument() {
         // Proves generic arguments preserve const, associated type, associated const, and constraints.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&scx, "Array<3>");
+        let path = parse::<syn::Path, Path>(&cx, "Array<3>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert_eq!(args.args.len(), 1);
         assert!(matches!(args.args[0], GenericArgument::Const(_)));
 
-        let path = parse::<syn::Path, Path>(&scx, "Iterator<Item = T>");
+        let path = parse::<syn::Path, Path>(&cx, "Iterator<Item = T>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -432,7 +471,7 @@ mod tests {
         };
         assert_eq!(&*arg.ident, "Item");
 
-        let path = parse::<syn::Path, Path>(&scx, "Trait<PANIC = false>");
+        let path = parse::<syn::Path, Path>(&cx, "Trait<PANIC = false>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -441,7 +480,7 @@ mod tests {
         };
         assert_eq!(&*arg.ident, "PANIC");
 
-        let path = parse::<syn::Path, Path>(&scx, "Iterator<Item: Display>");
+        let path = parse::<syn::Path, Path>(&cx, "Iterator<Item: Display>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -455,9 +494,10 @@ mod tests {
     #[test]
     fn test_unsupported() {
         // Proves unsupported path argument forms recover as `Unsupported` instead of panicking.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let bound = parse::<syn::TypeParamBound, crate::TypeParamBound>(&scx, "Fn(A)");
+        let bound = parse::<syn::TypeParamBound, crate::TypeParamBound>(&cx, "Fn(A)");
         let crate::TypeParamBound::Trait(bound) = bound else {
             panic!()
         };
@@ -467,19 +507,19 @@ mod tests {
         ));
         assert!(bound.path.segments[0].args.is_empty());
 
-        let path = parse::<syn::Path, Path>(&scx, "Borrowed<'a>");
+        let path = parse::<syn::Path, Path>(&cx, "Borrowed<'a>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
 
-        let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T> = U>");
+        let path = parse::<syn::Path, Path>(&cx, "Trait<Assoc<T> = U>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
 
-        let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T>: Display>");
+        let path = parse::<syn::Path, Path>(&cx, "Trait<Assoc<T>: Display>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };

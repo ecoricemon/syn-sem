@@ -5,20 +5,21 @@ use syn_sem_macros::CheckDropless;
 ///
 /// Examples include `pub`, private inherited visibility, and restricted forms like `pub(crate)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum Visibility<'scx> {
-    Public(Span<'scx>),
-    PublicPath(Path<'scx>),
+pub enum Visibility<'cx> {
+    /// Unrestricted public visibility.
+    Public(Span<'cx>),
+    /// Restricted public visibility, such as `pub(crate)`.
+    PublicPath(Path<'cx>),
+    /// Inherited private visibility.
     Private,
 }
 
-impl<'scx> FromSyn<'scx, syn::Visibility> for Visibility<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Visibility>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Visibility> for Visibility<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Visibility>) -> Self {
         match desc.input {
-            syn::Visibility::Public(v) => {
-                Self::Public(Span::from_locatable(scx, desc.file_path, v))
-            }
+            syn::Visibility::Public(v) => Self::Public(Span::from_locatable(cx, desc.file_path, v)),
             syn::Visibility::Restricted(v) => Self::PublicPath(Path::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &v.path,
@@ -39,28 +40,29 @@ mod tests {
         // Proves public, inherited, and restricted visibilities are distinguished.
         type T = syn::Visibility;
         type U<'a> = Visibility<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
         // Public visibility
-        let vis = parse::<T, U>(&scx, "pub");
+        let vis = parse::<T, U>(&cx, "pub");
         assert!(matches!(vis, Visibility::Public(..)));
 
         // Restricted visibility - pub(super)
-        let vis = parse::<T, U>(&scx, "pub(super)");
+        let vis = parse::<T, U>(&cx, "pub(super)");
         let Visibility::PublicPath(path) = vis else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "super");
 
         // Restricted visibility - pub(super)
-        let vis = parse::<T, U>(&scx, "pub(crate)");
+        let vis = parse::<T, U>(&cx, "pub(crate)");
         let Visibility::PublicPath(path) = vis else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "crate");
 
         // Restricted visibility - pub(in path)
-        let vis = parse::<T, U>(&scx, "pub(in foo::bar)");
+        let vis = parse::<T, U>(&cx, "pub(in foo::bar)");
         let Visibility::PublicPath(path) = vis else {
             panic!()
         };

@@ -5,55 +5,62 @@ use syn_sem_macros::CheckDropless;
 ///
 /// Examples include `T`, `&mut T`, `[T; N]`, `[T]`, and `(A, B)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum Type<'scx> {
-    Array(TypeArray<'scx>),
-    Infer(Span<'scx>),
-    Path(TypePath<'scx>),
-    Reference(TypeReference<'scx>),
-    Slice(TypeSlice<'scx>),
-    Tuple(TypeTuple<'scx>),
+pub enum Type<'cx> {
+    /// Fixed-length array type.
+    Array(TypeArray<'cx>),
+    /// Inferred type placeholder.
+    Infer(Span<'cx>),
+    /// Path type.
+    Path(TypePath<'cx>),
+    /// Borrowed reference type.
+    Reference(TypeReference<'cx>),
+    /// Dynamically sized slice type.
+    Slice(TypeSlice<'cx>),
+    /// Tuple type.
+    Tuple(TypeTuple<'cx>),
 }
 
-impl<'scx> Type<'scx> {
-    pub fn unit(span: Span<'scx>) -> Self {
+impl<'cx> Type<'cx> {
+    /// Creates the unit type `()`.
+    pub fn unit(span: Span<'cx>) -> Self {
         Self::Tuple(TypeTuple::unit(span))
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::Type> for Type<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Type>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Type> for Type<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Type>) -> Self {
         match desc.input {
             syn::Type::Array(v) => Self::Array(TypeArray::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
-            syn::Type::Infer(v) => Self::Infer(Span::from_locatable(scx, desc.file_path, v)),
+            syn::Type::Infer(v) => Self::Infer(Span::from_locatable(cx, desc.file_path, v)),
             syn::Type::Path(v) => Self::Path(TypePath::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Type::Reference(v) => Self::Reference(TypeReference::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Type::Slice(v) => Self::Slice(TypeSlice::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Type::Tuple(v) => Self::Tuple(TypeTuple::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -68,30 +75,33 @@ impl<'scx> FromSyn<'scx, syn::Type> for Type<'scx> {
 ///
 /// For example, `[u8; 4]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TypeArray<'scx> {
-    pub elem: &'scx Type<'scx>,
-    pub len: Expr<'scx>,
-    pub span: Span<'scx>,
+pub struct TypeArray<'cx> {
+    /// Element type.
+    pub elem: &'cx Type<'cx>,
+    /// Length expression.
+    pub len: Expr<'cx>,
+    /// Source span of the array type.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TypeArray> for TypeArray<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TypeArray>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TypeArray> for TypeArray<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeArray>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
+            elem: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.elem,
                 },
             )),
             len: Expr::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.len,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -100,22 +110,24 @@ impl<'scx> FromSyn<'scx, syn::TypeArray> for TypeArray<'scx> {
 ///
 /// Examples include `Vec<T>`, `crate::module::Type`, and `Self::Assoc`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TypePath<'scx> {
-    pub path: Path<'scx>,
-    pub span: Span<'scx>,
+pub struct TypePath<'cx> {
+    /// Path naming the type.
+    pub path: Path<'cx>,
+    /// Source span of the path type.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TypePath> for TypePath<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TypePath>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TypePath> for TypePath<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypePath>) -> Self {
         Self {
             path: Path::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.path,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -124,24 +136,27 @@ impl<'scx> FromSyn<'scx, syn::TypePath> for TypePath<'scx> {
 ///
 /// Examples include `&T` and `&mut T`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TypeReference<'scx> {
-    pub elem: &'scx Type<'scx>,
+pub struct TypeReference<'cx> {
+    /// Referenced type.
+    pub elem: &'cx Type<'cx>,
+    /// Whether the reference is mutable.
     pub is_mut: bool,
-    pub span: Span<'scx>,
+    /// Source span of the reference type.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TypeReference> for TypeReference<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TypeReference>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TypeReference> for TypeReference<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeReference>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
+            elem: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.elem,
                 },
             )),
             is_mut: desc.input.mutability.is_some(),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -150,22 +165,24 @@ impl<'scx> FromSyn<'scx, syn::TypeReference> for TypeReference<'scx> {
 ///
 /// For example, `[u8]`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TypeSlice<'scx> {
-    pub elem: &'scx Type<'scx>,
-    pub span: Span<'scx>,
+pub struct TypeSlice<'cx> {
+    /// Element type.
+    pub elem: &'cx Type<'cx>,
+    /// Source span of the slice type.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TypeSlice> for TypeSlice<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TypeSlice>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TypeSlice> for TypeSlice<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeSlice>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
+            elem: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.elem,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -174,28 +191,31 @@ impl<'scx> FromSyn<'scx, syn::TypeSlice> for TypeSlice<'scx> {
 ///
 /// Examples include `()`, `(A,)`, and `(A, B)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TypeTuple<'scx> {
-    pub elems: &'scx [Type<'scx>],
-    pub span: Span<'scx>,
+pub struct TypeTuple<'cx> {
+    /// Tuple element types.
+    pub elems: &'cx [Type<'cx>],
+    /// Source span of the tuple type.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> TypeTuple<'scx> {
-    pub fn unit(span: Span<'scx>) -> Self {
+impl<'cx> TypeTuple<'cx> {
+    /// Creates the unit tuple type.
+    pub fn unit(span: Span<'cx>) -> Self {
         Self { elems: &[], span }
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::TypeTuple> for TypeTuple<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TypeTuple>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TypeTuple> for TypeTuple<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeTuple>) -> Self {
         Self {
             elems: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.elems,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -208,25 +228,27 @@ mod tests {
     #[test]
     fn test_type_reference() {
         // Proves reference types preserve whether the reference is mutable.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let ty = parse::<syn::TypeReference, TypeReference>(&scx, "&T");
+        let ty = parse::<syn::TypeReference, TypeReference>(&cx, "&T");
         assert!(!ty.is_mut);
 
-        let ty = parse::<syn::TypeReference, TypeReference>(&scx, "&mut T");
+        let ty = parse::<syn::TypeReference, TypeReference>(&cx, "&mut T");
         assert!(ty.is_mut);
     }
 
     #[test]
     fn test_type_path() {
         // Proves type paths preserve generic arguments on the owning path segment.
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let ty = parse::<syn::TypePath, TypePath>(&scx, "Vec<T>");
+        let ty = parse::<syn::TypePath, TypePath>(&cx, "Vec<T>");
         assert_eq!(&*ty.path.segments[0].ident, "Vec");
         assert!(ty.path.segments[0].has_args());
 
-        let ty = parse::<syn::TypePath, TypePath>(&scx, "std::vec::Vec<T>");
+        let ty = parse::<syn::TypePath, TypePath>(&cx, "std::vec::Vec<T>");
         assert_eq!(ty.path.segments.len(), 3);
         assert!(!ty.path.segments[0].has_args());
         assert!(!ty.path.segments[1].has_args());

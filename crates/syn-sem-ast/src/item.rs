@@ -3,85 +3,95 @@ use crate::{
     SyntaxCx, Type, Variant, Visibility,
 };
 use std::iter;
+use syn_sem_common::FilePath;
 use syn_sem_macros::CheckDropless;
 
 /// A top-level or block-level Rust item supported by the semantic AST.
 ///
 /// Examples include `const X: i32 = 1;`, `fn f() {}`, `struct S;`, and `use a::b;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum Item<'scx> {
-    Const(ItemConst<'scx>),
-    Enum(ItemEnum<'scx>),
-    Fn(ItemFn<'scx>),
-    Impl(ItemImpl<'scx>),
-    Mod(ItemMod<'scx>),
-    Struct(ItemStruct<'scx>),
-    Trait(ItemTrait<'scx>),
-    Type(ItemType<'scx>),
-    Use(ItemUse<'scx>),
+pub enum Item<'cx> {
+    /// Constant item.
+    Const(ItemConst<'cx>),
+    /// Enum item.
+    Enum(ItemEnum<'cx>),
+    /// Function item.
+    Fn(ItemFn<'cx>),
+    /// Implementation block.
+    Impl(ItemImpl<'cx>),
+    /// Module item.
+    Mod(ItemMod<'cx>),
+    /// Struct item.
+    Struct(ItemStruct<'cx>),
+    /// Trait item.
+    Trait(ItemTrait<'cx>),
+    /// Type alias item.
+    Type(ItemType<'cx>),
+    /// Use item.
+    Use(ItemUse<'cx>),
 }
 
-impl<'scx> FromSyn<'scx, syn::Item> for Item<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Item>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Item> for Item<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Item>) -> Self {
         match desc.input {
             syn::Item::Const(v) => Item::Const(ItemConst::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Enum(v) => Item::Enum(ItemEnum::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Fn(v) => Item::Fn(ItemFn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Impl(v) => Item::Impl(ItemImpl::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Mod(v) => Item::Mod(ItemMod::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Struct(v) => Item::Struct(ItemStruct::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Trait(v) => Item::Trait(ItemTrait::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Type(v) => Item::Type(ItemType::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Item::Use(v) => Item::Use(ItemUse::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -96,46 +106,51 @@ impl<'scx> FromSyn<'scx, syn::Item> for Item<'scx> {
 ///
 /// For example, `pub const N: usize = 4;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemConst<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub ty: &'scx Type<'scx>,
-    pub init: &'scx Expr<'scx>,
-    pub span: Span<'scx>,
+pub struct ItemConst<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Constant name.
+    pub ident: Ident<'cx>,
+    /// Constant type.
+    pub ty: &'cx Type<'cx>,
+    /// Initializer expression.
+    pub init: &'cx Expr<'cx>,
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemConst> for ItemConst<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemConst>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemConst> for ItemConst<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemConst>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
+            ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             )),
-            init: scx.alloc(Expr::from_syn(
-                scx,
+            init: cx.alloc(Expr::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.expr,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -144,46 +159,51 @@ impl<'scx> FromSyn<'scx, syn::ItemConst> for ItemConst<'scx> {
 ///
 /// For example, `enum Option<T> { Some(T), None }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemEnum<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub variants: &'scx [Variant<'scx>],
-    pub span: Span<'scx>,
+pub struct ItemEnum<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Enum name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Enum variants.
+    pub variants: &'cx [Variant<'cx>],
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemEnum> for ItemEnum<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemEnum>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemEnum> for ItemEnum<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemEnum>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
             variants: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.variants,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -192,46 +212,51 @@ impl<'scx> FromSyn<'scx, syn::ItemEnum> for ItemEnum<'scx> {
 ///
 /// For example, `pub fn add(a: i32, b: i32) -> i32 { a + b }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemFn<'scx> {
-    pub vis: Visibility<'scx>,
-    pub generics: Generics<'scx>,
-    pub sig: Signature<'scx>,
-    pub block: Block<'scx>,
-    pub span: Span<'scx>,
+pub struct ItemFn<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Function signature.
+    pub sig: Signature<'cx>,
+    /// Function body.
+    pub block: Block<'cx>,
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemFn> for ItemFn<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemFn>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemFn> for ItemFn<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemFn>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.sig.generics,
                 },
             ),
             sig: Signature::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.sig,
                 },
             ),
             block: Block::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.block,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -240,19 +265,24 @@ impl<'scx> FromSyn<'scx, syn::ItemFn> for ItemFn<'scx> {
 ///
 /// Examples include `impl S { fn new() {} }` and `impl Trait for S {}`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemImpl<'scx> {
-    pub generics: Generics<'scx>,
-    pub trait_: Option<Path<'scx>>,
-    pub self_ty: &'scx Type<'scx>,
-    pub items: &'scx [ImplItem<'scx>],
-    pub span: Span<'scx>,
+pub struct ItemImpl<'cx> {
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Implemented trait path, if this is a trait impl.
+    pub trait_: Option<Path<'cx>>,
+    /// Implementing self type.
+    pub self_ty: &'cx Type<'cx>,
+    /// Items inside the impl block.
+    pub items: &'cx [ImplItem<'cx>],
+    /// Source span of the impl block.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemImpl> for ItemImpl<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemImpl>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemImpl> for ItemImpl<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemImpl>) -> Self {
         Self {
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
@@ -260,28 +290,28 @@ impl<'scx> FromSyn<'scx, syn::ItemImpl> for ItemImpl<'scx> {
             ),
             trait_: desc.input.trait_.as_ref().map(|(_, path, _)| {
                 Path::from_syn(
-                    scx,
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: path,
                     },
                 )
             }),
-            self_ty: scx.alloc(Type::from_syn(
-                scx,
+            self_ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.self_ty,
                 },
             )),
             items: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.items,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -290,31 +320,34 @@ impl<'scx> FromSyn<'scx, syn::ItemImpl> for ItemImpl<'scx> {
 ///
 /// Examples include `const N: usize = 1;`, `fn f(&self) {}`, and `type Output = T;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum ImplItem<'scx> {
-    Const(ImplItemConst<'scx>),
-    Fn(ImplItemFn<'scx>),
-    Type(ImplItemType<'scx>),
+pub enum ImplItem<'cx> {
+    /// Associated const.
+    Const(ImplItemConst<'cx>),
+    /// Associated function.
+    Fn(ImplItemFn<'cx>),
+    /// Associated type.
+    Type(ImplItemType<'cx>),
 }
 
-impl<'scx> FromSyn<'scx, syn::ImplItem> for ImplItem<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ImplItem>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ImplItem> for ImplItem<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ImplItem>) -> Self {
         match desc.input {
             syn::ImplItem::Const(v) => Self::Const(ImplItemConst::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::ImplItem::Fn(v) => Self::Fn(ImplItemFn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::ImplItem::Type(v) => Self::Type(ImplItemType::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -329,46 +362,51 @@ impl<'scx> FromSyn<'scx, syn::ImplItem> for ImplItem<'scx> {
 ///
 /// For example, `const N: usize = 1;` in `impl S`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ImplItemConst<'scx> {
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub ty: &'scx Type<'scx>,
-    pub init: &'scx Expr<'scx>,
-    pub span: Span<'scx>,
+pub struct ImplItemConst<'cx> {
+    /// Associated const name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Associated const type.
+    pub ty: &'cx Type<'cx>,
+    /// Initializer expression.
+    pub init: &'cx Expr<'cx>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ImplItemConst> for ImplItemConst<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ImplItemConst>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ImplItemConst> for ImplItemConst<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ImplItemConst>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
+            ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             )),
-            init: scx.alloc(Expr::from_syn(
-                scx,
+            init: cx.alloc(Expr::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.expr,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -377,30 +415,33 @@ impl<'scx> FromSyn<'scx, syn::ImplItemConst> for ImplItemConst<'scx> {
 ///
 /// For example, `fn new() -> Self { Self }` in `impl S`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ImplItemFn<'scx> {
-    pub sig: Signature<'scx>,
-    pub block: Block<'scx>,
-    pub span: Span<'scx>,
+pub struct ImplItemFn<'cx> {
+    /// Function signature.
+    pub sig: Signature<'cx>,
+    /// Function body.
+    pub block: Block<'cx>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ImplItemFn> for ImplItemFn<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ImplItemFn>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ImplItemFn> for ImplItemFn<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ImplItemFn>) -> Self {
         Self {
             sig: Signature::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.sig,
                 },
             ),
             block: Block::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.block,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -409,38 +450,42 @@ impl<'scx> FromSyn<'scx, syn::ImplItemFn> for ImplItemFn<'scx> {
 ///
 /// For example, `type Item = T;` in `impl Iterator for S`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ImplItemType<'scx> {
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub ty: &'scx Type<'scx>,
-    pub span: Span<'scx>,
+pub struct ImplItemType<'cx> {
+    /// Associated type name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Assigned type.
+    pub ty: &'cx Type<'cx>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ImplItemType> for ImplItemType<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ImplItemType>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ImplItemType> for ImplItemType<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ImplItemType>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
+            ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -449,44 +494,47 @@ impl<'scx> FromSyn<'scx, syn::ImplItemType> for ImplItemType<'scx> {
 ///
 /// Examples include inline `mod m { fn f() {} }` and external `mod m;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemMod<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub items: Option<&'scx [Item<'scx>]>,
-    pub span: Span<'scx>,
+pub struct ItemMod<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Module name.
+    pub ident: Ident<'cx>,
+    /// Inline module items, if present.
+    pub items: Option<&'cx [Item<'cx>]>,
+    /// Source span of the item.
+    pub span: Span<'cx>,
 
-    /// True if the module contains its items with the module's declaration. (e.g. mod foo { .. })
-    /// False if the module is just pointing a file (e.g. mod foo;)
+    /// Whether the module contains its items inline.
     pub is_inline: bool,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemMod> for ItemMod<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemMod>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemMod> for ItemMod<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemMod>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             items: desc.input.content.as_ref().map(|(_, items)| {
-                <&'scx [Item<'scx>]>::from_syn(
-                    scx,
+                <&'cx [Item<'cx>]>::from_syn(
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: items,
                     },
                 )
             }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
             is_inline: desc.input.content.is_some(),
         }
     }
@@ -496,46 +544,51 @@ impl<'scx> FromSyn<'scx, syn::ItemMod> for ItemMod<'scx> {
 ///
 /// Examples include `struct S;`, `struct S(T);`, and `struct S { x: i32 }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemStruct<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub fields: &'scx [Field<'scx>],
-    pub span: Span<'scx>,
+pub struct ItemStruct<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Struct name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Struct fields.
+    pub fields: &'cx [Field<'cx>],
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemStruct> for ItemStruct<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemStruct>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemStruct> for ItemStruct<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemStruct>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
             fields: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.fields,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -544,46 +597,51 @@ impl<'scx> FromSyn<'scx, syn::ItemStruct> for ItemStruct<'scx> {
 ///
 /// For example, `type Bytes = Vec<u8>;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemType<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub ty: &'scx Type<'scx>,
-    pub span: Span<'scx>,
+pub struct ItemType<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Type alias name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Aliased type.
+    pub ty: &'cx Type<'cx>,
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemType> for ItemType<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemType>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemType> for ItemType<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemType>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
+            ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -592,30 +650,33 @@ impl<'scx> FromSyn<'scx, syn::ItemType> for ItemType<'scx> {
 ///
 /// Examples include `use std::fmt;`, `use a::b as c;`, and `use a::{b, c};`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemUse<'scx> {
-    pub vis: Visibility<'scx>,
-    pub tree: UseTree<'scx>,
-    pub span: Span<'scx>,
+pub struct ItemUse<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Imported use tree.
+    pub tree: UseTree<'cx>,
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemUse> for ItemUse<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemUse>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemUse> for ItemUse<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemUse>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             tree: UseTree::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.tree,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -624,41 +685,46 @@ impl<'scx> FromSyn<'scx, syn::ItemUse> for ItemUse<'scx> {
 ///
 /// Examples include `a::b`, `a as b`, `*`, and `{a, b}`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum UseTree<'scx> {
-    Path(UsePath<'scx>),
-    Name(UseName<'scx>),
-    Rename(UseRename<'scx>),
-    Glob(Span<'scx>),
-    Group(UseGroup<'scx>),
+pub enum UseTree<'cx> {
+    /// Nested use path.
+    Path(UsePath<'cx>),
+    /// Imported name.
+    Name(UseName<'cx>),
+    /// Renamed import.
+    Rename(UseRename<'cx>),
+    /// Glob import.
+    Glob(Span<'cx>),
+    /// Grouped imports.
+    Group(UseGroup<'cx>),
 }
 
-impl<'scx> FromSyn<'scx, syn::UseTree> for UseTree<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::UseTree>) -> Self {
+impl<'cx> FromSyn<'cx, syn::UseTree> for UseTree<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::UseTree>) -> Self {
         match desc.input {
             syn::UseTree::Path(v) => Self::Path(UsePath::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::UseTree::Name(v) => Self::Name(UseName::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::UseTree::Rename(v) => Self::Rename(UseRename::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
-            syn::UseTree::Glob(v) => Self::Glob(Span::from_locatable(scx, desc.file_path, v)),
+            syn::UseTree::Glob(v) => Self::Glob(Span::from_locatable(cx, desc.file_path, v)),
             syn::UseTree::Group(v) => Self::Group(UseGroup::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -672,30 +738,33 @@ impl<'scx> FromSyn<'scx, syn::UseTree> for UseTree<'scx> {
 ///
 /// For example, `std::fmt` is represented as nested `UsePath` nodes ending in a name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct UsePath<'scx> {
-    pub ident: Ident<'scx>,
-    pub tree: &'scx UseTree<'scx>,
-    pub span: Span<'scx>,
+pub struct UsePath<'cx> {
+    /// Path segment name.
+    pub ident: Ident<'cx>,
+    /// Nested use tree after this segment.
+    pub tree: &'cx UseTree<'cx>,
+    /// Source span of the use path.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::UsePath> for UsePath<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::UsePath>) -> Self {
+impl<'cx> FromSyn<'cx, syn::UsePath> for UsePath<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::UsePath>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
-            tree: scx.alloc(UseTree::from_syn(
-                scx,
+            tree: cx.alloc(UseTree::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.tree,
                 },
             )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -704,22 +773,24 @@ impl<'scx> FromSyn<'scx, syn::UsePath> for UsePath<'scx> {
 ///
 /// For example, `fmt` in `use std::fmt;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct UseName<'scx> {
-    pub ident: Ident<'scx>,
-    pub span: Span<'scx>,
+pub struct UseName<'cx> {
+    /// Imported name.
+    pub ident: Ident<'cx>,
+    /// Source span of the name.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::UseName> for UseName<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::UseName>) -> Self {
+impl<'cx> FromSyn<'cx, syn::UseName> for UseName<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::UseName>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -728,30 +799,33 @@ impl<'scx> FromSyn<'scx, syn::UseName> for UseName<'scx> {
 ///
 /// For example, `fmt as format` in `use std::fmt as format;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct UseRename<'scx> {
-    pub ident: Ident<'scx>,
-    pub rename: Ident<'scx>,
-    pub span: Span<'scx>,
+pub struct UseRename<'cx> {
+    /// Original imported name.
+    pub ident: Ident<'cx>,
+    /// Local renamed name.
+    pub rename: Ident<'cx>,
+    /// Source span of the rename.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::UseRename> for UseRename<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::UseRename>) -> Self {
+impl<'cx> FromSyn<'cx, syn::UseRename> for UseRename<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::UseRename>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             rename: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.rename,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -760,22 +834,24 @@ impl<'scx> FromSyn<'scx, syn::UseRename> for UseRename<'scx> {
 ///
 /// For example, `{fmt, io}` in `use std::{fmt, io};`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct UseGroup<'scx> {
-    pub items: &'scx [UseTree<'scx>],
-    pub span: Span<'scx>,
+pub struct UseGroup<'cx> {
+    /// Grouped use trees.
+    pub items: &'cx [UseTree<'cx>],
+    /// Source span of the group.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::UseGroup> for UseGroup<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::UseGroup>) -> Self {
+impl<'cx> FromSyn<'cx, syn::UseGroup> for UseGroup<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::UseGroup>) -> Self {
         Self {
             items: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.items,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -784,46 +860,51 @@ impl<'scx> FromSyn<'scx, syn::UseGroup> for UseGroup<'scx> {
 ///
 /// For example, `trait Iterator { type Item; fn next(&mut self) -> Option<Self::Item>; }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct ItemTrait<'scx> {
-    pub vis: Visibility<'scx>,
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub items: &'scx [TraitItem<'scx>],
-    pub span: Span<'scx>,
+pub struct ItemTrait<'cx> {
+    /// Item visibility.
+    pub vis: Visibility<'cx>,
+    /// Trait name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Items declared in the trait.
+    pub items: &'cx [TraitItem<'cx>],
+    /// Source span of the item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::ItemTrait> for ItemTrait<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::ItemTrait>) -> Self {
+impl<'cx> FromSyn<'cx, syn::ItemTrait> for ItemTrait<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ItemTrait>) -> Self {
         Self {
             vis: Visibility::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.vis,
                 },
             ),
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
             items: FromSyn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.items,
                 },
             ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -832,31 +913,34 @@ impl<'scx> FromSyn<'scx, syn::ItemTrait> for ItemTrait<'scx> {
 ///
 /// Examples include associated consts, associated functions, and associated types.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum TraitItem<'scx> {
-    Const(TraitItemConst<'scx>),
-    Fn(TraitItemFn<'scx>),
-    Type(TraitItemType<'scx>),
+pub enum TraitItem<'cx> {
+    /// Associated const declaration.
+    Const(TraitItemConst<'cx>),
+    /// Associated function declaration.
+    Fn(TraitItemFn<'cx>),
+    /// Associated type declaration.
+    Type(TraitItemType<'cx>),
 }
 
-impl<'scx> FromSyn<'scx, syn::TraitItem> for TraitItem<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TraitItem>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TraitItem> for TraitItem<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TraitItem>) -> Self {
         match desc.input {
             syn::TraitItem::Const(v) => Self::Const(TraitItemConst::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::TraitItem::Fn(v) => Self::Fn(TraitItemFn::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::TraitItem::Type(v) => Self::Type(TraitItemType::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -871,48 +955,53 @@ impl<'scx> FromSyn<'scx, syn::TraitItem> for TraitItem<'scx> {
 ///
 /// For example, `const N: usize;` or `const N: usize = 1;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TraitItemConst<'scx> {
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub ty: &'scx Type<'scx>,
-    pub default: Option<&'scx Expr<'scx>>,
-    pub span: Span<'scx>,
+pub struct TraitItemConst<'cx> {
+    /// Associated const name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Associated const type.
+    pub ty: &'cx Type<'cx>,
+    /// Optional default expression.
+    pub default: Option<&'cx Expr<'cx>>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TraitItemConst> for TraitItemConst<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TraitItemConst>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TraitItemConst> for TraitItemConst<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TraitItemConst>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
+            ty: cx.alloc(Type::from_syn(
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ty,
                 },
             )),
             default: desc.input.default.as_ref().map(|(_, expr)| {
-                scx.alloc(Expr::from_syn(
-                    scx,
+                cx.alloc(Expr::from_syn(
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: expr,
                     },
                 ))
             }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -921,17 +1010,20 @@ impl<'scx> FromSyn<'scx, syn::TraitItemConst> for TraitItemConst<'scx> {
 ///
 /// For example, `fn next(&mut self) -> Option<Self::Item>;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TraitItemFn<'scx> {
-    pub sig: Signature<'scx>,
-    pub default: Option<Block<'scx>>,
-    pub span: Span<'scx>,
+pub struct TraitItemFn<'cx> {
+    /// Function signature.
+    pub sig: Signature<'cx>,
+    /// Optional default body.
+    pub default: Option<Block<'cx>>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TraitItemFn> for TraitItemFn<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TraitItemFn>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TraitItemFn> for TraitItemFn<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TraitItemFn>) -> Self {
         Self {
             sig: Signature::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.sig,
@@ -939,14 +1031,14 @@ impl<'scx> FromSyn<'scx, syn::TraitItemFn> for TraitItemFn<'scx> {
             ),
             default: desc.input.default.as_ref().map(|block| {
                 Block::from_syn(
-                    scx,
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: block,
                     },
                 )
             }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -955,40 +1047,44 @@ impl<'scx> FromSyn<'scx, syn::TraitItemFn> for TraitItemFn<'scx> {
 ///
 /// For example, `type Item;` or `type Item = u8;`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct TraitItemType<'scx> {
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub default: Option<&'scx Type<'scx>>,
-    pub span: Span<'scx>,
+pub struct TraitItemType<'cx> {
+    /// Associated type name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Optional default type.
+    pub default: Option<&'cx Type<'cx>>,
+    /// Source span of the associated item.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::TraitItemType> for TraitItemType<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::TraitItemType>) -> Self {
+impl<'cx> FromSyn<'cx, syn::TraitItemType> for TraitItemType<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TraitItemType>) -> Self {
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
             default: desc.input.default.as_ref().map(|(_, ty)| {
-                scx.alloc(Type::from_syn(
-                    scx,
+                cx.alloc(Type::from_syn(
+                    cx,
                     InputDesc {
                         file_path: desc.file_path,
                         input: ty,
                     },
                 ))
             }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -997,21 +1093,25 @@ impl<'scx> FromSyn<'scx, syn::TraitItemType> for TraitItemType<'scx> {
 ///
 /// For example, `fn f<T>(x: T) -> T` stores the name, generics, and parameters.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Signature<'scx> {
-    pub ident: Ident<'scx>,
-    pub generics: Generics<'scx>,
-    pub params: &'scx [Parameter<'scx>],
-    pub span: Span<'scx>,
+pub struct Signature<'cx> {
+    /// Function name.
+    pub ident: Ident<'cx>,
+    /// Generic parameters and where-clause.
+    pub generics: Generics<'cx>,
+    /// Return parameter followed by input parameters.
+    pub params: &'cx [Parameter<'cx>],
+    /// Source span of the signature.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> FromSyn<'scx, syn::Signature> for Signature<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::Signature>) -> Self {
+impl<'cx> FromSyn<'cx, syn::Signature> for Signature<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Signature>) -> Self {
         let output =
-            Parameter::from_return_type(scx, desc.file_path, &desc.input.output, ParameterCx::Fn);
+            Parameter::from_return_type(cx, desc.file_path, &desc.input.output, ParameterCx::Fn);
         let output = iter::once(output);
         let inputs = desc.input.inputs.iter().map(|arg| {
             Parameter::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: arg,
@@ -1023,21 +1123,21 @@ impl<'scx> FromSyn<'scx, syn::Signature> for Signature<'scx> {
 
         Self {
             ident: Ident::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.ident,
                 },
             ),
             generics: Generics::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: &desc.input.generics,
                 },
             ),
-            params: scx.alloc_slice(len, |_| params.next().unwrap()),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            params: cx.alloc_slice(len, |_| params.next().unwrap()),
+            span: Span::from_locatable(cx, desc.file_path, desc.input),
         }
     }
 }
@@ -1046,38 +1146,40 @@ impl<'scx> FromSyn<'scx, syn::Signature> for Signature<'scx> {
 ///
 /// For example, `x: i32` in `fn f(x: i32)`, or the return type in `fn f() -> i32`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Parameter<'scx> {
-    pub pat: PatType<'scx>,
-    pub span: Span<'scx>,
+pub struct Parameter<'cx> {
+    /// Pattern and type for the parameter.
+    pub pat: PatType<'cx>,
+    /// Source span of the parameter.
+    pub span: Span<'cx>,
 }
 
-impl<'scx> Parameter<'scx> {
+impl<'cx> Parameter<'cx> {
     /// Creates a parameter with the ident `0`.
     pub fn from_return_type(
-        scx: &'scx SyntaxCx,
-        file_path: &str,
-        ret_ty: &syn::ReturnType,
-        cx: ParameterCx,
+        cx: &'cx SyntaxCx<'cx>,
+        file_path: FilePath<'cx>,
+        ret_ty: &'cx syn::ReturnType,
+        parameter_cx: ParameterCx,
     ) -> Self {
         const IDENT: u32 = 0;
 
-        let span = Span::from_locatable(scx, file_path, ret_ty);
+        let span = Span::from_locatable(cx, file_path, ret_ty);
         let ty = match ret_ty {
-            syn::ReturnType::Default => match cx {
+            syn::ReturnType::Default => match parameter_cx {
                 ParameterCx::Fn => Type::unit(span),
                 ParameterCx::Closure => Type::Infer(span),
             },
             syn::ReturnType::Type(_, ty) => Type::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path,
                     input: ty,
                 },
             ),
         };
-        let pat_ident = Pat::Ident(PatIdent::from_number(scx, IDENT, Span::empty()));
+        let pat_ident = Pat::Ident(PatIdent::from_number(cx, IDENT, Span::empty()));
         let pat = PatType {
-            pat: scx.alloc(pat_ident),
+            pat: cx.alloc(pat_ident),
             ty,
             span,
         };
@@ -1085,19 +1187,19 @@ impl<'scx> Parameter<'scx> {
     }
 }
 
-impl<'scx> FromSyn<'scx, syn::FnArg> for Parameter<'scx> {
-    fn from_syn(scx: &'scx SyntaxCx, desc: InputDesc<'_, syn::FnArg>) -> Self {
-        let span = Span::from_locatable(scx, desc.file_path, desc.input);
+impl<'cx> FromSyn<'cx, syn::FnArg> for Parameter<'cx> {
+    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::FnArg>) -> Self {
+        let span = Span::from_locatable(cx, desc.file_path, desc.input);
         let pat = match desc.input {
             syn::FnArg::Receiver(v) => PatType::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             ),
             syn::FnArg::Typed(v) => PatType::from_syn(
-                scx,
+                cx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -1113,7 +1215,9 @@ impl<'scx> FromSyn<'scx, syn::FnArg> for Parameter<'scx> {
 /// For example, functions default to `()` while closures can default to an inferred type.
 #[derive(PartialEq, Eq)]
 pub enum ParameterCx {
+    /// Function return parameter context.
     Fn,
+    /// Closure return parameter context.
     Closure,
 }
 
@@ -1128,45 +1232,46 @@ mod tests {
         // Proves structs preserve visibility, name, fields, tuple field names, and generics.
         type T = syn::ItemStruct;
         type U<'a> = ItemStruct<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
         // Empty struct
-        let st = parse::<T, U>(&scx, "struct A;");
+        let st = parse::<T, U>(&cx, "struct A;");
         assert_eq!(&*st.ident.inner, "A");
         assert!(st.fields.is_empty());
 
         // Tuple struct with zero, one, and two fields.
-        let st = parse::<T, U>(&scx, "struct A();");
+        let st = parse::<T, U>(&cx, "struct A();");
         assert!(st.fields.is_empty());
-        let st = parse::<T, U>(&scx, "struct A(B);");
+        let st = parse::<T, U>(&cx, "struct A(B);");
         assert_eq!(st.fields.len(), 1);
         let Type::Path(ty) = &st.fields[0].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "B");
-        let st = parse::<T, U>(&scx, "struct A(B, C);");
+        let st = parse::<T, U>(&cx, "struct A(B, C);");
         assert_eq!(st.fields.len(), 2);
         assert_eq!(&*st.fields[0].ident, "0");
         assert_eq!(&*st.fields[1].ident, "1");
 
         // Struct with zero, one, and two fields.
-        let st = parse::<T, U>(&scx, "struct A{}");
+        let st = parse::<T, U>(&cx, "struct A{}");
         assert!(st.fields.is_empty());
-        let st = parse::<T, U>(&scx, "struct A{ f1: B }");
+        let st = parse::<T, U>(&cx, "struct A{ f1: B }");
         assert_eq!(st.fields.len(), 1);
         assert_eq!(&*st.fields[0].ident, "f1");
         let Type::Path(ty) = &st.fields[0].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "B");
-        let st = parse::<T, U>(&scx, "struct A{ f1: B, f2: C }");
+        let st = parse::<T, U>(&cx, "struct A{ f1: B, f2: C }");
         assert_eq!(st.fields.len(), 2);
         let Type::Path(ty) = &st.fields[1].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "C");
 
-        let st = parse::<T, U>(&scx, "struct A<T>{ f: T }");
+        let st = parse::<T, U>(&cx, "struct A<T>{ f: T }");
         assert_eq!(st.generics.params.len(), 1);
         assert!(matches!(st.generics.params[0], GenericParam::Type(_)));
     }
@@ -1176,9 +1281,10 @@ mod tests {
         // Proves enums preserve name, variants, and generic params.
         type T = syn::ItemEnum;
         type U<'a> = ItemEnum<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_enum = parse::<T, U>(&scx, "enum E<T> { A(T) }");
+        let item_enum = parse::<T, U>(&cx, "enum E<T> { A(T) }");
         assert_eq!(&*item_enum.ident, "E");
         assert_eq!(item_enum.generics.params.len(), 1);
         assert!(matches!(
@@ -1192,9 +1298,10 @@ mod tests {
         // Proves free functions preserve signature generics and parameters.
         type T = syn::ItemFn;
         type U<'a> = ItemFn<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_fn = parse::<T, U>(&scx, "fn f<T>(value: T) -> T { value }");
+        let item_fn = parse::<T, U>(&cx, "fn f<T>(value: T) -> T { value }");
         assert_eq!(&*item_fn.sig.ident, "f");
         assert_eq!(item_fn.generics.params.len(), 1);
         assert_eq!(item_fn.sig.generics.params.len(), 1);
@@ -1209,14 +1316,15 @@ mod tests {
         // Proves modules distinguish inline modules from file-backed declarations.
         type T = syn::ItemMod;
         type U<'a> = ItemMod<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_mod = parse::<T, U>(&scx, "mod a;");
+        let item_mod = parse::<T, U>(&cx, "mod a;");
         assert_eq!(&*item_mod.ident, "a");
         assert!(item_mod.items.is_none());
         assert!(!item_mod.is_inline);
 
-        let item_mod = parse::<T, U>(&scx, "pub mod a { const N: usize = 1; struct S; }");
+        let item_mod = parse::<T, U>(&cx, "pub mod a { const N: usize = 1; struct S; }");
         assert!(matches!(item_mod.vis, Visibility::Public(..)));
         assert!(item_mod.is_inline);
         let items = item_mod.items.unwrap();
@@ -1230,21 +1338,22 @@ mod tests {
         // Proves type aliases preserve visibility, name, target type, and generics.
         type T = syn::ItemType;
         type U<'a> = ItemType<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_type = parse::<T, U>(&scx, "pub type Alias = Target;");
+        let item_type = parse::<T, U>(&cx, "pub type Alias = Target;");
         assert!(matches!(item_type.vis, Visibility::Public(..)));
         assert_eq!(&*item_type.ident, "Alias");
         assert!(matches!(item_type.ty, Type::Path(_)));
 
-        let item_type = parse::<T, U>(&scx, "type Alias<T> = T;");
+        let item_type = parse::<T, U>(&cx, "type Alias<T> = T;");
         assert_eq!(item_type.generics.params.len(), 1);
         assert!(matches!(
             item_type.generics.params[0],
             GenericParam::Type(_)
         ));
 
-        let item_mod = parse::<syn::ItemMod, ItemMod>(&scx, "mod a { type Alias = Target; }");
+        let item_mod = parse::<syn::ItemMod, ItemMod>(&cx, "mod a { type Alias = Target; }");
         let items = item_mod.items.unwrap();
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], Item::Type(_)));
@@ -1255,16 +1364,17 @@ mod tests {
         // Proves use items preserve all supported use tree forms.
         type T = syn::ItemUse;
         type U<'a> = ItemUse<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_use = parse::<T, U>(&scx, "pub use a;");
+        let item_use = parse::<T, U>(&cx, "pub use a;");
         assert!(matches!(item_use.vis, Visibility::Public(..)));
         let UseTree::Name(name) = &item_use.tree else {
             panic!()
         };
         assert_eq!(&*name.ident, "a");
 
-        let item_use = parse::<T, U>(&scx, "use a::b as c;");
+        let item_use = parse::<T, U>(&cx, "use a::b as c;");
         let UseTree::Path(path) = &item_use.tree else {
             panic!()
         };
@@ -1275,7 +1385,7 @@ mod tests {
         assert_eq!(&*rename.ident, "b");
         assert_eq!(&*rename.rename, "c");
 
-        let item_use = parse::<T, U>(&scx, "use a::{b, c as d, *};");
+        let item_use = parse::<T, U>(&cx, "use a::{b, c as d, *};");
         let UseTree::Path(path) = &item_use.tree else {
             panic!()
         };
@@ -1288,7 +1398,7 @@ mod tests {
         assert!(matches!(group.items[1], UseTree::Rename(_)));
         assert!(matches!(group.items[2], UseTree::Glob(_)));
 
-        let item_mod = parse::<syn::ItemMod, ItemMod>(&scx, "mod a { use b::c; }");
+        let item_mod = parse::<syn::ItemMod, ItemMod>(&cx, "mod a { use b::c; }");
         let items = item_mod.items.unwrap();
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], Item::Use(_)));
@@ -1299,9 +1409,10 @@ mod tests {
         // Proves impl blocks preserve generics, trait target, self type, and associated items.
         type T = syn::ItemImpl;
         type U<'a> = ItemImpl<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
-        let item_impl = parse::<T, U>(&scx, "impl S { const N: usize = 1; fn f(&self) {} }");
+        let item_impl = parse::<T, U>(&cx, "impl S { const N: usize = 1; fn f(&self) {} }");
         assert!(item_impl.generics.params.is_empty());
         assert!(item_impl.trait_.is_none());
         assert!(matches!(item_impl.self_ty, Type::Path(_)));
@@ -1319,7 +1430,7 @@ mod tests {
         assert_eq!(&*item_fn.sig.ident, "f");
         assert_eq!(item_fn.sig.params.len(), 2);
 
-        let item_impl = parse::<T, U>(&scx, "impl Trait for S { type Assoc = usize; }");
+        let item_impl = parse::<T, U>(&cx, "impl Trait for S { type Assoc = usize; }");
         assert_eq!(
             &**item_impl.trait_.as_ref().unwrap().get_ident().unwrap(),
             "Trait"
@@ -1332,7 +1443,7 @@ mod tests {
         };
         assert_eq!(&*item_type.ident, "Assoc");
 
-        let item_impl = parse::<T, U>(&scx, "impl<T> S<T> { const C: usize = 0; type A<U> = U; }");
+        let item_impl = parse::<T, U>(&cx, "impl<T> S<T> { const C: usize = 0; type A<U> = U; }");
         assert_eq!(item_impl.generics.params.len(), 1);
         let ImplItem::Const(item_const) = &item_impl.items[0] else {
             panic!()
@@ -1349,10 +1460,11 @@ mod tests {
         // Proves traits preserve generics and supported associated item defaults.
         type T = syn::ItemTrait;
         type U<'a> = ItemTrait<'a>;
-        let scx = SyntaxCx::default();
+        let ccx = syn_sem_common::CommonCx::new();
+        let cx = SyntaxCx::new(&ccx);
 
         let item_trait = parse::<T, U>(
-            &scx,
+            &cx,
             "pub trait Trait {
                 const REQUIRED: usize;
                 const DEFAULTED: usize = 1;
@@ -1406,7 +1518,7 @@ mod tests {
         assert!(item_fn.default.is_some());
 
         let item_trait = parse::<T, U>(
-            &scx,
+            &cx,
             "trait Trait<T> {
                 const C: usize;
                 type Assoc<U>;
