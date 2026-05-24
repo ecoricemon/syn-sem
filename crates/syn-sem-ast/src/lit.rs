@@ -37,24 +37,24 @@ impl<'cx> Lit<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Lit> for Lit<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Lit>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Lit>) -> Self {
         match desc.input {
             syn::Lit::Int(v) => Self::Int(LitInt::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Lit::Float(v) => Self::Float(LitFloat::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
                 },
             )),
             syn::Lit::Bool(v) => Self::Bool(LitBool::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: v,
@@ -89,10 +89,10 @@ impl LitInt<'_> {
 }
 
 impl<'cx> FromSyn<'cx, syn::LitInt> for LitInt<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitInt>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitInt>) -> Self {
         Self {
-            literal: cx.intern(desc.input.base10_digits()),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            literal: scx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -121,10 +121,10 @@ impl LitFloat<'_> {
 }
 
 impl<'cx> FromSyn<'cx, syn::LitFloat> for LitFloat<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitFloat>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitFloat>) -> Self {
         Self {
-            literal: cx.intern(desc.input.base10_digits()),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            literal: scx.intern(desc.input.base10_digits()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -151,10 +151,10 @@ impl LitBool<'_> {
 }
 
 impl<'cx> FromSyn<'cx, syn::LitBool> for LitBool<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitBool>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::LitBool>) -> Self {
         Self {
             value: desc.input.value,
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -165,7 +165,7 @@ mod tests {
     use crate::test_util::*;
 
     #[test]
-    fn test_lit_int() {
+    fn lit_int() {
         // Proves integer literals preserve their parsed numeric value.
         let ccx = syn_sem_common::CommonCx::new();
         let cx = SyntaxCx::new(&ccx);
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lit_float() {
+    fn lit_float() {
         // Proves float literals preserve their parsed numeric value.
         let ccx = syn_sem_common::CommonCx::new();
         let cx = SyntaxCx::new(&ccx);
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lit_bool() {
+    fn lit_bool() {
         // Proves boolean literals preserve true and false values.
         let ccx = syn_sem_common::CommonCx::new();
         let cx = SyntaxCx::new(&ccx);

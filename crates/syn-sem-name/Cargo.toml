@@ -1,0 +1,15 @@
+[package]
+name = "syn-sem-name"
+publish = false
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "Name-resolution model for syn-sem"
+repository = "https://github.com/ecoricemon/syn-sem"
+
+[dependencies]
+syn-sem-common = { workspace = true }
+
+[dev-dependencies]
+syn-sem-ast = { workspace = true }
+syn = { workspace = true, features = ["full", "extra-traits"] }

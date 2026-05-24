@@ -1,10 +1,15 @@
-pub(crate) mod attr;
-pub(crate) mod common;
-pub(crate) mod file;
-pub(crate) mod find_child;
-pub(crate) mod find_parent;
-pub(crate) mod forest;
-pub(crate) mod identify;
+//! Raw `syn` syntax forest, identity, parent lookup, and source-location support.
+//!
+//! The forest stores pinned parsed files and cloned syntax fragments keyed by shared interned
+//! file paths from `syn-sem-common`.
+
+mod attr;
+mod common;
+mod file;
+mod find_child;
+mod find_parent;
+mod forest;
+mod identify;
 
 pub use attr::*;
 pub use file::*;

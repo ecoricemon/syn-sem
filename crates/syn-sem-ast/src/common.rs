@@ -10,7 +10,7 @@ use syn_sem_macros::CheckDropless;
 /// Converts a `syn` syntax node into the semantic AST representation.
 pub trait FromSyn<'cx, Input: ?Sized>: 'cx {
     /// Builds `Self` from a borrowed `syn` input and conversion context.
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Input>) -> Self;
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Input>) -> Self;
 }
 
 /// Input passed while converting from `syn` into this AST.
@@ -25,13 +25,13 @@ pub struct InputDesc<'cx, Input: ?Sized> {
 }
 
 impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, [T]> for &'cx [U] {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, [T]>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, [T]>) -> Self {
         let len = desc.input.len();
         let mut items = desc.input.iter();
-        cx.alloc_slice(len, |_| {
+        scx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
             U::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -42,9 +42,9 @@ impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, [T]> for &'cx [U] {
 }
 
 impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, Vec<T>> for &'cx [U] {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Vec<T>>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Vec<T>>) -> Self {
         Self::from_syn(
-            cx,
+            scx,
             InputDesc {
                 file_path: desc.file_path,
                 input: desc.input.as_slice(),
@@ -54,13 +54,13 @@ impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, Vec<T>> for &'cx [U] {
 }
 
 impl<'cx, U: FromSyn<'cx, T>, T, P> FromSyn<'cx, Punctuated<T, P>> for &'cx [U] {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Punctuated<T, P>>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Punctuated<T, P>>) -> Self {
         let len = desc.input.len();
         let mut items = desc.input.into_iter();
-        cx.alloc_slice(len, |_| {
+        scx.alloc_slice(len, |_| {
             let t = items.next().unwrap();
             U::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -71,10 +71,10 @@ impl<'cx, U: FromSyn<'cx, T>, T, P> FromSyn<'cx, Punctuated<T, P>> for &'cx [U] 
 }
 
 impl<'cx, U: FromSyn<'cx, T>, T> FromSyn<'cx, Option<T>> for Option<U> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Option<T>>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, Option<T>>) -> Self {
         desc.input.as_ref().map(|t| {
             U::from_syn(
-                cx,
+                scx,
                 InputDesc {
                     file_path: desc.file_path,
                     input: t,
@@ -97,42 +97,42 @@ pub struct Ident<'cx> {
 
 impl<'cx> Ident<'cx> {
     /// Creates an empty synthesized identifier.
-    pub fn empty(cx: &'cx SyntaxCx<'cx>) -> Self {
-        Self::from_str(cx, "", Span::empty())
+    pub fn empty(scx: &'cx SyntaxCx<'cx>) -> Self {
+        Self::from_str(scx, "", Span::empty())
     }
 
     /// Creates an identifier by interning `value`.
-    pub fn from_str(cx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
+    pub fn from_str(scx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
         Self {
-            inner: cx.intern(value),
+            inner: scx.intern(value),
             span,
         }
     }
 
     /// Creates a numeric synthesized identifier.
-    pub fn from_number<T: ToPrimitive>(cx: &'cx SyntaxCx<'cx>, value: T, span: Span<'cx>) -> Self {
+    pub fn from_number<T: ToPrimitive>(scx: &'cx SyntaxCx<'cx>, value: T, span: Span<'cx>) -> Self {
         let value = value.to_u64().unwrap();
         Self {
-            inner: cx.intern_formatted_str(&value, (value % 10 + 1) as usize),
+            inner: scx.intern_formatted_str(&value, (value % 10 + 1) as usize),
             span,
         }
     }
 }
 
 impl<'cx> FromSyn<'cx, syn::Ident> for Ident<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Ident>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Ident>) -> Self {
         Self {
-            inner: cx.intern(&desc.input.to_string()),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            inner: scx.intern(&desc.input.to_string()),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
 
 impl<'cx> FromSyn<'cx, syn::Token![self]> for Ident<'cx> {
-    fn from_syn(cx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Token![self]>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Token![self]>) -> Self {
         Self {
-            inner: cx.intern("self"),
-            span: Span::from_locatable(cx, desc.file_path, desc.input),
+            inner: scx.intern("self"),
+            span: Span::from_locatable(scx, desc.file_path, desc.input),
         }
     }
 }
@@ -181,11 +181,11 @@ impl<'cx> Span<'cx> {
 
     /// Creates a span for a `syn_locator` node in the given file.
     pub fn from_locatable<T: Locate>(
-        cx: &'cx SyntaxCx<'cx>,
+        scx: &'cx SyntaxCx<'cx>,
         file_path: FilePath<'cx>,
         item: &T,
     ) -> Self {
-        let source = cx.get_source(file_path).unwrap();
+        let source = scx.get_source(file_path).unwrap();
         let loc = item.location(source.locator());
         let text = source.text.as_ref();
 
@@ -214,7 +214,7 @@ mod tests {
     use crate::test_util::*;
 
     #[test]
-    fn test_ident() {
+    fn ident() {
         // Proves `Ident` preserves the parsed identifier text.
         let ccx = syn_sem_common::CommonCx::new();
         let cx = SyntaxCx::new(&ccx);

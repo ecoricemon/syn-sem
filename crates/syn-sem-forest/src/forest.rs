@@ -9,13 +9,14 @@ use syn_locator::{Locate, LocateEntry, Location, Locator};
 use syn_sem_common::{FilePath, Map};
 
 #[derive(Debug, Default)]
+/// A collection of pinned raw `syn` syntax trees with lookup metadata.
 pub struct SyntaxForest<'cx> {
-    /// Mapping between a file path and AST of a file.
+    /// Mapping between a file path and syntax tree of a file.
     ///
-    /// Syntax tree will never change after it is constructed.
+    /// Syntax trees will never change after they are constructed.
     files: Map<FilePath<'cx>, Pin<Box<File<'cx>>>>,
 
-    /// Mapping between a file path and AST of an impl block.
+    /// Mapping between a synthetic file path and syntax tree of an impl block.
     ///
     /// Impl blocks can be cloned and registered for monomorphization.
     impls: Map<FilePath<'cx>, Pin<Box<ClonedImpl>>>,
@@ -24,28 +25,34 @@ pub struct SyntaxForest<'cx> {
 }
 
 impl<'cx> SyntaxForest<'cx> {
+    /// Iterates parsed `syn::File` roots.
     pub fn files(&self) -> impl ExactSizeIterator<Item = &syn::File> + Clone {
         self.files.values().map(|file| &file.file)
     }
 
+    /// Returns whether the forest contains `file_path`.
     pub fn contains_file(&self, file_path: FilePath<'cx>) -> bool {
         self.files.contains_key(&file_path)
     }
 
+    /// Returns the parsed file stored for `file_path`.
     pub fn get_file(&self, file_path: FilePath<'cx>) -> Option<&File<'cx>> {
         self.files.get(&file_path).map(|pinned| &**pinned)
     }
 
+    /// Inserts a parsed file and records its parent relationships.
     pub fn insert_file(&mut self, file_path: FilePath<'cx>, file: Pin<Box<File<'cx>>>) {
         file.file.insert_relation(&mut self.parent_finder);
         self.files.insert(file_path, file);
     }
 
+    /// Inserts a cloned impl block and records its parent relationships.
     pub fn insert_impl(&mut self, file_path: FilePath<'cx>, impl_: Pin<Box<ClonedImpl>>) {
         impl_.item_impl.insert_relation(&mut self.parent_finder);
         self.impls.insert(file_path, impl_);
     }
 
+    /// Returns the locator that owns the node identified by `sid`.
     pub fn locator_of(&self, sid: SynId) -> Option<&Locator> {
         let mut cur = sid;
         loop {
@@ -56,6 +63,7 @@ impl<'cx> SyntaxForest<'cx> {
         }
     }
 
+    /// Returns the source location for `node`.
     pub fn location<T: IdentifySyn + Locate>(&self, node: &T) -> Location {
         let locator = self
             .locator_of(node.syn_id())
@@ -63,6 +71,7 @@ impl<'cx> SyntaxForest<'cx> {
         node.location(locator)
     }
 
+    /// Returns the source text for `node`.
     pub fn code<T: IdentifySyn + Locate>(&self, node: &T) -> String {
         let locator = self
             .locator_of(node.syn_id())
@@ -88,11 +97,12 @@ impl<'cx> SyntaxForest<'cx> {
         None
     }
 
+    /// Returns the direct parent of `child`.
     pub fn get_parent(&self, child: SynId) -> Option<&SynId> {
         self.parent_finder.get_parent(child)
     }
 
-    /// Finds the nearest ancestor that is one type of the given types in the syntax tree.
+    /// Finds the nearest ancestor whose type is in `target_ancestors`.
     ///
     /// If found, returns its index to the `target_ancestors` and its syn id.
     pub fn get_ancestor(
@@ -103,6 +113,7 @@ impl<'cx> SyntaxForest<'cx> {
         self.parent_finder.get_ancestor(child, target_ancestors)
     }
 
+    /// Finds the nearest ancestor of type `A`.
     pub fn get_ancestor1<A>(&self, child: SynId) -> Option<&A>
     where
         A: Any,
@@ -122,13 +133,17 @@ impl<'cx> SyntaxForest<'cx> {
     }
 }
 
+/// A cloned `syn::ItemImpl` with independent locator state.
 pub struct ClonedImpl {
+    /// Cloned impl item.
     pub item_impl: syn::ItemImpl,
+    /// Locator populated for the cloned impl.
     pub locator: Locator,
     _pin: PhantomPinned,
 }
 
 impl ClonedImpl {
+    /// Creates a pinned cloned impl from source text.
     pub fn new(item_impl: syn::ItemImpl, file_path: &str, code: String) -> Result<Pin<Box<Self>>> {
         let mut this = Box::pin(Self {
             item_impl,
@@ -162,7 +177,7 @@ mod tests {
     use syn_locator::Find;
     use syn_sem_common::CommonCx;
 
-    fn sample_tree<'cx>(ccx: &'cx CommonCx) -> (SyntaxForest<'cx>, FilePath<'cx>) {
+    fn sample_forest<'cx>(ccx: &'cx CommonCx) -> (SyntaxForest<'cx>, FilePath<'cx>) {
         let file_path = ccx.intern("/virtual/main.rs").unwrap();
         let file = File::new(
             file_path,
@@ -178,9 +193,9 @@ mod tests {
         )
         .unwrap();
 
-        let mut tree = SyntaxForest::default();
-        tree.insert_file(file_path, file);
-        (tree, file_path)
+        let mut forest = SyntaxForest::default();
+        forest.insert_file(file_path, file);
+        (forest, file_path)
     }
 
     fn sample_mod(file: &syn::File) -> &syn::ItemMod {
@@ -222,21 +237,22 @@ mod tests {
     }
 
     #[test]
-    fn syntax_tree_insert_file_builds_parent_relationships() {
+    fn syntax_forest_insert_file_builds_parent_relationships() {
         let ccx = CommonCx::new();
-        let (tree, file_path) = sample_tree(&ccx);
-        let file = tree.get_file(file_path).unwrap();
+        let (forest, file_path) = sample_forest(&ccx);
+        let file = forest.get_file(file_path).unwrap();
         let item_mod = sample_mod(&file.file);
         let item_fn = sample_fn(item_mod);
 
-        assert!(tree.contains_file(file_path));
-        let mod_parent = tree.get_parent(item_mod.syn_id()).unwrap();
+        assert!(forest.contains_file(file_path));
+        let mod_parent = forest.get_parent(item_mod.syn_id()).unwrap();
         assert!(mod_parent.as_ref::<syn::Item>().is_some());
 
-        let fn_parent = tree.get_parent(item_fn.syn_id()).unwrap();
+        let fn_parent = forest.get_parent(item_fn.syn_id()).unwrap();
         assert!(fn_parent.as_ref::<syn::Item>().is_some());
         assert_eq!(
-            tree.get_ancestor1::<syn::ItemMod>(item_fn.syn_id())
+            forest
+                .get_ancestor1::<syn::ItemMod>(item_fn.syn_id())
                 .unwrap()
                 .ident,
             "a"
@@ -244,16 +260,16 @@ mod tests {
     }
 
     #[test]
-    fn syntax_tree_returns_code_and_location_for_nodes() {
+    fn syntax_forest_returns_code_and_location_for_nodes() {
         let ccx = CommonCx::new();
-        let (tree, file_path) = sample_tree(&ccx);
-        let file = tree.get_file(file_path).unwrap();
+        let (forest, file_path) = sample_forest(&ccx);
+        let file = forest.get_file(file_path).unwrap();
         let item_fn = sample_fn(sample_mod(&file.file));
 
-        assert!(tree.code(item_fn).contains("fn f()"));
-        assert_eq!(tree.location(item_fn), item_fn.location(&file.locator));
+        assert!(forest.code(item_fn).contains("fn f()"));
+        assert_eq!(forest.location(item_fn), item_fn.location(&file.locator));
         assert_eq!(
-            tree.locator_of(item_fn.syn_id()).unwrap().file_path(),
+            forest.locator_of(item_fn.syn_id()).unwrap().file_path(),
             "/virtual/main.rs"
         );
     }
@@ -261,18 +277,18 @@ mod tests {
     #[test]
     fn ancestor_lookup_finds_nearest_requested_parent() {
         let ccx = CommonCx::new();
-        let (tree, file_path) = sample_tree(&ccx);
-        let file = tree.get_file(file_path).unwrap();
+        let (forest, file_path) = sample_forest(&ccx);
+        let file = forest.get_file(file_path).unwrap();
         let local = sample_local(sample_fn(sample_mod(&file.file)));
 
         let targets = [TypeId::of::<syn::ItemMod>(), TypeId::of::<syn::Block>()];
-        let (index, ancestor) = tree.get_ancestor(local.syn_id(), &targets).unwrap();
+        let (index, ancestor) = forest.get_ancestor(local.syn_id(), &targets).unwrap();
         assert_eq!(index, 1);
         assert!(ancestor.as_ref::<syn::Block>().is_some());
 
-        let block = tree.get_ancestor1::<syn::Block>(local.syn_id()).unwrap();
+        let block = forest.get_ancestor1::<syn::Block>(local.syn_id()).unwrap();
         assert_eq!(
-            tree.code(block).trim(),
+            forest.code(block).trim(),
             "{\n                        let x = 1usize;\n                    }"
         );
     }
@@ -344,14 +360,14 @@ mod tests {
 
         let ccx = CommonCx::new();
         let file_path = ccx.intern("/virtual/impl.rs:1").unwrap();
-        let mut tree = SyntaxForest::default();
-        tree.insert_impl(file_path, cloned);
+        let mut forest = SyntaxForest::default();
+        forest.insert_impl(file_path, cloned);
 
         assert_eq!(
-            tree.locator_of(sid).unwrap().file_path(),
+            forest.locator_of(sid).unwrap().file_path(),
             "/virtual/impl.rs:1"
         );
         let item_impl = sid.as_ref::<syn::ItemImpl>().unwrap();
-        assert!(tree.code(item_impl).starts_with("impl S"));
+        assert!(forest.code(item_impl).starts_with("impl S"));
     }
 }

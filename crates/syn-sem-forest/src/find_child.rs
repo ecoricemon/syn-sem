@@ -1,6 +1,7 @@
 use crate::SynId;
 use std::any::TypeId;
 
+/// Finds descendant syntax nodes by type.
 pub trait FindChild {
     /// Visits all descendants having the given types.
     fn visit_descendant<F: FnMut(usize, SynId)>(&self, descendant_types: &[TypeId], f: &mut F);
