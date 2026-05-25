@@ -404,16 +404,16 @@ mod tests {
     fn path() {
         // Proves paths preserve segments and expose helper accessors.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&cx, "A");
+        let path = parse::<syn::Path, Path>(&scx, "A");
         assert_eq!(&**path.get_ident().unwrap(), "A");
         assert!(!path.segments[0].has_args());
         assert!(path.segments[0].is_plain_ident());
         assert_eq!(&*path.last().unwrap().ident, "A");
         assert!(path.parent_segments().is_empty());
 
-        let path = parse::<syn::Path, Path>(&cx, "a::B<T>::C<U>");
+        let path = parse::<syn::Path, Path>(&scx, "a::B<T>::C<U>");
         assert_eq!(path.segments.len(), 3);
         assert!(!path.segments[0].has_args());
         assert!(path.segments[1].has_args());
@@ -426,9 +426,9 @@ mod tests {
     fn path_arguments() {
         // Proves path arguments preserve single and multiple type arguments.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&cx, "A<T>");
+        let path = parse::<syn::Path, Path>(&scx, "A<T>");
         assert!(path.get_ident().is_none());
         assert_eq!(&*path.segments[0].ident, "A");
 
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(path.segments[0].args.args().len(), 1);
         assert!(matches!(args.args[0], GenericArgument::Type(_)));
 
-        let path = parse::<syn::Path, Path>(&cx, "HashMap<K, V>");
+        let path = parse::<syn::Path, Path>(&scx, "HashMap<K, V>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -453,16 +453,16 @@ mod tests {
     fn generic_argument() {
         // Proves generic arguments preserve const, associated type, associated const, and constraints.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let path = parse::<syn::Path, Path>(&cx, "Array<3>");
+        let path = parse::<syn::Path, Path>(&scx, "Array<3>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert_eq!(args.args.len(), 1);
         assert!(matches!(args.args[0], GenericArgument::Const(_)));
 
-        let path = parse::<syn::Path, Path>(&cx, "Iterator<Item = T>");
+        let path = parse::<syn::Path, Path>(&scx, "Iterator<Item = T>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -471,7 +471,7 @@ mod tests {
         };
         assert_eq!(&*arg.ident, "Item");
 
-        let path = parse::<syn::Path, Path>(&cx, "Trait<PANIC = false>");
+        let path = parse::<syn::Path, Path>(&scx, "Trait<PANIC = false>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -480,7 +480,7 @@ mod tests {
         };
         assert_eq!(&*arg.ident, "PANIC");
 
-        let path = parse::<syn::Path, Path>(&cx, "Iterator<Item: Display>");
+        let path = parse::<syn::Path, Path>(&scx, "Iterator<Item: Display>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
@@ -495,9 +495,9 @@ mod tests {
     fn unsupported() {
         // Proves unsupported path argument forms recover as `Unsupported` instead of panicking.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let bound = parse::<syn::TypeParamBound, crate::TypeParamBound>(&cx, "Fn(A)");
+        let bound = parse::<syn::TypeParamBound, crate::TypeParamBound>(&scx, "Fn(A)");
         let crate::TypeParamBound::Trait(bound) = bound else {
             panic!()
         };
@@ -507,19 +507,19 @@ mod tests {
         ));
         assert!(bound.path.segments[0].args.is_empty());
 
-        let path = parse::<syn::Path, Path>(&cx, "Borrowed<'a>");
+        let path = parse::<syn::Path, Path>(&scx, "Borrowed<'a>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
 
-        let path = parse::<syn::Path, Path>(&cx, "Trait<Assoc<T> = U>");
+        let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T> = U>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
 
-        let path = parse::<syn::Path, Path>(&cx, "Trait<Assoc<T>: Display>");
+        let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T>: Display>");
         let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };

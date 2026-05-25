@@ -229,12 +229,12 @@ mod tests {
     fn type_reference() {
         // Proves reference types preserve whether the reference is mutable.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let ty = parse::<syn::TypeReference, TypeReference>(&cx, "&T");
+        let ty = parse::<syn::TypeReference, TypeReference>(&scx, "&T");
         assert!(!ty.is_mut);
 
-        let ty = parse::<syn::TypeReference, TypeReference>(&cx, "&mut T");
+        let ty = parse::<syn::TypeReference, TypeReference>(&scx, "&mut T");
         assert!(ty.is_mut);
     }
 
@@ -242,13 +242,13 @@ mod tests {
     fn type_path() {
         // Proves type paths preserve generic arguments on the owning path segment.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let ty = parse::<syn::TypePath, TypePath>(&cx, "Vec<T>");
+        let ty = parse::<syn::TypePath, TypePath>(&scx, "Vec<T>");
         assert_eq!(&*ty.path.segments[0].ident, "Vec");
         assert!(ty.path.segments[0].has_args());
 
-        let ty = parse::<syn::TypePath, TypePath>(&cx, "std::vec::Vec<T>");
+        let ty = parse::<syn::TypePath, TypePath>(&scx, "std::vec::Vec<T>");
         assert_eq!(ty.path.segments.len(), 3);
         assert!(!ty.path.segments[0].has_args());
         assert!(!ty.path.segments[1].has_args());

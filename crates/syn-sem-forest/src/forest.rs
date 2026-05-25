@@ -178,7 +178,7 @@ mod tests {
     use syn_sem_common::CommonCx;
 
     fn sample_forest<'cx>(ccx: &'cx CommonCx) -> (SyntaxForest<'cx>, FilePath<'cx>) {
-        let file_path = ccx.intern("/virtual/main.rs").unwrap();
+        let file_path = ccx.intern("/virtual/main.rs");
         let file = File::new(
             file_path,
             r#"
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn file_new_parses_and_records_locations() {
         let ccx = CommonCx::new();
-        let file_path = ccx.intern("/virtual/basic.rs").unwrap();
+        let file_path = ccx.intern("/virtual/basic.rs");
         let file = File::new(file_path, "fn main() {}").unwrap();
 
         assert_eq!(file.file_path, file_path);
@@ -359,7 +359,7 @@ mod tests {
         let sid = cloned.item_impl.syn_id();
 
         let ccx = CommonCx::new();
-        let file_path = ccx.intern("/virtual/impl.rs:1").unwrap();
+        let file_path = ccx.intern("/virtual/impl.rs:1");
         let mut forest = SyntaxForest::default();
         forest.insert_impl(file_path, cloned);
 

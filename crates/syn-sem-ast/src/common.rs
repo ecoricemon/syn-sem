@@ -113,7 +113,9 @@ impl<'cx> Ident<'cx> {
     pub fn from_number<T: ToPrimitive>(scx: &'cx SyntaxCx<'cx>, value: T, span: Span<'cx>) -> Self {
         let value = value.to_u64().unwrap();
         Self {
-            inner: scx.intern_formatted_str(&value, (value % 10 + 1) as usize),
+            inner: scx
+                .intern_display(&value, (value % 10 + 1) as usize)
+                .unwrap(),
             span,
         }
     }
@@ -217,10 +219,10 @@ mod tests {
     fn ident() {
         // Proves `Ident` preserves the parsed identifier text.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
         // Non-empty ident
-        let ident = parse::<syn::Ident, Ident>(&cx, "A");
+        let ident = parse::<syn::Ident, Ident>(&scx, "A");
         assert_eq!(&*ident, "A");
     }
 }

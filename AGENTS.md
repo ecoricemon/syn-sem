@@ -3,6 +3,7 @@
 ## Project Direction
 
 We are refactoring `crates/syn-sem` by extracting focused sub-crates.
+
 Current extracted crates:
 
 - `syn-sem-common`: shared infrastructure, including `CommonCx`, string
@@ -13,8 +14,12 @@ and syntax identity.
 stop depending directly on raw `syn`.
 - `syn-sem-name`: name-resolution model, including definitions, scopes,
 namespaces, bindings, and imports.
+- `syn-sem-top`: temporary top-level crate.
 
 `syn-sem` remains the facade/orchestrator while internals are migrated.
+
+We are implementing `syn-sem-top` instead of modifying `syn-sem` in the middle
+of migration.
 
 ## Context Model
 
@@ -31,10 +36,23 @@ borrow the contexts they need.
 
 Self-referential ownership and lifetime wiring should be handled only at the
 top-level session/root layer. Lower-level contexts should not try to own parent
-contexts or construct deep context chains.
+contexts or construct deep context chains. `TopCx` is expected to be the
+self-referential root like the old `GlobalCx`.
 
-Non-top-level contexts should borrow other contexts instead of owning. Borrow
-lifetime should be something like 'scx for SyntaxCx, 'ccx for CommonCx.
+Context binding names should use conventional names, with no exceptions:
+
+- `CommonCx` binds as `ccx`
+- `SyntaxCx` binds as `scx`
+- `TopCx` binds as `tcx`
+
+Context lifetime names depend on where they appear:
+
+- `TopCx` is the self-referential top-level exception; write it as
+  `TopCx<'tcx>`.
+- Other non-top-level context types use `'cx`; for example, write
+  `FooCx<'cx>`.
+- Other places use conventional lifetime names that match the referent; for
+  example, write `&'ccx CommonCx` or `&'tcx TopCx`.
 
 ## Interning Rules
 
@@ -47,6 +65,7 @@ SourceCode<'cx>
 ```
 
 Do not use `RawInterned<str>`.
+
 Do not store shared file paths as `Box<str>`.
 
 ## Crate Boundaries
@@ -63,6 +82,7 @@ deeply into `syn-sem`.
 ## Name Resolution Direction
 
 Do not stretch `PathTree` further as the long-term name resolver.
+
 The desired model is:
 
 ```text
@@ -75,6 +95,7 @@ NameDb
 ```
 
 Resolution should be use-site based, scope-aware, and namespace-aware.
+
 Rust namespaces must stay separate:
 
 - type namespace
@@ -104,6 +125,11 @@ When adding public items to extracted crates, add rustdoc comments.
 ## Style Notes
 
 Keep `lib.rs` clean.
+
+Use conventional context variable names:
+e.g., `TopCx` should be bound as `tcx`, `SyntaxCx` as `scx`, `CommonCx` as
+`ccx`.
+If the conventional name is already taken, suggest another concise name.
 
 Prefer incremental refactors. Each step should compile and pass focused tests
 before moving to the next step.

@@ -1,3 +1,9 @@
+//! Shared infrastructure for extracted `syn-sem` crates.
+//!
+//! This crate owns common facilities such as string interning, shared source identifiers, and
+//! abstract source files. It deliberately stays independent from syntax, AST, name-resolution, and
+//! semantic crates.
+
 mod context;
 
 pub use context::*;

@@ -43,28 +43,28 @@ mod tests {
         type T = syn::Visibility;
         type U<'a> = Visibility<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
         // Public visibility
-        let vis = parse::<T, U>(&cx, "pub");
+        let vis = parse::<T, U>(&scx, "pub");
         assert!(matches!(vis, Visibility::Public(..)));
 
         // Restricted visibility - pub(super)
-        let vis = parse::<T, U>(&cx, "pub(super)");
+        let vis = parse::<T, U>(&scx, "pub(super)");
         let Visibility::Restricted(path) = vis else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "super");
 
         // Restricted visibility - pub(super)
-        let vis = parse::<T, U>(&cx, "pub(crate)");
+        let vis = parse::<T, U>(&scx, "pub(crate)");
         let Visibility::Restricted(path) = vis else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "crate");
 
         // Restricted visibility - pub(in path)
-        let vis = parse::<T, U>(&cx, "pub(in foo::bar)");
+        let vis = parse::<T, U>(&scx, "pub(in foo::bar)");
         let Visibility::Restricted(path) = vis else {
             panic!()
         };

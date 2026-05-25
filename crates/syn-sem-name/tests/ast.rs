@@ -192,9 +192,9 @@ fn expect_def(
 #[test]
 fn resolves_function_generics_params_and_locals_from_ast() {
     let ccx = CommonCx::new();
-    let cx = ast::SyntaxCx::new(&ccx);
+    let scx = ast::SyntaxCx::new(&ccx);
     let db = collect_names(
-        &cx,
+        &scx,
         r#"
         fn f<T, const N: usize>(x: T) {
             let y = x;
@@ -209,35 +209,35 @@ fn resolves_function_generics_params_and_locals_from_ast() {
         &db,
         block_scope,
         Namespace::Type,
-        cx.intern("T"),
+        scx.intern("T"),
         DefKind::TypeParam,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("N"),
+        scx.intern("N"),
         DefKind::ConstParam,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("x"),
+        scx.intern("x"),
         DefKind::Local,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("y"),
+        scx.intern("y"),
         DefKind::Local,
     );
     expect_def(
         &db,
         generic_scope,
         Namespace::Type,
-        cx.intern("T"),
+        scx.intern("T"),
         DefKind::TypeParam,
     );
 }
@@ -245,9 +245,9 @@ fn resolves_function_generics_params_and_locals_from_ast() {
 #[test]
 fn resolves_local_item_declared_inside_function_from_ast() {
     let ccx = CommonCx::new();
-    let cx = ast::SyntaxCx::new(&ccx);
+    let scx = ast::SyntaxCx::new(&ccx);
     let db = collect_names(
-        &cx,
+        &scx,
         r#"
         fn f<T>(x: T) {
             struct Local<U> {
@@ -265,28 +265,28 @@ fn resolves_local_item_declared_inside_function_from_ast() {
         &db,
         block_scope,
         Namespace::Type,
-        cx.intern("Local"),
+        scx.intern("Local"),
         DefKind::Struct,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Type,
-        cx.intern("T"),
+        scx.intern("T"),
         DefKind::TypeParam,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("x"),
+        scx.intern("x"),
         DefKind::Local,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("y"),
+        scx.intern("y"),
         DefKind::Local,
     );
 }
@@ -294,9 +294,9 @@ fn resolves_local_item_declared_inside_function_from_ast() {
 #[test]
 fn keeps_type_and_value_namespaces_separate_from_ast() {
     let ccx = CommonCx::new();
-    let cx = ast::SyntaxCx::new(&ccx);
+    let scx = ast::SyntaxCx::new(&ccx);
     let db = collect_names(
-        &cx,
+        &scx,
         r#"
         fn f<T>(T: i32) {
             let x: T = T;
@@ -310,14 +310,14 @@ fn keeps_type_and_value_namespaces_separate_from_ast() {
         &db,
         block_scope,
         Namespace::Type,
-        cx.intern("T"),
+        scx.intern("T"),
         DefKind::TypeParam,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
-        cx.intern("T"),
+        scx.intern("T"),
         DefKind::Local,
     );
 }

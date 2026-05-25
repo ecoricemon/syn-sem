@@ -1233,45 +1233,45 @@ mod tests {
         type T = syn::ItemStruct;
         type U<'a> = ItemStruct<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
         // Empty struct
-        let st = parse::<T, U>(&cx, "struct A;");
+        let st = parse::<T, U>(&scx, "struct A;");
         assert_eq!(&*st.ident.inner, "A");
         assert!(st.fields.is_empty());
 
         // Tuple struct with zero, one, and two fields.
-        let st = parse::<T, U>(&cx, "struct A();");
+        let st = parse::<T, U>(&scx, "struct A();");
         assert!(st.fields.is_empty());
-        let st = parse::<T, U>(&cx, "struct A(B);");
+        let st = parse::<T, U>(&scx, "struct A(B);");
         assert_eq!(st.fields.len(), 1);
         let Type::Path(ty) = &st.fields[0].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "B");
-        let st = parse::<T, U>(&cx, "struct A(B, C);");
+        let st = parse::<T, U>(&scx, "struct A(B, C);");
         assert_eq!(st.fields.len(), 2);
         assert_eq!(&*st.fields[0].ident, "0");
         assert_eq!(&*st.fields[1].ident, "1");
 
         // Struct with zero, one, and two fields.
-        let st = parse::<T, U>(&cx, "struct A{}");
+        let st = parse::<T, U>(&scx, "struct A{}");
         assert!(st.fields.is_empty());
-        let st = parse::<T, U>(&cx, "struct A{ f1: B }");
+        let st = parse::<T, U>(&scx, "struct A{ f1: B }");
         assert_eq!(st.fields.len(), 1);
         assert_eq!(&*st.fields[0].ident, "f1");
         let Type::Path(ty) = &st.fields[0].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "B");
-        let st = parse::<T, U>(&cx, "struct A{ f1: B, f2: C }");
+        let st = parse::<T, U>(&scx, "struct A{ f1: B, f2: C }");
         assert_eq!(st.fields.len(), 2);
         let Type::Path(ty) = &st.fields[1].ty else {
             panic!()
         };
         assert_eq!(&**ty.path.get_ident().unwrap(), "C");
 
-        let st = parse::<T, U>(&cx, "struct A<T>{ f: T }");
+        let st = parse::<T, U>(&scx, "struct A<T>{ f: T }");
         assert_eq!(st.generics.params.len(), 1);
         assert!(matches!(st.generics.params[0], GenericParam::Type(_)));
     }
@@ -1282,9 +1282,9 @@ mod tests {
         type T = syn::ItemEnum;
         type U<'a> = ItemEnum<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_enum = parse::<T, U>(&cx, "enum E<T> { A(T) }");
+        let item_enum = parse::<T, U>(&scx, "enum E<T> { A(T) }");
         assert_eq!(&*item_enum.ident, "E");
         assert_eq!(item_enum.generics.params.len(), 1);
         assert!(matches!(
@@ -1299,9 +1299,9 @@ mod tests {
         type T = syn::ItemFn;
         type U<'a> = ItemFn<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_fn = parse::<T, U>(&cx, "fn f<T>(value: T) -> T { value }");
+        let item_fn = parse::<T, U>(&scx, "fn f<T>(value: T) -> T { value }");
         assert_eq!(&*item_fn.sig.ident, "f");
         assert_eq!(item_fn.generics.params.len(), 1);
         assert_eq!(item_fn.sig.generics.params.len(), 1);
@@ -1317,14 +1317,14 @@ mod tests {
         type T = syn::ItemMod;
         type U<'a> = ItemMod<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_mod = parse::<T, U>(&cx, "mod a;");
+        let item_mod = parse::<T, U>(&scx, "mod a;");
         assert_eq!(&*item_mod.ident, "a");
         assert!(item_mod.items.is_none());
         assert!(!item_mod.is_inline);
 
-        let item_mod = parse::<T, U>(&cx, "pub mod a { const N: usize = 1; struct S; }");
+        let item_mod = parse::<T, U>(&scx, "pub mod a { const N: usize = 1; struct S; }");
         assert!(matches!(item_mod.vis, Visibility::Public(..)));
         assert!(item_mod.is_inline);
         let items = item_mod.items.unwrap();
@@ -1339,21 +1339,21 @@ mod tests {
         type T = syn::ItemType;
         type U<'a> = ItemType<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_type = parse::<T, U>(&cx, "pub type Alias = Target;");
+        let item_type = parse::<T, U>(&scx, "pub type Alias = Target;");
         assert!(matches!(item_type.vis, Visibility::Public(..)));
         assert_eq!(&*item_type.ident, "Alias");
         assert!(matches!(item_type.ty, Type::Path(_)));
 
-        let item_type = parse::<T, U>(&cx, "type Alias<T> = T;");
+        let item_type = parse::<T, U>(&scx, "type Alias<T> = T;");
         assert_eq!(item_type.generics.params.len(), 1);
         assert!(matches!(
             item_type.generics.params[0],
             GenericParam::Type(_)
         ));
 
-        let item_mod = parse::<syn::ItemMod, ItemMod>(&cx, "mod a { type Alias = Target; }");
+        let item_mod = parse::<syn::ItemMod, ItemMod>(&scx, "mod a { type Alias = Target; }");
         let items = item_mod.items.unwrap();
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], Item::Type(_)));
@@ -1365,16 +1365,16 @@ mod tests {
         type T = syn::ItemUse;
         type U<'a> = ItemUse<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_use = parse::<T, U>(&cx, "pub use a;");
+        let item_use = parse::<T, U>(&scx, "pub use a;");
         assert!(matches!(item_use.vis, Visibility::Public(..)));
         let UseTree::Name(name) = &item_use.tree else {
             panic!()
         };
         assert_eq!(&*name.ident, "a");
 
-        let item_use = parse::<T, U>(&cx, "use a::b as c;");
+        let item_use = parse::<T, U>(&scx, "use a::b as c;");
         let UseTree::Path(path) = &item_use.tree else {
             panic!()
         };
@@ -1385,7 +1385,7 @@ mod tests {
         assert_eq!(&*rename.ident, "b");
         assert_eq!(&*rename.rename, "c");
 
-        let item_use = parse::<T, U>(&cx, "use a::{b, c as d, *};");
+        let item_use = parse::<T, U>(&scx, "use a::{b, c as d, *};");
         let UseTree::Path(path) = &item_use.tree else {
             panic!()
         };
@@ -1398,7 +1398,7 @@ mod tests {
         assert!(matches!(group.items[1], UseTree::Rename(_)));
         assert!(matches!(group.items[2], UseTree::Glob(_)));
 
-        let item_mod = parse::<syn::ItemMod, ItemMod>(&cx, "mod a { use b::c; }");
+        let item_mod = parse::<syn::ItemMod, ItemMod>(&scx, "mod a { use b::c; }");
         let items = item_mod.items.unwrap();
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], Item::Use(_)));
@@ -1410,9 +1410,9 @@ mod tests {
         type T = syn::ItemImpl;
         type U<'a> = ItemImpl<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item_impl = parse::<T, U>(&cx, "impl S { const N: usize = 1; fn f(&self) {} }");
+        let item_impl = parse::<T, U>(&scx, "impl S { const N: usize = 1; fn f(&self) {} }");
         assert!(item_impl.generics.params.is_empty());
         assert!(item_impl.trait_.is_none());
         assert!(matches!(item_impl.self_ty, Type::Path(_)));
@@ -1430,7 +1430,7 @@ mod tests {
         assert_eq!(&*item_fn.sig.ident, "f");
         assert_eq!(item_fn.sig.params.len(), 2);
 
-        let item_impl = parse::<T, U>(&cx, "impl Trait for S { type Assoc = usize; }");
+        let item_impl = parse::<T, U>(&scx, "impl Trait for S { type Assoc = usize; }");
         assert_eq!(
             &**item_impl.trait_.as_ref().unwrap().get_ident().unwrap(),
             "Trait"
@@ -1443,7 +1443,7 @@ mod tests {
         };
         assert_eq!(&*item_type.ident, "Assoc");
 
-        let item_impl = parse::<T, U>(&cx, "impl<T> S<T> { const C: usize = 0; type A<U> = U; }");
+        let item_impl = parse::<T, U>(&scx, "impl<T> S<T> { const C: usize = 0; type A<U> = U; }");
         assert_eq!(item_impl.generics.params.len(), 1);
         let ImplItem::Const(item_const) = &item_impl.items[0] else {
             panic!()
@@ -1461,10 +1461,10 @@ mod tests {
         type T = syn::ItemTrait;
         type U<'a> = ItemTrait<'a>;
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
         let item_trait = parse::<T, U>(
-            &cx,
+            &scx,
             "pub trait Trait {
                 const REQUIRED: usize;
                 const DEFAULTED: usize = 1;
@@ -1518,7 +1518,7 @@ mod tests {
         assert!(item_fn.default.is_some());
 
         let item_trait = parse::<T, U>(
-            &cx,
+            &scx,
             "trait Trait<T> {
                 const C: usize;
                 type Assoc<U>;

@@ -331,9 +331,9 @@ mod tests {
     fn generics() {
         // Proves empty generics preserve no params and no where clause.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S;");
         assert!(item.generics.params.is_empty());
         assert!(item.generics.where_clause.is_none());
     }
@@ -342,9 +342,9 @@ mod tests {
     fn generic_param() {
         // Proves type and const generic params preserve names, defaults, and types.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<T, U = i32>;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T, U = i32>;");
         assert_eq!(item.generics.params.len(), 2);
 
         let GenericParam::Type(param) = &item.generics.params[0] else {
@@ -360,7 +360,7 @@ mod tests {
         assert!(matches!(param.default, Some(Type::Path(_))));
 
         let item =
-            parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<const N: usize = 4>;");
+            parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<const N: usize = 4>;");
         assert_eq!(item.generics.params.len(), 1);
 
         let GenericParam::Const(param) = &item.generics.params[0] else {
@@ -375,9 +375,9 @@ mod tests {
     fn type_param_bound() {
         // Proves trait bounds preserve their path, including path generic arguments.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<T: Clone>;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T: Clone>;");
         assert_eq!(item.generics.params.len(), 1);
 
         let GenericParam::Type(param) = &item.generics.params[0] else {
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(&**bound.path.get_ident().unwrap(), "Clone");
 
         let item =
-            parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<T: Iterator<Item = U>>;");
+            parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T: Iterator<Item = U>>;");
         let GenericParam::Type(param) = &item.generics.params[0] else {
             panic!()
         };
@@ -406,9 +406,9 @@ mod tests {
     fn where_clause() {
         // Proves type where-predicates preserve bounded type and bounds.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<T> where T: Clone;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T> where T: Clone;");
         let where_clause = item.generics.where_clause.as_ref().unwrap();
         assert_eq!(where_clause.predicates.len(), 1);
 
@@ -423,21 +423,21 @@ mod tests {
     fn unsupported() {
         // Proves unsupported generic forms recover as `Unsupported` instead of panicking.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<'a>;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<'a>;");
         assert!(matches!(
             item.generics.params[0],
             GenericParam::Unsupported(_)
         ));
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S<T: ?Sized>;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T: ?Sized>;");
         let GenericParam::Type(param) = &item.generics.params[0] else {
             panic!()
         };
         assert!(matches!(param.bounds[0], TypeParamBound::Unsupported(_)));
 
-        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&cx, "struct S where 'a: 'static;");
+        let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S where 'a: 'static;");
         let where_clause = item.generics.where_clause.as_ref().unwrap();
         assert!(matches!(
             where_clause.predicates[0],
@@ -445,7 +445,7 @@ mod tests {
         ));
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(
-            &cx,
+            &scx,
             "struct S<T> where for<'a> T: Trait<'a>;",
         );
         let where_clause = item.generics.where_clause.as_ref().unwrap();

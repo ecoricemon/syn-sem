@@ -47,19 +47,16 @@ impl<'cx> SyntaxCx<'cx> {
 
     /// Interns a string through the shared common context.
     pub fn intern(&self, value: &str) -> Interned<'_, str> {
-        self.ccx.intern(value).unwrap()
+        self.ccx.intern(value)
     }
 
     /// Interns a formatted value through the shared common context.
-    pub fn intern_formatted_str<K: Display + ?Sized>(
+    pub fn intern_display<K: Display + ?Sized>(
         &self,
         value: &K,
         upper_size: usize,
-    ) -> Interned<'_, str> {
-        self.ccx
-            .interner()
-            .intern_display(value, upper_size)
-            .unwrap()
+    ) -> Result<Interned<'_, str>> {
+        self.ccx.interner().intern_display(value, upper_size)
     }
 
     /// Parses and stores a physical source file.
@@ -93,8 +90,8 @@ impl<'cx> SyntaxCx<'cx> {
     where
         T: syn::parse::Parse + LocateEntry + 'static,
     {
-        let file_path = self.ccx.intern(file_path)?;
-        let text = self.ccx.intern(text)?;
+        let file_path = self.ccx.intern(file_path);
+        let text = self.ccx.intern(text);
         let syntax = Box::new(syn::parse_str::<T>(text.as_ref())?);
         let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
         syntax.locate_as_entry(&mut locator).unwrap();
