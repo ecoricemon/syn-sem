@@ -15,23 +15,11 @@ pub struct Generics<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Generics> for Generics<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Generics>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Generics>) -> Self {
         Self {
-            params: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.params,
-                },
-            ),
-            where_clause: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.where_clause,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            params: FromSyn::from_syn(scx, desc.with_input(&desc.input.params)),
+            where_clause: FromSyn::from_syn(scx, desc.with_input(&desc.input.where_clause)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -50,25 +38,13 @@ pub enum GenericParam<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::GenericParam> for GenericParam<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::GenericParam>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::GenericParam>) -> Self {
         match desc.input {
-            syn::GenericParam::Type(v) => Self::Type(TypeParam::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::GenericParam::Const(v) => Self::Const(ConstParam::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::GenericParam::Lifetime(v) => {
-                Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+            syn::GenericParam::Type(v) => Self::Type(TypeParam::from_syn(scx, desc.with_input(v))),
+            syn::GenericParam::Const(v) => {
+                Self::Const(ConstParam::from_syn(scx, desc.with_input(v)))
             }
+            syn::GenericParam::Lifetime(v) => Self::Unsupported(desc.span(v)),
         }
     }
 }
@@ -89,32 +65,16 @@ pub struct TypeParam<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeParam> for TypeParam<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeParam>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeParam>) -> Self {
         Self {
-            ident: Ident::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.ident,
-                },
-            ),
-            bounds: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.bounds,
-                },
-            ),
-            default: desc.input.default.as_ref().map(|ty| {
-                scx.alloc(Type::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: ty,
-                    },
-                ))
-            }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            ident: Ident::from_syn(scx, desc.with_input(&desc.input.ident)),
+            bounds: FromSyn::from_syn(scx, desc.with_input(&desc.input.bounds)),
+            default: desc
+                .input
+                .default
+                .as_ref()
+                .map(|ty| scx.alloc(Type::from_syn(scx, desc.with_input(ty)))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -135,32 +95,16 @@ pub struct ConstParam<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::ConstParam> for ConstParam<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::ConstParam>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ConstParam>) -> Self {
         Self {
-            ident: Ident::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.ident,
-                },
-            ),
-            ty: scx.alloc(Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.ty,
-                },
-            )),
-            default: desc.input.default.as_ref().map(|expr| {
-                scx.alloc(Expr::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: expr,
-                    },
-                ))
-            }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            ident: Ident::from_syn(scx, desc.with_input(&desc.input.ident)),
+            ty: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.ty))),
+            default: desc
+                .input
+                .default
+                .as_ref()
+                .map(|expr| scx.alloc(Expr::from_syn(scx, desc.with_input(expr)))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -177,16 +121,10 @@ pub struct WhereClause<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::WhereClause> for WhereClause<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::WhereClause>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::WhereClause>) -> Self {
         Self {
-            predicates: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.predicates,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            predicates: FromSyn::from_syn(scx, desc.with_input(&desc.input.predicates)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -203,25 +141,17 @@ pub enum WherePredicate<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::WherePredicate> for WherePredicate<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::WherePredicate>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::WherePredicate>) -> Self {
         match desc.input {
             syn::WherePredicate::Type(v) => {
                 if v.lifetimes.is_some() {
-                    Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                    Self::Unsupported(desc.span(v))
                 } else {
-                    Self::Type(PredicateType::from_syn(
-                        scx,
-                        InputDesc {
-                            file_path: desc.file_path,
-                            input: v,
-                        },
-                    ))
+                    Self::Type(PredicateType::from_syn(scx, desc.with_input(v)))
                 }
             }
-            syn::WherePredicate::Lifetime(v) => {
-                Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
-            }
-            _ => Self::Unsupported(Span::from_locatable(scx, desc.file_path, desc.input)),
+            syn::WherePredicate::Lifetime(v) => Self::Unsupported(desc.span(v)),
+            _ => Self::Unsupported(desc.span(desc.input)),
         }
     }
 }
@@ -240,23 +170,11 @@ pub struct PredicateType<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PredicateType> for PredicateType<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PredicateType>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PredicateType>) -> Self {
         Self {
-            bounded_ty: scx.alloc(Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.bounded_ty,
-                },
-            )),
-            bounds: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.bounds,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            bounded_ty: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.bounded_ty))),
+            bounds: FromSyn::from_syn(scx, desc.with_input(&desc.input.bounds)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -273,25 +191,19 @@ pub enum TypeParamBound<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeParamBound> for TypeParamBound<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeParamBound>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeParamBound>) -> Self {
         match desc.input {
             syn::TypeParamBound::Trait(v) => {
                 if v.paren_token.is_some()
                     || v.lifetimes.is_some()
                     || !matches!(v.modifier, syn::TraitBoundModifier::None)
                 {
-                    Self::Unsupported(Span::from_locatable(scx, desc.file_path, v))
+                    Self::Unsupported(desc.span(v))
                 } else {
-                    Self::Trait(TraitBound::from_syn(
-                        scx,
-                        InputDesc {
-                            file_path: desc.file_path,
-                            input: v,
-                        },
-                    ))
+                    Self::Trait(TraitBound::from_syn(scx, desc.with_input(v)))
                 }
             }
-            _ => Self::Unsupported(Span::from_locatable(scx, desc.file_path, desc.input)),
+            _ => Self::Unsupported(desc.span(desc.input)),
         }
     }
 }
@@ -308,16 +220,10 @@ pub struct TraitBound<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TraitBound> for TraitBound<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TraitBound>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TraitBound>) -> Self {
         Self {
-            path: Path::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.path,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
+            span: desc.span(desc.input),
         }
     }
 }

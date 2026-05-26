@@ -1,7 +1,7 @@
 use crate::Semantics;
 use std::{fmt::Display, io, path::Path};
-use syn_sem_ast::{File, FromSyn, InputDesc, SyntaxCx};
-use syn_sem_common::{CommonCx, FilePath, InternedStr, Map, Result};
+use syn_sem_ast::{File, SyntaxCx};
+use syn_sem_common::{CommonCx, FilePath, InternedStr, Result};
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -58,15 +58,11 @@ impl<'tcx> Default for TopCx<'tcx> {
 
 pub(crate) struct Analyzer<'tcx> {
     tcx: &'tcx TopCx<'tcx>,
-    ast_files: Map<FilePath<'tcx>, File<'tcx>>,
 }
 
 impl<'tcx> Analyzer<'tcx> {
     pub(crate) fn new(tcx: &'tcx TopCx<'tcx>) -> Self {
-        Self {
-            tcx,
-            ast_files: Map::default(),
-        }
+        Self { tcx }
     }
 
     fn analyze(mut self, entry_file: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
@@ -75,27 +71,14 @@ impl<'tcx> Analyzer<'tcx> {
         Ok(Semantics::new(self.tcx, entry_file, names))
     }
 
-    pub(crate) fn build_ast_file(&mut self, file_path: FilePath<'tcx>) -> Result<File<'tcx>> {
-        if let Some(file) = self.ast_files.get(&file_path) {
-            return Ok(file.clone());
-        }
-
+    pub(crate) fn build_ast_file(&self, file_path: FilePath<'tcx>) -> Result<File<'tcx>> {
         let source = self.tcx.syntax.get_source(file_path).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("source file is not parsed: {file_path}"),
             )
         })?;
-        let input = source.syntax::<syn::File>().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("source file does not contain a syn::File: {file_path}"),
-            )
-        })?;
-
-        let file = File::from_syn(&self.tcx.syntax, InputDesc { file_path, input });
-        self.ast_files.insert(file_path, file.clone());
-        Ok(file)
+        Ok(source.ast().clone())
     }
 
     pub(crate) fn parsed_file_path(&self, file_path: impl AsRef<Path>) -> Option<FilePath<'tcx>> {

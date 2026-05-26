@@ -14,16 +14,10 @@ pub struct File<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::File> for File<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::File>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::File>) -> Self {
         Self {
-            items: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &*desc.input.items,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            items: FromSyn::from_syn(scx, desc.with_input(&*desc.input.items)),
+            span: desc.span(desc.input),
         }
     }
 }

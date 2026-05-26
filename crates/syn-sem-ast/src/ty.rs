@@ -28,44 +28,16 @@ impl<'cx> Type<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Type> for Type<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Type>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Type>) -> Self {
         match desc.input {
-            syn::Type::Array(v) => Self::Array(TypeArray::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Type::Infer(v) => Self::Infer(Span::from_locatable(scx, desc.file_path, v)),
-            syn::Type::Path(v) => Self::Path(TypePath::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Type::Reference(v) => Self::Reference(TypeReference::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Type::Slice(v) => Self::Slice(TypeSlice::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Type::Tuple(v) => Self::Tuple(TypeTuple::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
+            syn::Type::Array(v) => Self::Array(TypeArray::from_syn(scx, desc.with_input(v))),
+            syn::Type::Infer(v) => Self::Infer(desc.span(v)),
+            syn::Type::Path(v) => Self::Path(TypePath::from_syn(scx, desc.with_input(v))),
+            syn::Type::Reference(v) => {
+                Self::Reference(TypeReference::from_syn(scx, desc.with_input(v)))
+            }
+            syn::Type::Slice(v) => Self::Slice(TypeSlice::from_syn(scx, desc.with_input(v))),
+            syn::Type::Tuple(v) => Self::Tuple(TypeTuple::from_syn(scx, desc.with_input(v))),
             _ => todo!(),
         }
     }
@@ -85,23 +57,11 @@ pub struct TypeArray<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeArray> for TypeArray<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeArray>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeArray>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elem,
-                },
-            )),
-            len: Expr::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.len,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            elem: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.elem))),
+            len: Expr::from_syn(scx, desc.with_input(&desc.input.len)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -118,16 +78,10 @@ pub struct TypePath<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypePath> for TypePath<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypePath>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypePath>) -> Self {
         Self {
-            path: Path::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.path,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -146,17 +100,11 @@ pub struct TypeReference<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeReference> for TypeReference<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeReference>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeReference>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elem,
-                },
-            )),
+            elem: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.elem))),
             is_mut: desc.input.mutability.is_some(),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -173,16 +121,10 @@ pub struct TypeSlice<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeSlice> for TypeSlice<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeSlice>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeSlice>) -> Self {
         Self {
-            elem: scx.alloc(Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elem,
-                },
-            )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            elem: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.elem))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -206,16 +148,10 @@ impl<'cx> TypeTuple<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::TypeTuple> for TypeTuple<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::TypeTuple>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeTuple>) -> Self {
         Self {
-            elems: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elems,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            elems: FromSyn::from_syn(scx, desc.with_input(&desc.input.elems)),
+            span: desc.span(desc.input),
         }
     }
 }

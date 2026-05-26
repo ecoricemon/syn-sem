@@ -1,7 +1,7 @@
-use crate::AppendOnlyMap;
+use crate::{AppendOnlyMap, File as AstFile, FromSyn, InputDesc};
 use any_intern::Interned;
 use bumpalo::Bump;
-use std::{any::Any, fmt::Display, mem};
+use std::{fmt::Display, mem};
 use syn_locator::{LocateEntry, Locator};
 use syn_sem_common::{CommonCx, FilePath, Result, SourceCode};
 
@@ -28,13 +28,13 @@ impl<'cx> SyntaxCx<'cx> {
     }
 
     /// Allocates a dropless value in this context.
-    pub fn alloc<T>(&self, value: T) -> &T {
+    pub fn alloc<T>(&'cx self, value: T) -> &'cx T {
         assert!(!mem::needs_drop::<T>());
         self.bump.alloc(value)
     }
 
     /// Allocates a dropless slice by calling `f` once for each index.
-    pub fn alloc_slice<T, F: FnMut(usize) -> T>(&self, len: usize, mut f: F) -> &[T] {
+    pub fn alloc_slice<T, F: FnMut(usize) -> T>(&'cx self, len: usize, mut f: F) -> &'cx [T] {
         assert!(!mem::needs_drop::<T>());
         let mut expected_index = 0;
         self.bump.alloc_slice_fill_with(len, |index| {
@@ -46,62 +46,57 @@ impl<'cx> SyntaxCx<'cx> {
     }
 
     /// Interns a string through the shared common context.
-    pub fn intern(&self, value: &str) -> Interned<'_, str> {
+    pub fn intern(&'cx self, value: &str) -> Interned<'cx, str> {
         self.ccx.intern(value)
     }
 
     /// Interns a formatted value through the shared common context.
     pub fn intern_display<K: Display + ?Sized>(
-        &self,
+        &'cx self,
         value: &K,
         upper_size: usize,
-    ) -> Result<Interned<'_, str>> {
+    ) -> Result<Interned<'cx, str>> {
         self.ccx.interner().intern_display(value, upper_size)
     }
 
     /// Parses and stores a physical source file.
-    pub fn parse_physical_file(&self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
-        self.parse_syntax::<syn::File>(file_path, text, SourceKind::Physical)
+    pub fn parse_physical_file(&'cx self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
+        self.parse_file(file_path, text, SourceKind::Physical)
     }
 
     /// Parses and stores a virtual source file.
-    pub fn parse_virtual_file(&self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
-        self.parse_syntax::<syn::File>(file_path, text, SourceKind::Virtual)
+    pub fn parse_virtual_file(&'cx self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
+        self.parse_file(file_path, text, SourceKind::Virtual)
     }
 
-    #[cfg(test)]
-    pub(crate) fn parse_virtual_syntax<T>(
-        &self,
-        file_path: &str,
-        text: &str,
-    ) -> Result<FilePath<'cx>>
-    where
-        T: syn::parse::Parse + LocateEntry + 'static,
-    {
-        self.parse_syntax::<T>(file_path, text, SourceKind::Virtual)
-    }
-
-    fn parse_syntax<T>(
-        &self,
+    fn parse_file(
+        &'cx self,
         file_path: &str,
         text: &str,
         kind: SourceKind,
-    ) -> Result<FilePath<'cx>>
-    where
-        T: syn::parse::Parse + LocateEntry + 'static,
-    {
+    ) -> Result<FilePath<'cx>> {
         let file_path = self.ccx.intern(file_path);
         let text = self.ccx.intern(text);
-        let syntax = Box::new(syn::parse_str::<T>(text.as_ref())?);
+        let syntax = Box::new(syn::parse_str::<syn::File>(text.as_ref())?);
         let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
-        syntax.locate_as_entry(&mut locator).unwrap();
-        let source = Box::new(Source::new(kind, text, locator, syntax));
+        syntax.locate_as_entry(&mut locator)?;
+
+        let ast = AstFile::from_syn(
+            self,
+            InputDesc {
+                file_path,
+                source_code: text,
+                locator: &locator,
+                input: syntax.as_ref(),
+            },
+        );
+        let source = Box::new(Source::new(kind, text, locator, syntax, ast));
         self.files.insert(file_path, source);
         Ok(file_path)
     }
 
     /// Returns the stored parsed source for `file_path`.
-    pub fn get_source(&self, file_path: FilePath<'cx>) -> Option<&Source<'cx>> {
+    pub fn get_source(&'cx self, file_path: FilePath<'cx>) -> Option<&'cx Source<'cx>> {
         self.files.get(&file_path)
     }
 }
@@ -115,21 +110,25 @@ pub struct Source<'cx> {
     /// Interned source text.
     pub text: SourceCode<'cx>,
     locator: Locator,
-    syntax: Box<dyn Any>,
+    // `Locator` requires fixed addresses to the file.
+    syntax: Box<syn::File>,
+    ast: AstFile<'cx>,
 }
 
 impl<'cx> Source<'cx> {
-    fn new<T: Any>(
+    fn new(
         kind: SourceKind,
         text: SourceCode<'cx>,
         locator: Locator,
-        syntax: Box<T>,
+        syntax: Box<syn::File>,
+        ast: AstFile<'cx>,
     ) -> Self {
         Self {
             kind,
             text,
             locator,
             syntax,
+            ast,
         }
     }
 
@@ -138,9 +137,14 @@ impl<'cx> Source<'cx> {
         &self.locator
     }
 
-    /// Returns the parsed syntax tree if it has type `T`.
-    pub fn syntax<T: 'static>(&self) -> Option<&T> {
-        self.syntax.downcast_ref()
+    /// Returns the parsed Rust source file.
+    pub fn syntax(&self) -> &syn::File {
+        &self.syntax
+    }
+
+    /// Returns the semantic AST built from this source.
+    pub fn ast(&self) -> &AstFile<'cx> {
+        &self.ast
     }
 }
 

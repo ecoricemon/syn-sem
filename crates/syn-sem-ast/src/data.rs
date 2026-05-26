@@ -17,36 +17,16 @@ pub struct Field<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Field> for Field<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: crate::InputDesc<'cx, syn::Field>) -> Self {
-        let vis = Visibility::from_syn(
-            scx,
-            InputDesc {
-                file_path: desc.file_path,
-                input: &desc.input.vis,
-            },
-        );
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: crate::InputDesc<'cx, '_, syn::Field>) -> Self {
+        let vis = Visibility::from_syn(scx, desc.with_input(&desc.input.vis));
         let ident = desc
             .input
             .ident
             .as_ref()
-            .map(|ident| {
-                Ident::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: ident,
-                    },
-                )
-            })
+            .map(|ident| Ident::from_syn(scx, desc.with_input(ident)))
             .unwrap_or(Ident::empty(scx));
-        let span = Span::from_locatable(scx, desc.file_path, desc.input);
-        let ty = Type::from_syn(
-            scx,
-            InputDesc {
-                file_path: desc.file_path,
-                input: &desc.input.ty,
-            },
-        );
+        let span = desc.span(desc.input);
+        let ty = Type::from_syn(scx, desc.with_input(&desc.input.ty));
         Self {
             vis,
             ident,
@@ -57,26 +37,16 @@ impl<'cx> FromSyn<'cx, syn::Field> for Field<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Fields> for &'cx [Field<'cx>] {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Fields>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Fields>) -> Self {
         match desc.input {
-            syn::Fields::Named(syn::FieldsNamed { named, .. }) => Self::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: named,
-                },
-            ),
+            syn::Fields::Named(syn::FieldsNamed { named, .. }) => {
+                Self::from_syn(scx, desc.with_input(named))
+            }
             syn::Fields::Unnamed(syn::FieldsUnnamed { unnamed, .. }) => {
                 let len = unnamed.len();
                 let mut fields = unnamed.iter().enumerate().map(|(i, field)| {
-                    let span = Span::from_locatable(scx, desc.file_path, field);
-                    let mut field = Field::from_syn(
-                        scx,
-                        InputDesc {
-                            file_path: desc.file_path,
-                            input: field,
-                        },
-                    );
+                    let span = desc.span(field);
+                    let mut field = Field::from_syn(scx, desc.with_input(field));
                     field.ident = Ident::from_number(scx, i, span);
                     field
                 });
@@ -99,38 +69,18 @@ pub struct Variant<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Variant> for Variant<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Variant>) -> Self {
-        let ident = Ident::from_syn(
-            scx,
-            InputDesc {
-                file_path: desc.file_path,
-                input: &desc.input.ident,
-            },
-        );
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Variant>) -> Self {
+        let ident = Ident::from_syn(scx, desc.with_input(&desc.input.ident));
         let kind = match &desc.input.fields {
-            syn::Fields::Named(v) => VariantKind::Fields(FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Fields::Unnamed(v) => VariantKind::Fields(FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
+            syn::Fields::Named(v) => {
+                VariantKind::Fields(FromSyn::from_syn(scx, desc.with_input(v)))
+            }
+            syn::Fields::Unnamed(v) => {
+                VariantKind::Fields(FromSyn::from_syn(scx, desc.with_input(v)))
+            }
             syn::Fields::Unit => {
                 if let Some((_, expr)) = &desc.input.discriminant {
-                    VariantKind::Discriminant(Expr::from_syn(
-                        scx,
-                        InputDesc {
-                            file_path: desc.file_path,
-                            input: expr,
-                        },
-                    ))
+                    VariantKind::Discriminant(Expr::from_syn(scx, desc.with_input(expr)))
                 } else {
                     VariantKind::Unit
                 }
@@ -167,48 +117,30 @@ pub struct VariantField<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::FieldsNamed> for &'cx [VariantField<'cx>] {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::FieldsNamed>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::FieldsNamed>) -> Self {
         let len = desc.input.named.len();
         let mut iter = desc.input.named.iter();
         scx.alloc_slice(len, |_| {
             let field = iter.next().unwrap();
             VariantField {
-                ident: Ident::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: field.ident.as_ref().unwrap(),
-                    },
-                ),
-                ty: Type::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: &field.ty,
-                    },
-                ),
-                span: Span::from_locatable(scx, desc.file_path, field),
+                ident: Ident::from_syn(scx, desc.with_input(field.ident.as_ref().unwrap())),
+                ty: Type::from_syn(scx, desc.with_input(&field.ty)),
+                span: desc.span(field),
             }
         })
     }
 }
 
 impl<'cx> FromSyn<'cx, syn::FieldsUnnamed> for &'cx [VariantField<'cx>] {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::FieldsUnnamed>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::FieldsUnnamed>) -> Self {
         let len = desc.input.unnamed.len();
         let mut iter = desc.input.unnamed.iter();
         scx.alloc_slice(len, |i| {
             let field = iter.next().unwrap();
             VariantField {
                 ident: Ident::from_number(scx, i, Span::empty()),
-                ty: Type::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: &field.ty,
-                    },
-                ),
-                span: Span::from_locatable(scx, desc.file_path, field),
+                ty: Type::from_syn(scx, desc.with_input(&field.ty)),
+                span: desc.span(field),
             }
         })
     }

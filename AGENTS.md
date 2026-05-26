@@ -75,11 +75,17 @@ should move toward `syn-sem-name`.
 
 ## Testing Expectations
 
-For each extracted crate, prefer focused checks:
+Check all sub-crates.
 
 ```sh
-cargo check -p <crate>
-cargo test -p <crate>
+cargo check
+cargo clippy
+cargo test
+```
+
+For each extracted crate, prefer focused doc check:
+
+```sh
 cargo rustdoc -p <crate> -- -D missing_docs
 ```
 

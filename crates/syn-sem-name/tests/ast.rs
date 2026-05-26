@@ -1,5 +1,4 @@
 use syn_sem_ast as ast;
-use syn_sem_ast::{FromSyn, InputDesc};
 use syn_sem_common::CommonCx;
 use syn_sem_name::{
     DefId, DefKind, Name, NameDb, Namespace, Origin, ResolveResult, ScopeId, ScopeKind, Visibility,
@@ -156,14 +155,7 @@ fn collect_names<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: &str) -> NameDb<'cx> {
 fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: &str) -> ast::File<'cx> {
     let file_path = scx.parse_virtual_file("test.rs", text).unwrap();
     let source = scx.get_source(file_path).unwrap();
-    let syn_file = source.syntax::<syn::File>().unwrap();
-    ast::File::from_syn(
-        scx,
-        InputDesc {
-            file_path,
-            input: syn_file,
-        },
-    )
+    source.ast().clone()
 }
 
 fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
