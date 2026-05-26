@@ -29,7 +29,7 @@ pub type InternedStr<'ccx> = Interned<'ccx, str>;
 pub type FilePath<'ccx> = InternedStr<'ccx>;
 
 /// Interned source text.
-pub type SourceCode<'ccx> = InternedStr<'ccx>;
+pub type SourceText<'ccx> = InternedStr<'ccx>;
 
 /// Interned known library name, such as `core` or `std`.
 pub type LibraryName<'ccx> = InternedStr<'ccx>;

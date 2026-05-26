@@ -1,4 +1,4 @@
-use crate::{FilePath, InternedStr, LibraryName, Map, Result, SourceCode};
+use crate::{FilePath, InternedStr, LibraryName, Map, Result, SourceText};
 use any_intern::DroplessInterner;
 use std::{
     fmt::Display,
@@ -9,7 +9,7 @@ use std::{
 /// Root context for shared `syn-sem` infrastructure.
 ///
 /// `CommonCx` owns the string interner. Values with the `'ccx` lifetime, such as
-/// [`FilePath`] and [`SourceCode`], are valid for the lifetime of this context's interner.
+/// [`FilePath`] and [`SourceText`], are valid for the lifetime of this context's interner.
 #[derive(Debug, Default)]
 pub struct CommonCx {
     interner: StringInterner,
@@ -38,6 +38,11 @@ impl CommonCx {
         upper_size: usize,
     ) -> Result<InternedStr<'_>> {
         self.interner.intern_display(value, upper_size)
+    }
+
+    pub fn intern_path(&self, path: &Path) -> InternedStr<'_> {
+        let path = path.to_str().unwrap();
+        self.intern(path)
     }
 }
 
@@ -101,19 +106,19 @@ pub enum Source<'ccx> {
     /// Source loaded from, or representing, a physical absolute file path.
     Physical {
         /// Interned source code.
-        code: SourceCode<'ccx>,
+        code: SourceText<'ccx>,
     },
 
     /// Source supplied by the caller without requiring a real filesystem file.
     Virtual {
         /// Interned source code.
-        code: SourceCode<'ccx>,
+        code: SourceText<'ccx>,
     },
 }
 
 impl<'ccx> Source<'ccx> {
     /// Returns the interned source code for this source.
-    pub const fn code(self) -> SourceCode<'ccx> {
+    pub const fn code(self) -> SourceText<'ccx> {
         match self {
             Self::Physical { code } | Self::Virtual { code } => code,
         }

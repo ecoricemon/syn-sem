@@ -22,7 +22,7 @@ Use lifetime-bearing interned string aliases from this crate:
 ```rust
 InternedStr<'cx>
 FilePath<'cx>
-SourceCode<'cx>
+SourceText<'cx>
 ```
 
 Do not expose or store `RawInterned<str>` in crate APIs.
@@ -37,6 +37,6 @@ Interned source paths and source text should be tied to the `CommonCx` or
 - `StringInterner`: string-only interner used by `CommonCx`.
 - `AbstractFiles`: abstract source-file table keyed by interned file paths.
 - `Source`: source metadata for physical or virtual files.
-- `InternedStr`, `FilePath`, `SourceCode`, and `LibraryName`: lifetime-bearing
+- `InternedStr`, `FilePath`, `SourceText`, and `LibraryName`: lifetime-bearing
   interned string aliases.
 - `Result`, `Error`, and `Map`: shared utility aliases for internal crates.

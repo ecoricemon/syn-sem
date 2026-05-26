@@ -65,8 +65,8 @@ pub(crate) mod test_util {
         let file_path = id.to_string();
 
         // Parses `T` and generates `U`.
-        let file_path = scx.ccx.intern(&file_path);
-        let text = scx.ccx.intern(text);
+        let file_path = scx.common.intern(&file_path);
+        let text = scx.common.intern(text);
         let syntax = Box::new(syn::parse_str::<T>(text.as_ref()).unwrap());
         let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
         syntax.locate_as_entry(&mut locator).unwrap();

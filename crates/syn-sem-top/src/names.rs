@@ -1,4 +1,4 @@
-use crate::context::Analyzer;
+use crate::TopCx;
 use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
@@ -12,26 +12,26 @@ pub fn collect_names<'cx>(file: &ast::File<'cx>) -> NameDb<'cx> {
 }
 
 pub(crate) fn collect_names_in_top<'tcx>(
-    acx: &mut Analyzer<'tcx>,
+    tcx: &'tcx TopCx<'tcx>,
     file_path: FilePath<'tcx>,
     file: &ast::File<'tcx>,
 ) -> Result<NameDb<'tcx>> {
     let mut collector = NameCollector::default();
     let root = collector.db.root_scope();
-    let path = ModulePath::root(file_path);
+    let path = ModulePath::root(PathBuf::from(&*file_path));
     for item in file.items {
-        collector.collect_item_in_top(acx, root, item, &path)?;
+        collector.collect_item_in_top(tcx, root, item, &path)?;
     }
     Ok(collector.db)
 }
 
 #[derive(Default)]
-struct NameCollector<'cx> {
-    db: NameDb<'cx>,
+struct NameCollector<'tcx> {
+    db: NameDb<'tcx>,
 }
 
-impl<'cx> NameCollector<'cx> {
-    fn collect_file(mut self, file: &ast::File<'cx>) -> NameDb<'cx> {
+impl<'tcx> NameCollector<'tcx> {
+    fn collect_file(mut self, file: &ast::File<'tcx>) -> NameDb<'tcx> {
         let root = self.db.root_scope();
         for item in file.items {
             self.collect_item(root, item);
@@ -39,7 +39,7 @@ impl<'cx> NameCollector<'cx> {
         self.db
     }
 
-    fn collect_item(&mut self, scope: ScopeId, item: &ast::Item<'cx>) {
+    fn collect_item(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
         match item {
             ast::Item::Const(item) => {
                 self.add_named(
@@ -78,7 +78,7 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'cx>) {
+    fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
         self.add_named(
             parent_scope,
             DefKind::Enum,
@@ -98,7 +98,7 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect_mod(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'cx>) {
+    fn collect_mod(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'tcx>) {
         self.add_named(
             parent_scope,
             DefKind::Module,
@@ -118,13 +118,13 @@ impl<'cx> NameCollector<'cx> {
     /// `mod foo;` may require loading and collecting names from another source file.
     fn collect_item_in_top(
         &mut self,
-        acx: &mut Analyzer<'cx>,
+        tcx: &'tcx TopCx<'tcx>,
         scope: ScopeId,
-        item: &ast::Item<'cx>,
+        item: &ast::Item<'tcx>,
         path: &ModulePath,
     ) -> Result<()> {
         match item {
-            ast::Item::Mod(item) => self.collect_mod_in_top(acx, scope, item, path),
+            ast::Item::Mod(item) => self.collect_mod_in_top(tcx, scope, item, path),
             _ => {
                 self.collect_item(scope, item);
                 Ok(())
@@ -134,9 +134,9 @@ impl<'cx> NameCollector<'cx> {
 
     fn collect_mod_in_top(
         &mut self,
-        acx: &mut Analyzer<'cx>,
+        tcx: &'tcx TopCx<'tcx>,
         parent_scope: ScopeId,
-        item: &ast::ItemMod<'cx>,
+        item: &ast::ItemMod<'tcx>,
         path: &ModulePath,
     ) -> Result<()> {
         self.add_named(
@@ -154,23 +154,23 @@ impl<'cx> NameCollector<'cx> {
                 module_dir,
             };
             for item in items {
-                self.collect_item_in_top(acx, module_scope, item, &path)?;
+                self.collect_item_in_top(tcx, module_scope, item, &path)?;
             }
-        } else if let Some(file_path) = path.child_file(acx, item)? {
-            let file = acx.build_ast_file(file_path)?;
+        } else if let Some(file_path) = path.child_file(tcx, item)? {
+            let file = tcx.syntax.lookup_source(file_path)?.ast();
             let path = ModulePath {
                 source_file: file_path.as_ref().into(),
                 module_dir,
             };
             for item in file.items {
-                self.collect_item_in_top(acx, module_scope, item, &path)?;
+                self.collect_item_in_top(tcx, module_scope, item, &path)?;
             }
         }
 
         Ok(())
     }
 
-    fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'cx>) {
+    fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'tcx>) {
         self.add_named(
             parent_scope,
             DefKind::Trait,
@@ -215,7 +215,7 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect_impl(&mut self, parent_scope: ScopeId, item: &ast::ItemImpl<'cx>) {
+    fn collect_impl(&mut self, parent_scope: ScopeId, item: &ast::ItemImpl<'tcx>) {
         self.db.add_def(
             parent_scope,
             DefKind::Impl,
@@ -263,7 +263,7 @@ impl<'cx> NameCollector<'cx> {
     fn collect_fn(
         &mut self,
         parent_scope: ScopeId,
-        item: &ast::ItemFn<'cx>,
+        item: &ast::ItemFn<'tcx>,
         visibility: Visibility,
     ) {
         self.collect_fn_signature(parent_scope, DefKind::Fn, &item.sig, visibility);
@@ -288,13 +288,13 @@ impl<'cx> NameCollector<'cx> {
         &mut self,
         parent_scope: ScopeId,
         kind: DefKind,
-        sig: &ast::Signature<'cx>,
+        sig: &ast::Signature<'tcx>,
         visibility: Visibility,
     ) {
         self.add_named(parent_scope, kind, sig.ident.inner, visibility);
     }
 
-    fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'cx>) {
+    fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'tcx>) {
         let block_scope = self.db.add_scope(ScopeKind::Block, Some(parent_scope));
 
         for stmt in block.stmts {
@@ -306,14 +306,14 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect_generics(&mut self, parent_scope: ScopeId, generics: &ast::Generics<'cx>) {
+    fn collect_generics(&mut self, parent_scope: ScopeId, generics: &ast::Generics<'tcx>) {
         let generic_scope = self
             .db
             .add_scope(ScopeKind::GenericParams, Some(parent_scope));
         self.collect_generics_into(generic_scope, generics);
     }
 
-    fn collect_generics_into(&mut self, scope: ScopeId, generics: &ast::Generics<'cx>) {
+    fn collect_generics_into(&mut self, scope: ScopeId, generics: &ast::Generics<'tcx>) {
         for param in generics.params {
             match param {
                 ast::GenericParam::Type(param) => {
@@ -337,7 +337,7 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'cx>) {
+    fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'tcx>) {
         match pat {
             ast::Pat::Ident(pat) => {
                 self.add_named(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
@@ -366,8 +366,8 @@ impl<'cx> NameCollector<'cx> {
     fn collect_use_tree(
         &mut self,
         scope: ScopeId,
-        prefix: Vec<Name<'cx>>,
-        tree: &ast::UseTree<'cx>,
+        prefix: Vec<Name<'tcx>>,
+        tree: &ast::UseTree<'tcx>,
         visibility: Visibility,
     ) {
         match tree {
@@ -419,7 +419,7 @@ impl<'cx> NameCollector<'cx> {
         &mut self,
         scope: ScopeId,
         kind: DefKind,
-        name: Name<'cx>,
+        name: Name<'tcx>,
         visibility: Visibility,
     ) -> DefId {
         self.db
@@ -461,17 +461,16 @@ struct ModulePath {
 }
 
 impl ModulePath {
-    fn root(file_path: FilePath<'_>) -> Self {
-        let source_file = PathBuf::from(file_path.as_ref());
-        let source_dir = source_file.parent().unwrap_or_else(|| Path::new(""));
-        let module_dir = match source_file.file_stem().and_then(|stem| stem.to_str()) {
+    fn root(file_path: PathBuf) -> Self {
+        let source_dir = file_path.parent().unwrap_or_else(|| Path::new(""));
+        let module_dir = match file_path.file_stem().and_then(|stem| stem.to_str()) {
             Some("lib" | "main" | "mod") => source_dir.to_path_buf(),
             Some(stem) => source_dir.join(stem),
             None => source_dir.to_path_buf(),
         };
 
         Self {
-            source_file,
+            source_file: file_path,
             module_dir,
         }
     }
@@ -488,18 +487,18 @@ impl ModulePath {
         self.module_dir.join(module.ident.inner.as_ref())
     }
 
-    fn child_file<'cx>(
+    fn child_file<'tcx>(
         &self,
-        acx: &mut Analyzer<'cx>,
-        module: &ast::ItemMod<'_>,
-    ) -> Result<Option<FilePath<'cx>>> {
+        tcx: &'tcx TopCx<'tcx>,
+        module: &ast::ItemMod<'tcx>,
+    ) -> Result<Option<FilePath<'tcx>>> {
         if let Some(path) = path_attr(module) {
-            return self.find_child_file(acx, self.attr_candidates(path));
+            return self.find_child_file(tcx, self.attr_candidates(path));
         }
 
         let name = module.ident.inner.as_ref();
         self.find_child_file(
-            acx,
+            tcx,
             [
                 self.module_dir.join(format!("{name}.rs")),
                 self.module_dir.join(name).join("mod.rs"),
@@ -511,22 +510,22 @@ impl ModulePath {
         [self.module_dir.join(&path), self.source_dir().join(path)]
     }
 
-    fn find_child_file<'cx>(
+    fn find_child_file<'tcx>(
         &self,
-        acx: &mut Analyzer<'cx>,
+        tcx: &'tcx TopCx<'tcx>,
         candidates: impl IntoIterator<Item = PathBuf>,
-    ) -> Result<Option<FilePath<'cx>>> {
+    ) -> Result<Option<FilePath<'tcx>>> {
         let candidates = candidates.into_iter().collect::<Vec<_>>();
 
         for path in &candidates {
-            if let Some(file_path) = acx.parsed_file_path(path) {
+            if let Some(file_path) = tcx.parsed_file_path(path) {
                 return Ok(Some(file_path));
             }
         }
 
         for path in candidates {
             if path.is_file() {
-                return acx.read_physical_file(path).map(Some);
+                return tcx.read_physical_file(&path).map(Some);
             }
         }
 
@@ -574,23 +573,24 @@ mod tests {
     #[test]
     fn collects_names_from_top_context() {
         let tcx = TopCx::default();
-        let entry_file = tcx
-            .insert_virtual_file(
-                "test.rs",
-                r#"
-                pub mod model {
-                    pub struct User<T> {
-                        id: T,
-                    }
-                }
 
-                fn load<T, const N: usize>(user: T) {
-                    let current = user;
+        let entry_path = tcx.common.intern("test.rs");
+        let text = tcx.common.intern(
+            r#"
+            pub mod model {
+                pub struct User<T> {
+                    id: T,
                 }
-                "#,
-            )
-            .unwrap();
-        let semantics = tcx.analyze(entry_file).unwrap();
+            }
+
+            fn load<T, const N: usize>(user: T) {
+                let current = user;
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
         let db = semantics.names();
 
         let root = db.root_scope();
@@ -600,35 +600,35 @@ mod tests {
             db,
             root,
             Namespace::Type,
-            tcx.intern("model"),
+            tcx.common.intern("model"),
             DefKind::Module,
         );
         expect_kind(
             db,
             block,
             Namespace::Type,
-            tcx.intern("T"),
+            tcx.common.intern("T"),
             DefKind::TypeParam,
         );
         expect_kind(
             db,
             block,
             Namespace::Value,
-            tcx.intern("N"),
+            tcx.common.intern("N"),
             DefKind::ConstParam,
         );
         expect_kind(
             db,
             block,
             Namespace::Value,
-            tcx.intern("user"),
+            tcx.common.intern("user"),
             DefKind::Local,
         );
         expect_kind(
             db,
             block,
             Namespace::Value,
-            tcx.intern("current"),
+            tcx.common.intern("current"),
             DefKind::Local,
         );
     }
@@ -636,29 +636,33 @@ mod tests {
     #[test]
     fn collects_import_declarations() {
         let tcx = TopCx::default();
-        let entry_file = tcx
-            .insert_virtual_file(
-                "test.rs",
-                r#"
-                use a::{b, c as d, *};
-                "#,
-            )
-            .unwrap();
-        let semantics = tcx.analyze(entry_file).unwrap();
+
+        let entry_path = tcx.common.intern("test.rs");
+        let text = tcx.common.intern(
+            r#"
+            use a::{b, c as d, *};
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
         let db = semantics.names();
 
         assert_eq!(db.imports().len(), 3);
         assert_eq!(
             db.imports()[0].source_path,
-            vec![tcx.intern("a"), tcx.intern("b")]
+            vec![tcx.common.intern("a"), tcx.common.intern("b")]
         );
         assert_eq!(db.imports()[0].kind, ImportKind::Single);
         assert_eq!(
             db.imports()[1].source_path,
-            vec![tcx.intern("a"), tcx.intern("c")]
+            vec![tcx.common.intern("a"), tcx.common.intern("c")]
         );
-        assert_eq!(db.imports()[1].kind, ImportKind::Rename(tcx.intern("d")));
-        assert_eq!(db.imports()[2].source_path, vec![tcx.intern("a")]);
+        assert_eq!(
+            db.imports()[1].kind,
+            ImportKind::Rename(tcx.common.intern("d"))
+        );
+        assert_eq!(db.imports()[2].source_path, vec![tcx.common.intern("a")]);
         assert_eq!(db.imports()[2].kind, ImportKind::Glob);
     }
 }

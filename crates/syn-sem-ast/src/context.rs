@@ -1,9 +1,9 @@
 use crate::{AppendOnlyMap, File as AstFile, FromSyn, InputDesc};
 use any_intern::Interned;
 use bumpalo::Bump;
-use std::{fmt::Display, mem};
+use std::{fmt::Display, io, mem};
 use syn_locator::{LocateEntry, Locator};
-use syn_sem_common::{CommonCx, FilePath, Result, SourceCode};
+use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
 
 /// Allocation and interning context used by the semantic AST.
 ///
@@ -11,7 +11,7 @@ use syn_sem_common::{CommonCx, FilePath, Result, SourceCode};
 /// this context.
 pub struct SyntaxCx<'cx> {
     /// Shared common context that owns interned strings.
-    pub ccx: &'cx CommonCx,
+    pub common: &'cx CommonCx,
     /// Arena used for dropless AST allocation.
     pub bump: Bump,
     files: AppendOnlyMap<FilePath<'cx>, Box<Source<'cx>>>,
@@ -19,22 +19,64 @@ pub struct SyntaxCx<'cx> {
 
 impl<'cx> SyntaxCx<'cx> {
     /// Creates a syntax context borrowing the shared common context.
-    pub fn new(ccx: &'cx CommonCx) -> Self {
+    pub fn new(common: &'cx CommonCx) -> Self {
         Self {
-            ccx,
+            common,
             bump: Bump::new(),
             files: AppendOnlyMap::default(),
         }
     }
 
+    /// Parses and stores a physical source file.
+    pub fn parse_physical_file(
+        &'cx self,
+        file_path: FilePath<'cx>,
+        text: SourceText<'cx>,
+    ) -> Result<FilePath<'cx>> {
+        self.parse_file(file_path, text, SourceKind::Physical)
+    }
+
+    /// Parses and stores a virtual source file.
+    pub fn parse_virtual_file(
+        &'cx self,
+        file_path: FilePath<'cx>,
+        text: SourceText<'cx>,
+    ) -> Result<FilePath<'cx>> {
+        self.parse_file(file_path, text, SourceKind::Virtual)
+    }
+
+    pub fn has_source(&self, file_path: FilePath<'cx>) -> bool {
+        self.files.get(&file_path).is_some()
+    }
+
+    /// Returns the stored parsed source for `file_path`.
+    pub fn get_source(&'cx self, file_path: FilePath<'cx>) -> Option<&'cx Source<'cx>> {
+        self.files.get(&file_path)
+    }
+
+    /// Returns the stored parsed source for `file_path`.
+    pub fn lookup_source(&'cx self, file_path: FilePath<'cx>) -> Result<&'cx Source<'cx>> {
+        let source = self.get_source(file_path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("source file is not parsed: {file_path}"),
+            )
+        })?;
+        Ok(source)
+    }
+
     /// Allocates a dropless value in this context.
-    pub fn alloc<T>(&'cx self, value: T) -> &'cx T {
+    pub(crate) fn alloc<T>(&'cx self, value: T) -> &'cx T {
         assert!(!mem::needs_drop::<T>());
         self.bump.alloc(value)
     }
 
     /// Allocates a dropless slice by calling `f` once for each index.
-    pub fn alloc_slice<T, F: FnMut(usize) -> T>(&'cx self, len: usize, mut f: F) -> &'cx [T] {
+    pub(crate) fn alloc_slice<T, F: FnMut(usize) -> T>(
+        &'cx self,
+        len: usize,
+        mut f: F,
+    ) -> &'cx [T] {
         assert!(!mem::needs_drop::<T>());
         let mut expected_index = 0;
         self.bump.alloc_slice_fill_with(len, |index| {
@@ -46,37 +88,25 @@ impl<'cx> SyntaxCx<'cx> {
     }
 
     /// Interns a string through the shared common context.
-    pub fn intern(&'cx self, value: &str) -> Interned<'cx, str> {
-        self.ccx.intern(value)
+    pub(crate) fn intern(&'cx self, value: &str) -> Interned<'cx, str> {
+        self.common.intern(value)
     }
 
     /// Interns a formatted value through the shared common context.
-    pub fn intern_display<K: Display + ?Sized>(
+    pub(crate) fn intern_display<K: Display + ?Sized>(
         &'cx self,
         value: &K,
         upper_size: usize,
     ) -> Result<Interned<'cx, str>> {
-        self.ccx.interner().intern_display(value, upper_size)
-    }
-
-    /// Parses and stores a physical source file.
-    pub fn parse_physical_file(&'cx self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
-        self.parse_file(file_path, text, SourceKind::Physical)
-    }
-
-    /// Parses and stores a virtual source file.
-    pub fn parse_virtual_file(&'cx self, file_path: &str, text: &str) -> Result<FilePath<'cx>> {
-        self.parse_file(file_path, text, SourceKind::Virtual)
+        self.common.interner().intern_display(value, upper_size)
     }
 
     fn parse_file(
         &'cx self,
-        file_path: &str,
-        text: &str,
+        file_path: FilePath<'cx>,
+        text: SourceText<'cx>,
         kind: SourceKind,
     ) -> Result<FilePath<'cx>> {
-        let file_path = self.ccx.intern(file_path);
-        let text = self.ccx.intern(text);
         let syntax = Box::new(syn::parse_str::<syn::File>(text.as_ref())?);
         let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
         syntax.locate_as_entry(&mut locator)?;
@@ -94,11 +124,6 @@ impl<'cx> SyntaxCx<'cx> {
         self.files.insert(file_path, source);
         Ok(file_path)
     }
-
-    /// Returns the stored parsed source for `file_path`.
-    pub fn get_source(&'cx self, file_path: FilePath<'cx>) -> Option<&'cx Source<'cx>> {
-        self.files.get(&file_path)
-    }
 }
 
 /// Source text and locator state for one parsed file.
@@ -108,7 +133,7 @@ pub struct Source<'cx> {
     /// Whether the source is physical or virtual.
     pub kind: SourceKind,
     /// Interned source text.
-    pub text: SourceCode<'cx>,
+    pub text: SourceText<'cx>,
     locator: Locator,
     // `Locator` requires fixed addresses to the file.
     syntax: Box<syn::File>,
@@ -118,7 +143,7 @@ pub struct Source<'cx> {
 impl<'cx> Source<'cx> {
     fn new(
         kind: SourceKind,
-        text: SourceCode<'cx>,
+        text: SourceText<'cx>,
         locator: Locator,
         syntax: Box<syn::File>,
         ast: AstFile<'cx>,

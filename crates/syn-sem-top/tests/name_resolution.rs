@@ -1,3 +1,4 @@
+use std::fs;
 use syn_sem_common::FilePath;
 use syn_sem_name::{DefKind, NameDb, Namespace, ResolveResult, ScopeId, ScopeKind};
 use syn_sem_top::TopCx;
@@ -5,32 +6,33 @@ use syn_sem_top::TopCx;
 #[test]
 fn resolves_names_from_physical_module_files() {
     let tcx = TopCx::default();
+
     let entry_path = fixture("a1.rs");
-    let entry_source = std::fs::read_to_string(&entry_path).unwrap();
-    let entry_file = tcx
-        .insert_virtual_file(entry_path.to_str().unwrap(), &entry_source)
-        .unwrap();
+    let entry_path = tcx.common.intern_path(&entry_path);
+    let text = fs::read_to_string(&*entry_path).unwrap();
+    let text = tcx.common.intern(&text);
+    tcx.insert_virtual_file(entry_path, text).unwrap();
 
-    let semantics = tcx.analyze(entry_file).unwrap();
-
+    let semantics = tcx.analyze(entry_path).unwrap();
     assert_fixture_modules(&tcx, semantics.names());
 }
 
 #[test]
 fn resolves_names_from_virtual_module_files() {
     let tcx = TopCx::default();
-    let entry_file = insert_virtual_fixture_tree(&tcx);
-    let semantics = tcx.analyze(entry_file).unwrap();
 
+    let entry_path = insert_virtual_fixture_tree(&tcx);
+
+    let semantics = tcx.analyze(entry_path).unwrap();
     assert_fixture_modules(&tcx, semantics.names());
 }
 
 fn insert_virtual_fixture_tree<'tcx>(tcx: &'tcx TopCx<'tcx>) -> FilePath<'tcx> {
-    let entry_file = tcx
-        .insert_virtual_file("a1.rs", include_str!("file/a1.rs"))
-        .unwrap();
+    let entry_path = tcx.common.intern("a1.rs");
+    let text = tcx.common.intern(include_str!("file/a1.rs"));
+    tcx.insert_virtual_file(entry_path, text).unwrap();
 
-    for (path, code) in [
+    for (path, text) in [
         ("a1/b1.rs", include_str!("file/a1/b1.rs")),
         ("a1/b1/b2.rs", include_str!("file/a1/b1/b2.rs")),
         ("c1.rs", include_str!("file/c1.rs")),
@@ -38,10 +40,12 @@ fn insert_virtual_fixture_tree<'tcx>(tcx: &'tcx TopCx<'tcx>) -> FilePath<'tcx> {
         ("a1/e1/e2.rs", include_str!("file/a1/e1/e2.rs")),
         ("a1/e1/e4.rs", include_str!("file/a1/e1/e4.rs")),
     ] {
-        tcx.insert_virtual_file(path, code).unwrap();
+        let path = tcx.common.intern(path);
+        let text = tcx.common.intern(text);
+        tcx.insert_virtual_file(path, text).unwrap();
     }
 
-    entry_file
+    entry_path
 }
 
 fn assert_fixture_modules<'tcx>(tcx: &'tcx TopCx<'tcx>, db: &NameDb<'tcx>) {
@@ -99,7 +103,7 @@ fn resolve_kind<'tcx>(
     namespace: Namespace,
     name: &str,
 ) -> DefKind {
-    let name = tcx.intern(name);
+    let name = tcx.common.intern(name);
     let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };

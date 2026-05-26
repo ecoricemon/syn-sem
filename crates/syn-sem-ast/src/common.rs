@@ -4,7 +4,7 @@ use num_traits::ToPrimitive;
 use std::ops::Deref;
 use syn::punctuated::Punctuated;
 use syn_locator::{Locate, Locator};
-use syn_sem_common::{FilePath, SourceCode};
+use syn_sem_common::{FilePath, SourceText};
 use syn_sem_macros::CheckDropless;
 
 /// Converts a `syn` syntax node into the semantic AST representation.
@@ -21,7 +21,7 @@ pub struct InputDesc<'cx, 'syn, Input: ?Sized> {
     /// Interned path of the source file that owns `input`.
     pub file_path: FilePath<'cx>,
     /// Interned source text that owns `input`.
-    pub source_code: SourceCode<'cx>,
+    pub source_code: SourceText<'cx>,
     /// Locator populated for the parsed source that owns `input`.
     pub locator: &'syn Locator,
     /// Borrowed syntax node being converted.
@@ -174,7 +174,7 @@ pub struct Span<'cx> {
     /// The whole source text.
     //
     // We do not intern about the whole text.
-    source: Option<SourceCode<'cx>>,
+    source: Option<SourceText<'cx>>,
     start: u32,
     end: u32,
 }
@@ -191,7 +191,7 @@ impl<'cx> Span<'cx> {
 
     /// Creates a span for a `syn_locator` node in the given file.
     pub fn from_locatable<T: Locate + ?Sized>(
-        source: SourceCode<'cx>,
+        source: SourceText<'cx>,
         locator: &Locator,
         item: &T,
     ) -> Self {
