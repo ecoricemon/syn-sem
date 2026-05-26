@@ -1,7 +1,7 @@
-use std::{fmt::Display, path::Path};
+use crate::Semantics;
+use std::{fmt::Display, io, path::Path};
 use syn_sem_ast::{File, FromSyn, InputDesc, SyntaxCx};
-use syn_sem_common::{CommonCx, FilePath, InternedStr, Result};
-use syn_sem_name::NameDb;
+use syn_sem_common::{CommonCx, FilePath, InternedStr, Map, Result};
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -13,30 +13,13 @@ pub struct TopCx<'tcx> {
     /// Shared common infrastructure context.
     //
     // `CommonCx` must be dropped last because phase contexts may hold references into it.
-    pub ccx: Box<CommonCx>,
+    common: Box<CommonCx>,
 }
 
 impl<'tcx> TopCx<'tcx> {
-    /// Creates a top-level context from existing shared common infrastructure.
-    pub fn with_common(ccx: CommonCx) -> Self {
-        let ccx = Box::new(ccx);
-        // Safety: `SyntaxCx` borrows the boxed common context. The allocation remains stable when
-        // `TopCx` moves.
-        let ccx_ref = unsafe { std::mem::transmute::<&CommonCx, &'tcx CommonCx>(ccx.as_ref()) };
-        Self {
-            syntax: SyntaxCx::new(ccx_ref),
-            ccx,
-        }
-    }
-
-    /// Returns the semantic syntax context.
-    pub fn syntax(&self) -> &SyntaxCx<'tcx> {
-        &self.syntax
-    }
-
     /// Interns a string through the shared common context.
     pub fn intern(&'tcx self, value: &str) -> InternedStr<'tcx> {
-        self.ccx.intern(value)
+        self.common.intern(value)
     }
 
     /// Interns a formatted value through the shared common context.
@@ -45,72 +28,91 @@ impl<'tcx> TopCx<'tcx> {
         value: &K,
         upper_size: usize,
     ) -> Result<InternedStr<'tcx>> {
-        self.syntax.intern_display(value, upper_size)
+        self.common.intern_display(value, upper_size)
     }
 
     /// Parses and stores a virtual Rust file, returning its interned file path.
-    pub fn parse_virtual_file(&'tcx self, file_path: &str, text: &str) -> Result<FilePath<'tcx>> {
+    pub fn insert_virtual_file(&'tcx self, file_path: &str, text: &str) -> Result<FilePath<'tcx>> {
         self.syntax.parse_virtual_file(file_path, text)
     }
 
-    /// Parses and stores a physical Rust file, returning its interned file path.
-    pub fn parse_physical_file(&'tcx self, file_path: &str, text: &str) -> Result<FilePath<'tcx>> {
-        self.syntax.parse_physical_file(file_path, text)
+    /// Analyzes a previously inserted or read entry file.
+    pub fn analyze(&'tcx self, entry_file: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
+        Analyzer::new(self).analyze(entry_file)
+    }
+}
+
+impl<'tcx> Default for TopCx<'tcx> {
+    /// Creates a top-level context with owned shared common infrastructure.
+    fn default() -> Self {
+        let common = Box::new(CommonCx::new());
+        // Safety: `SyntaxCx` borrows the boxed common context. The allocation remains stable when
+        // `TopCx` moves.
+        let ccx_ref = unsafe { std::mem::transmute::<&CommonCx, &'tcx CommonCx>(common.as_ref()) };
+        Self {
+            syntax: SyntaxCx::new(ccx_ref),
+            common,
+        }
+    }
+}
+
+pub(crate) struct Analyzer<'tcx> {
+    tcx: &'tcx TopCx<'tcx>,
+    ast_files: Map<FilePath<'tcx>, File<'tcx>>,
+}
+
+impl<'tcx> Analyzer<'tcx> {
+    pub(crate) fn new(tcx: &'tcx TopCx<'tcx>) -> Self {
+        Self {
+            tcx,
+            ast_files: Map::default(),
+        }
     }
 
-    /// Reads, parses, and stores a physical Rust file, returning its interned file path.
-    pub fn read_physical_file(&'tcx self, file_path: impl AsRef<Path>) -> Result<FilePath<'tcx>> {
-        let file_path = file_path.as_ref().canonicalize()?;
-        let file_path = file_path.to_string_lossy();
-        let interned_file_path = self.ccx.intern(&file_path);
-        if self.syntax.get_source(interned_file_path).is_some() {
-            return Ok(interned_file_path);
+    fn analyze(mut self, entry_file: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
+        let file = self.build_ast_file(entry_file)?;
+        let names = crate::collect_names_in_top(&mut self, entry_file, &file)?;
+        Ok(Semantics::new(self.tcx, entry_file, names))
+    }
+
+    pub(crate) fn build_ast_file(&mut self, file_path: FilePath<'tcx>) -> Result<File<'tcx>> {
+        if let Some(file) = self.ast_files.get(&file_path) {
+            return Ok(file.clone());
         }
 
-        let text = std::fs::read_to_string(&*file_path)?;
-        self.parse_physical_file(&file_path, &text)
-    }
-
-    /// Builds the semantic AST for a previously parsed file.
-    pub fn ast_file(&'tcx self, file_path: FilePath<'tcx>) -> Result<File<'tcx>> {
-        let source = self.syntax.get_source(file_path).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
+        let source = self.tcx.syntax.get_source(file_path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
                 format!("source file is not parsed: {file_path}"),
             )
         })?;
         let input = source.syntax::<syn::File>().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
                 format!("source file does not contain a syn::File: {file_path}"),
             )
         })?;
 
-        Ok(File::from_syn(&self.syntax, InputDesc { file_path, input }))
+        let file = File::from_syn(&self.tcx.syntax, InputDesc { file_path, input });
+        self.ast_files.insert(file_path, file.clone());
+        Ok(file)
     }
 
-    /// Collects the name-resolution database for a previously parsed file.
-    pub fn names_for_file(&'tcx self, file_path: FilePath<'tcx>) -> Result<NameDb<'tcx>> {
-        let file = self.ast_file(file_path)?;
-        crate::collect_names_in_top(self, file_path, &file)
+    pub(crate) fn parsed_file_path(&self, file_path: impl AsRef<Path>) -> Option<FilePath<'tcx>> {
+        let file_path = file_path.as_ref().to_string_lossy();
+        let file_path = self.tcx.common.interner().get(&file_path)?;
+        self.tcx.syntax.get_source(file_path).map(|_| file_path)
     }
 
-    /// Parses a virtual Rust file and collects its name-resolution database.
-    pub fn parse_virtual_names(&'tcx self, file_path: &str, text: &str) -> Result<NameDb<'tcx>> {
-        let file_path = self.parse_virtual_file(file_path, text)?;
-        self.names_for_file(file_path)
-    }
+    pub(crate) fn read_physical_file(&self, file_path: impl AsRef<Path>) -> Result<FilePath<'tcx>> {
+        let file_path = file_path.as_ref().canonicalize()?;
+        let file_path = file_path.to_string_lossy();
+        let interned_file_path = self.tcx.common.intern(&file_path);
+        if self.tcx.syntax.get_source(interned_file_path).is_some() {
+            return Ok(interned_file_path);
+        }
 
-    /// Reads a physical Rust file and collects its name-resolution database.
-    pub fn read_physical_names(&'tcx self, file_path: impl AsRef<Path>) -> Result<NameDb<'tcx>> {
-        let file_path = self.read_physical_file(file_path)?;
-        self.names_for_file(file_path)
-    }
-}
-
-impl Default for TopCx<'_> {
-    /// Creates a top-level context with owned shared common infrastructure.
-    fn default() -> Self {
-        Self::with_common(CommonCx::new())
+        let text = std::fs::read_to_string(&*file_path)?;
+        self.tcx.syntax.parse_physical_file(&file_path, &text)
     }
 }
