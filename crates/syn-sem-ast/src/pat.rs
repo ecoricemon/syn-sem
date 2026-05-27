@@ -31,71 +31,19 @@ pub enum Pat<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::Pat> for Pat<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Pat>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Pat>) -> Self {
         match desc.input {
-            syn::Pat::Ident(v) => Self::Ident(PatIdent::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Lit(v) => Self::Lit(PatLit::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Path(v) => Self::Path(PatPath::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Reference(v) => Self::Reference(PatReference::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Rest(v) => Self::Rest(PatRest::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Slice(v) => Self::Slice(PatSlice::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Struct(v) => Self::Struct(PatStruct::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Tuple(v) => Self::Tuple(PatTuple::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
-            syn::Pat::Type(v) => Self::Type(PatType::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: v,
-                },
-            )),
+            syn::Pat::Ident(v) => Self::Ident(PatIdent::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Lit(v) => Self::Lit(PatLit::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Path(v) => Self::Path(PatPath::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Reference(v) => {
+                Self::Reference(PatReference::from_syn(scx, desc.with_input(v)))
+            }
+            syn::Pat::Rest(v) => Self::Rest(PatRest::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Slice(v) => Self::Slice(PatSlice::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Struct(v) => Self::Struct(PatStruct::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Tuple(v) => Self::Tuple(PatTuple::from_syn(scx, desc.with_input(v))),
+            syn::Pat::Type(v) => Self::Type(PatType::from_syn(scx, desc.with_input(v))),
             _ => todo!(),
         }
     }
@@ -134,35 +82,23 @@ impl<'cx> PatIdent<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatIdent> for PatIdent<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatIdent>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatIdent>) -> Self {
         Self {
-            ident: Ident::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.ident,
-                },
-            ),
+            ident: Ident::from_syn(scx, desc.with_input(&desc.input.ident)),
             is_ref: desc.input.by_ref.is_some(),
             is_mut: desc.input.mutability.is_some(),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: desc.span(desc.input),
         }
     }
 }
 
 impl<'cx> FromSyn<'cx, syn::Token![self]> for PatIdent<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Token![self]>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Token![self]>) -> Self {
         Self {
-            ident: Ident::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: desc.input,
-                },
-            ),
+            ident: Ident::from_syn(scx, desc.with_input(desc.input)),
             is_ref: false,
             is_mut: false,
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -181,17 +117,11 @@ pub struct PatReference<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatReference> for PatReference<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatReference>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatReference>) -> Self {
         Self {
-            pat: scx.alloc(Pat::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.pat,
-                },
-            )),
+            pat: scx.alloc(Pat::from_syn(scx, desc.with_input(&desc.input.pat))),
             is_mut: desc.input.mutability.is_some(),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -206,9 +136,9 @@ pub struct PatRest<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatRest> for PatRest<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatRest>) -> Self {
+    fn from_syn(_: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatRest>) -> Self {
         Self {
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -225,16 +155,10 @@ pub struct PatSlice<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatSlice> for PatSlice<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatSlice>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatSlice>) -> Self {
         Self {
-            elems: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elems,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            elems: FromSyn::from_syn(scx, desc.with_input(&desc.input.elems)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -255,32 +179,16 @@ pub struct PatStruct<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatStruct> for PatStruct<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatStruct>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatStruct>) -> Self {
         Self {
-            path: Path::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.path,
-                },
-            ),
-            fields: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.fields,
-                },
-            ),
-            rest: desc.input.rest.as_ref().map(|rest| {
-                PatRest::from_syn(
-                    scx,
-                    InputDesc {
-                        file_path: desc.file_path,
-                        input: rest,
-                    },
-                )
-            }),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
+            fields: FromSyn::from_syn(scx, desc.with_input(&desc.input.fields)),
+            rest: desc
+                .input
+                .rest
+                .as_ref()
+                .map(|rest| PatRest::from_syn(scx, desc.with_input(rest))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -299,32 +207,16 @@ pub struct FieldPat<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::FieldPat> for FieldPat<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::FieldPat>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::FieldPat>) -> Self {
         let member = match &desc.input.member {
-            syn::Member::Named(ident) => Ident::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: ident,
-                },
-            ),
-            syn::Member::Unnamed(idx) => Ident::from_number(
-                scx,
-                idx.index,
-                Span::from_locatable(scx, desc.file_path, idx),
-            ),
+            syn::Member::Named(ident) => Ident::from_syn(scx, desc.with_input(ident)),
+            syn::Member::Unnamed(idx) => Ident::from_number(scx, idx.index, desc.span(idx)),
         };
 
         Self {
             member,
-            pat: scx.alloc(Pat::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.pat,
-                },
-            )),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            pat: scx.alloc(Pat::from_syn(scx, desc.with_input(&desc.input.pat))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -341,16 +233,10 @@ pub struct PatTuple<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatTuple> for PatTuple<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatTuple>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatTuple>) -> Self {
         Self {
-            elems: FromSyn::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.elems,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            elems: FromSyn::from_syn(scx, desc.with_input(&desc.input.elems)),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -369,30 +255,18 @@ pub struct PatType<'cx> {
 }
 
 impl<'cx> FromSyn<'cx, syn::PatType> for PatType<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::PatType>) -> Self {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PatType>) -> Self {
         Self {
-            pat: scx.alloc(Pat::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.pat,
-                },
-            )),
-            ty: Type::from_syn(
-                scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.ty,
-                },
-            ),
-            span: Span::from_locatable(scx, desc.file_path, desc.input),
+            pat: scx.alloc(Pat::from_syn(scx, desc.with_input(&desc.input.pat))),
+            ty: Type::from_syn(scx, desc.with_input(&desc.input.ty)),
+            span: desc.span(desc.input),
         }
     }
 }
 
 impl<'cx> FromSyn<'cx, syn::Receiver> for PatType<'cx> {
-    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, syn::Receiver>) -> Self {
-        let span = Span::from_locatable(scx, desc.file_path, desc.input);
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Receiver>) -> Self {
+        let span = desc.span(desc.input);
         let self_ty = Type::Path(TypePath {
             path: Path::from_str(scx, "Self", span),
             span,
@@ -410,10 +284,7 @@ impl<'cx> FromSyn<'cx, syn::Receiver> for PatType<'cx> {
         Self {
             pat: scx.alloc(Pat::Ident(PatIdent::from_syn(
                 scx,
-                InputDesc {
-                    file_path: desc.file_path,
-                    input: &desc.input.self_token,
-                },
+                desc.with_input(&desc.input.self_token),
             ))),
             ty,
             span,
@@ -430,10 +301,10 @@ mod tests {
     fn pat_rest() {
         // Proves rest patterns are preserved inside slice patterns.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let [head, .., tail] = value;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let [head, .., tail] = value;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Slice(pat) = local.pat else { panic!() };
@@ -449,10 +320,10 @@ mod tests {
     fn pat_ident() {
         // Proves identifier patterns preserve `ref` and `mut` modifiers.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let ref mut value = input;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let ref mut value = input;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Ident(pat) = local.pat else { panic!() };
@@ -465,10 +336,10 @@ mod tests {
     fn pat_reference() {
         // Proves reference patterns preserve whether the pattern reference is mutable.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let &value = input;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let &value = input;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Reference(pat) = local.pat else {
@@ -476,8 +347,8 @@ mod tests {
         };
         assert!(!pat.is_mut);
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let &mut value = input;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let &mut value = input;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Reference(pat) = local.pat else {
@@ -490,10 +361,10 @@ mod tests {
     fn pat_struct() {
         // Proves struct patterns preserve path, fields, rest, and path arguments.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let S { a, b: c, .. } = value;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let S { a, b: c, .. } = value;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Struct(pat) = local.pat else {
@@ -508,8 +379,8 @@ mod tests {
         assert!(matches!(pat.fields[1].pat, Pat::Ident(_)));
         assert!(pat.rest.is_some());
 
-        let stmt = parse::<syn::Stmt, crate::Stmt>(&cx, "let S::<T> { value } = input;");
-        let crate::Stmt::Local(local) = stmt else {
+        let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let S::<T> { value } = input;");
+        let crate::Stmt::Local(local) = stmt.value else {
             panic!()
         };
         let Pat::Struct(pat) = local.pat else {
@@ -523,16 +394,16 @@ mod tests {
     fn pat_type_receiver() {
         // Proves method receivers synthesize the expected typed `self` pattern.
         let ccx = syn_sem_common::CommonCx::new();
-        let cx = SyntaxCx::new(&ccx);
+        let scx = SyntaxCx::new(&ccx);
 
-        let receiver = parse::<syn::Receiver, PatType>(&cx, "&self");
-        let Type::Reference(ty) = receiver.ty else {
+        let receiver = parse::<syn::Receiver, PatType>(&scx, "&self");
+        let Type::Reference(ty) = &receiver.ty else {
             panic!()
         };
         assert!(!ty.is_mut);
 
-        let receiver = parse::<syn::Receiver, PatType>(&cx, "&mut self");
-        let Type::Reference(ty) = receiver.ty else {
+        let receiver = parse::<syn::Receiver, PatType>(&scx, "&mut self");
+        let Type::Reference(ty) = &receiver.ty else {
             panic!()
         };
         assert!(ty.is_mut);

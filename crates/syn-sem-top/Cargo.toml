@@ -1,0 +1,14 @@
+[package]
+name = "syn-sem-top"
+publish = false
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "Temporary crate that will replace syn-sem"
+repository = "https://github.com/ecoricemon/syn-sem"
+
+[dependencies]
+syn-sem-common = { workspace = true }
+syn-sem-ast = { workspace = true }
+syn-sem-name = { workspace = true }
+syn = { workspace = true, features = ["full", "extra-traits"] }

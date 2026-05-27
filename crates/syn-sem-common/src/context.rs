@@ -1,4 +1,4 @@
-use crate::{FilePath, InternedStr, LibraryName, Map, Result, SourceCode};
+use crate::{FilePath, InternedStr, LibraryName, Map, Result, SourceText};
 use any_intern::DroplessInterner;
 use std::{
     fmt::Display,
@@ -9,7 +9,7 @@ use std::{
 /// Root context for shared `syn-sem` infrastructure.
 ///
 /// `CommonCx` owns the string interner. Values with the `'ccx` lifetime, such as
-/// [`FilePath`] and [`SourceCode`], are valid for the lifetime of this context's interner.
+/// [`FilePath`] and [`SourceText`], are valid for the lifetime of this context's interner.
 #[derive(Debug, Default)]
 pub struct CommonCx {
     interner: StringInterner,
@@ -27,8 +27,22 @@ impl CommonCx {
     }
 
     /// Interns a string in this context.
-    pub fn intern(&self, text: &str) -> Result<InternedStr<'_>> {
+    pub fn intern(&self, text: &str) -> InternedStr<'_> {
         self.interner.intern(text)
+    }
+
+    /// Interns a formatted value through the shared common context.
+    pub fn intern_display<K: Display + ?Sized>(
+        &self,
+        value: &K,
+        upper_size: usize,
+    ) -> Result<InternedStr<'_>> {
+        self.interner.intern_display(value, upper_size)
+    }
+
+    pub fn intern_path(&self, path: &Path) -> InternedStr<'_> {
+        let path = path.to_str().unwrap();
+        self.intern(path)
     }
 }
 
@@ -47,8 +61,8 @@ impl StringInterner {
     }
 
     /// Interns `text` and returns a lifetime-bearing interned string.
-    pub fn intern(&self, text: &str) -> Result<InternedStr<'_>> {
-        self.intern_display(text, text.len())
+    pub fn intern(&self, text: &str) -> InternedStr<'_> {
+        self.intern_display(text, text.len()).unwrap()
     }
 
     /// Interns a display value as a formatted string.
@@ -90,15 +104,21 @@ impl std::fmt::Debug for StringInterner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source<'ccx> {
     /// Source loaded from, or representing, a physical absolute file path.
-    Physical { code: SourceCode<'ccx> },
+    Physical {
+        /// Interned source code.
+        code: SourceText<'ccx>,
+    },
 
     /// Source supplied by the caller without requiring a real filesystem file.
-    Virtual { code: SourceCode<'ccx> },
+    Virtual {
+        /// Interned source code.
+        code: SourceText<'ccx>,
+    },
 }
 
 impl<'ccx> Source<'ccx> {
     /// Returns the interned source code for this source.
-    pub const fn code(self) -> SourceCode<'ccx> {
+    pub const fn code(self) -> SourceText<'ccx> {
         match self {
             Self::Physical { code } | Self::Virtual { code } => code,
         }
@@ -151,8 +171,8 @@ impl<'ccx> AbstractFiles<'ccx> {
         file_path: &str,
         code: &str,
     ) -> Result<FilePath<'ccx>> {
-        let file_path = interner.intern(file_path)?;
-        let code = interner.intern(code)?;
+        let file_path = interner.intern(file_path);
+        let code = interner.intern(code);
         self.files.insert(file_path, Source::Virtual { code });
         Ok(file_path)
     }
@@ -168,8 +188,8 @@ impl<'ccx> AbstractFiles<'ccx> {
     ) -> Result<FilePath<'ccx>> {
         validate_absolute_file_path(file_path)?;
 
-        let file_path = interner.intern(file_path)?;
-        let code = interner.intern(code)?;
+        let file_path = interner.intern(file_path);
+        let code = interner.intern(code);
         self.files.insert(file_path, Source::Physical { code });
         Ok(file_path)
     }
@@ -214,7 +234,7 @@ impl<'ccx> AbstractFiles<'ccx> {
             "expected library name, but received file path-like name `{name}`"
         );
 
-        let name = interner.intern(name)?;
+        let name = interner.intern(name);
         Ok(self.known_libraries.insert(name, file_path))
     }
 
@@ -281,9 +301,9 @@ mod tests {
     fn interner_deduplicates_strings() {
         let interner = StringInterner::new();
 
-        let a = interner.intern("hello").unwrap();
-        let b = interner.intern("hello").unwrap();
-        let c = interner.intern("world").unwrap();
+        let a = interner.intern("hello");
+        let b = interner.intern("hello");
+        let c = interner.intern("world");
 
         assert_eq!(a, b);
         assert_ne!(a, c);

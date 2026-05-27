@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn lexical_resolution_prefers_inner_scope() {
         let ccx = CommonCx::new();
-        let x = ccx.intern("x").unwrap();
+        let x = ccx.intern("x");
 
         let mut db = NameDb::default();
         let root = db.root_scope();
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn namespaces_are_independent() {
         let ccx = CommonCx::new();
-        let t = ccx.intern("T").unwrap();
+        let t = ccx.intern("T");
 
         let mut db = NameDb::default();
         let root = db.root_scope();
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn generic_scope_is_visible_from_function_body() {
         let ccx = CommonCx::new();
-        let t = ccx.intern("T").unwrap();
+        let t = ccx.intern("T");
 
         let mut db = NameDb::default();
         let root = db.root_scope();
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn local_item_can_be_resolved_in_type_namespace() {
         let ccx = CommonCx::new();
-        let local = ccx.intern("Local").unwrap();
+        let local = ccx.intern("Local");
 
         let mut db = NameDb::default();
         let root = db.root_scope();
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn const_generic_lives_in_value_namespace() {
         let ccx = CommonCx::new();
-        let n = ccx.intern("N").unwrap();
+        let n = ccx.intern("N");
 
         let mut db = NameDb::default();
         let root = db.root_scope();

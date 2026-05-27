@@ -3,18 +3,27 @@
 ## Project Direction
 
 We are refactoring `crates/syn-sem` by extracting focused sub-crates.
-Current extracted crates:
-
-- `syn-sem-common`: shared infrastructure, including `CommonCx`, string
-interning, interned file paths/source, and abstract files.
-- `syn-sem-forest`: raw `syn` syntax forest, source locations, parent lookup,
-and syntax identity.
-- `syn-sem-ast`: semantic AST wrapper over `syn`; semantic code should gradually
-stop depending directly on raw `syn`.
-- `syn-sem-name`: name-resolution model, including definitions, scopes,
-namespaces, bindings, and imports.
 
 `syn-sem` remains the facade/orchestrator while internals are migrated.
+
+We are implementing `syn-sem-top` instead of modifying `syn-sem` in the middle
+of migration.
+
+Each extracted crate may have its own `AGENTS.md` with crate-local role,
+boundary, model, and public-item guidance. Prefer the nearest crate-local file
+for details specific to that crate.
+
+## Instruction Maintenance
+
+Keep `AGENTS.md` files stable and lightweight. Do not treat them as detailed
+design records.
+
+When API direction changes, prefer following the user's latest explicit
+instruction in the active task rather than updating these files for every design
+choice.
+
+Only update an `AGENTS.md` file when a decision is expected to remain durable
+across many future tasks.
 
 ## Context Model
 
@@ -31,70 +40,52 @@ borrow the contexts they need.
 
 Self-referential ownership and lifetime wiring should be handled only at the
 top-level session/root layer. Lower-level contexts should not try to own parent
-contexts or construct deep context chains.
+contexts or construct deep context chains. `TopCx` is expected to be the
+self-referential root like the old `GlobalCx`.
 
-Non-top-level contexts should borrow other contexts instead of owning. Borrow
-lifetime should be something like 'scx for SyntaxCx, 'ccx for CommonCx.
+## Naming Conventions
 
-## Interning Rules
+Context binding names should use conventional names, with no exceptions:
 
-Use lifetime-bearing interned strings through `syn-sem-common` aliases:
+- `CommonCx` binds as `ccx`
+- `SyntaxCx` binds as `scx`
+- `TopCx` binds as `tcx`
 
-```rust
-InternedStr<'cx>
-FilePath<'cx>
-SourceCode<'cx>
-```
+Context lifetime names depend on where they appear:
 
-Do not use `RawInterned<str>`.
-Do not store shared file paths as `Box<str>`.
+- `TopCx` is the self-referential top-level exception; write it as
+  `TopCx<'tcx>`.
+- Other non-top-level context types use `'cx`; for example, write
+  `FooCx<'cx>`.
+- Other places use conventional lifetime names that match the referent; for
+  example, write `&'ccx CommonCx` or `&'tcx TopCx`.
 
-## Crate Boundaries
+## Cross-Crate Boundaries
 
 Keep extracted crates focused.
 
-- `syn-sem-common` should not depend on AST, forest, name-resolution, or
-semantic crates.
-- `syn-sem-name` should stay AST-agnostic in production dependencies.
-- AST-based name-resolution tests may use `syn-sem-ast` as a dev-dependency.
-- New reusable infrastructure should usually be extracted before being wired
+Respect each crate's local boundary rules before adding dependencies or moving
+public items.
+
+New reusable infrastructure should usually be extracted before being wired
 deeply into `syn-sem`.
-
-## Name Resolution Direction
-
-Do not stretch `PathTree` further as the long-term name resolver.
-The desired model is:
-
-```text
-NameDb
-  DefId
-  ScopeId
-  Namespace
-  Binding
-  Import
-```
-
-Resolution should be use-site based, scope-aware, and namespace-aware.
-Rust namespaces must stay separate:
-
-- type namespace
-- value namespace
-- macro namespace
-- lifetime namespace
-
-Generic parameters should be represented as definitions, not found by ad hoc
-ancestor syntax walks.
 
 `PathTree` may remain temporarily during migration, but new name-resolution work
 should move toward `syn-sem-name`.
 
 ## Testing Expectations
 
-For each extracted crate, prefer focused checks:
+Check all sub-crates.
 
 ```sh
-cargo check -p <crate>
-cargo test -p <crate>
+cargo check
+cargo clippy
+cargo test
+```
+
+For each extracted crate, prefer focused doc check:
+
+```sh
 cargo rustdoc -p <crate> -- -D missing_docs
 ```
 
