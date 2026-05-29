@@ -9,5 +9,5 @@ mod names;
 mod semantics;
 
 pub use context::*;
-pub use names::*;
+pub(crate) use names::*;
 pub use semantics::*;

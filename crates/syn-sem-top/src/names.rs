@@ -6,11 +6,6 @@ use syn_sem_name::{
     DefId, DefKind, ImportKind, Name, NameDb, Origin, ScopeId, ScopeKind, Visibility,
 };
 
-/// Collects a [`NameDb`] from a semantic AST file.
-pub fn collect_names<'cx>(file: &ast::File<'cx>) -> NameDb<'cx> {
-    NameCollector::default().collect_file(file)
-}
-
 pub(crate) fn collect_names_in_top<'tcx>(
     tcx: &'tcx TopCx<'tcx>,
     file_path: FilePath<'tcx>,
@@ -31,14 +26,6 @@ struct NameCollector<'tcx> {
 }
 
 impl<'tcx> NameCollector<'tcx> {
-    fn collect_file(mut self, file: &ast::File<'tcx>) -> NameDb<'tcx> {
-        let root = self.db.root_scope();
-        for item in file.items {
-            self.collect_item(root, item);
-        }
-        self.db
-    }
-
     fn collect_item(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
         match item {
             ast::Item::Const(item) => {
