@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
 use syn_sem_name::{
-    DefId, DefKind, ImportKind, Name, NameDb, Origin, ScopeId, ScopeKind, Visibility,
+    DefId, DefKind, ImportKind, Name, NameDb, Namespace, Origin, ScopeId, ScopeKind, Visibility,
 };
 
 pub(crate) fn collect_names_in_top<'tcx>(
@@ -17,6 +17,7 @@ pub(crate) fn collect_names_in_top<'tcx>(
     for item in file.items {
         collector.collect_item_in_top(tcx, root, item, &path)?;
     }
+    collector.db.resolve_imports();
     Ok(collector.db)
 }
 
@@ -33,11 +34,13 @@ impl<'tcx> NameCollector<'tcx> {
                     scope,
                     DefKind::Const,
                     item.ident.inner,
-                    ast_visibility(&item.vis),
+                    self.ast_visibility(scope, &item.vis),
                 );
             }
             ast::Item::Enum(item) => self.collect_enum(scope, item),
-            ast::Item::Fn(item) => self.collect_fn(scope, item, ast_visibility(&item.vis)),
+            ast::Item::Fn(item) => {
+                self.collect_fn(scope, item, self.ast_visibility(scope, &item.vis))
+            }
             ast::Item::Impl(item) => self.collect_impl(scope, item),
             ast::Item::Mod(item) => self.collect_mod(scope, item),
             ast::Item::Struct(item) => {
@@ -45,7 +48,7 @@ impl<'tcx> NameCollector<'tcx> {
                     scope,
                     DefKind::Struct,
                     item.ident.inner,
-                    ast_visibility(&item.vis),
+                    self.ast_visibility(scope, &item.vis),
                 );
                 self.collect_generics(scope, &item.generics);
             }
@@ -55,24 +58,26 @@ impl<'tcx> NameCollector<'tcx> {
                     scope,
                     DefKind::TypeAlias,
                     item.ident.inner,
-                    ast_visibility(&item.vis),
+                    self.ast_visibility(scope, &item.vis),
                 );
                 self.collect_generics(scope, &item.generics);
             }
             ast::Item::Use(item) => {
-                self.collect_use_tree(scope, Vec::new(), &item.tree, ast_visibility(&item.vis));
+                self.collect_use_tree(
+                    scope,
+                    Vec::new(),
+                    &item.tree,
+                    self.ast_visibility(scope, &item.vis),
+                );
             }
         }
     }
 
     fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
-        self.add_named(
-            parent_scope,
-            DefKind::Enum,
-            item.ident.inner,
-            ast_visibility(&item.vis),
-        );
+        let visibility = self.ast_visibility(parent_scope, &item.vis);
+        let enum_def = self.add_named(parent_scope, DefKind::Enum, item.ident.inner, visibility);
         let item_scope = self.db.add_scope(ScopeKind::Item, Some(parent_scope));
+        self.db.set_child_scope(enum_def, item_scope);
         self.collect_generics_into(item_scope, &item.generics);
 
         for variant in item.variants {
@@ -80,19 +85,20 @@ impl<'tcx> NameCollector<'tcx> {
                 item_scope,
                 DefKind::Variant,
                 variant.ident.inner,
-                Visibility::Private,
+                visibility,
             );
         }
     }
 
     fn collect_mod(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'tcx>) {
-        self.add_named(
+        let module_def = self.add_named(
             parent_scope,
             DefKind::Module,
             item.ident.inner,
-            ast_visibility(&item.vis),
+            self.ast_visibility(parent_scope, &item.vis),
         );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
+        self.db.set_child_scope(module_def, module_scope);
 
         if let Some(items) = item.items {
             for item in items {
@@ -126,13 +132,14 @@ impl<'tcx> NameCollector<'tcx> {
         item: &ast::ItemMod<'tcx>,
         path: &ModulePath,
     ) -> Result<()> {
-        self.add_named(
+        let module_def = self.add_named(
             parent_scope,
             DefKind::Module,
             item.ident.inner,
-            ast_visibility(&item.vis),
+            self.ast_visibility(parent_scope, &item.vis),
         );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
+        self.db.set_child_scope(module_def, module_scope);
         let module_dir = path.child_dir(item);
 
         if let Some(items) = item.items {
@@ -162,7 +169,7 @@ impl<'tcx> NameCollector<'tcx> {
             parent_scope,
             DefKind::Trait,
             item.ident.inner,
-            ast_visibility(&item.vis),
+            self.ast_visibility(parent_scope, &item.vis),
         );
         let trait_scope = self.db.add_scope(ScopeKind::Trait, Some(parent_scope));
         self.collect_generics_into(trait_scope, &item.generics);
@@ -412,12 +419,71 @@ impl<'tcx> NameCollector<'tcx> {
         self.db
             .add_def(scope, kind, Some(name), visibility, Origin::Synthetic)
     }
-}
 
-fn ast_visibility(vis: &ast::Visibility<'_>) -> Visibility {
-    match vis {
-        ast::Visibility::Public(_) => Visibility::Public,
-        ast::Visibility::Restricted(_) | ast::Visibility::Private => Visibility::Private,
+    fn ast_visibility(&self, scope: ScopeId, vis: &ast::Visibility<'tcx>) -> Visibility {
+        match vis {
+            ast::Visibility::Public(_) => Visibility::Public,
+            ast::Visibility::Restricted(path) => self
+                .visibility_scope(scope, path)
+                .map(Visibility::Restricted)
+                .unwrap_or(Visibility::Private),
+            ast::Visibility::Private => Visibility::Private,
+        }
+    }
+
+    fn visibility_scope(&self, scope: ScopeId, path: &ast::Path<'tcx>) -> Option<ScopeId> {
+        let mut scope = self.nearest_module_scope(scope);
+        let mut segments = path.segments.iter();
+        let first = segments.next()?;
+
+        match first.ident.inner.as_ref() {
+            "crate" => scope = self.db.root_scope(),
+            "self" => {}
+            "super" => scope = self.parent_module_scope(scope)?,
+            _ => return None,
+        }
+
+        for segment in segments {
+            if segment.has_args() {
+                return None;
+            }
+            let binding = self.db[scope]
+                .bindings
+                .get(Namespace::Type, segment.ident.inner)?;
+            let def = binding.single()?;
+            let target = self.db.resolve_target(def);
+            scope = self.db[target].child_scope?;
+        }
+
+        Some(scope)
+    }
+
+    fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
+        loop {
+            if matches!(
+                self.db[scope].kind,
+                ScopeKind::CrateRoot | ScopeKind::Module
+            ) {
+                return scope;
+            }
+            let Some(parent) = self.db[scope].parent else {
+                return scope;
+            };
+            scope = parent;
+        }
+    }
+
+    fn parent_module_scope(&self, scope: ScopeId) -> Option<ScopeId> {
+        let mut scope = self.db[scope].parent?;
+        loop {
+            if matches!(
+                self.db[scope].kind,
+                ScopeKind::CrateRoot | ScopeKind::Module
+            ) {
+                return Some(scope);
+            }
+            scope = self.db[scope].parent?;
+        }
     }
 }
 

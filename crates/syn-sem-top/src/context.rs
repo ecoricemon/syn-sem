@@ -8,6 +8,7 @@ use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
 /// `TopCx` owns shared infrastructure and phase contexts. Phase contexts borrow the owned common
 /// context through the top-level root, keeping lower-level contexts from owning one another.
 pub struct TopCx<'tcx> {
+    /// Syntax parsing and source storage context.
     pub syntax: SyntaxCx<'tcx>,
 
     /// Shared common infrastructure context.

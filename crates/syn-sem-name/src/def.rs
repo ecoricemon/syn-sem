@@ -15,6 +15,17 @@ pub struct Def<'cx> {
     /// Scope that owns this definition.
     pub parent_scope: ScopeId,
 
+    /// Scope containing this definition's importable children.
+    ///
+    /// Modules and item-like definitions such as enums can expose names through a child scope.
+    /// Definitions without importable children leave this unset.
+    pub child_scope: Option<ScopeId>,
+
+    /// Definition this definition aliases.
+    ///
+    /// Import definitions use this to point at their resolved target.
+    pub target: Option<DefId>,
+
     /// Visibility of this definition.
     pub visibility: Visibility,
 

@@ -76,6 +76,17 @@ impl<'cx> Bindings<'cx> {
         self.map_mut(namespace).entry(name).or_default().push(def);
     }
 
+    /// Inserts a definition unless the same definition is already bound there.
+    pub fn insert_unique(&mut self, namespace: Namespace, name: Name<'cx>, def: DefId) -> bool {
+        let binding = self.map_mut(namespace).entry(name).or_default();
+        if binding.contains(def) {
+            false
+        } else {
+            binding.push(def);
+            true
+        }
+    }
+
     /// Returns the binding for `name` in `namespace`.
     pub fn get(&self, namespace: Namespace, name: Name<'cx>) -> Option<&Binding> {
         self.map(namespace).get(&name)
@@ -140,5 +151,10 @@ impl Binding {
     /// Returns whether the binding has no definitions.
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// Returns whether this binding already contains `def`.
+    pub fn contains(&self, def: DefId) -> bool {
+        self.defs.contains(&def)
     }
 }
