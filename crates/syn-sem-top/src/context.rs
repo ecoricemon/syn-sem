@@ -1,5 +1,5 @@
 use crate::Semantics;
-use std::path::Path;
+use std::{fs, path::Path};
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
 
@@ -22,7 +22,7 @@ impl<'tcx> TopCx<'tcx> {
         &'tcx self,
         file_path: FilePath<'tcx>,
         text: SourceText<'tcx>,
-    ) -> Result<FilePath<'tcx>> {
+    ) -> Result<()> {
         self.syntax.parse_virtual_file(file_path, text)
     }
 
@@ -33,9 +33,8 @@ impl<'tcx> TopCx<'tcx> {
         Ok(Semantics::new(self, names))
     }
 
-    pub(crate) fn parsed_file_path(&'tcx self, file_path: &Path) -> Option<FilePath<'tcx>> {
-        let file_path = file_path.to_string_lossy();
-        let file_path = self.common.interner().get(&file_path)?;
+    pub(crate) fn has_parsed(&'tcx self, file_path: &Path) -> Option<FilePath<'tcx>> {
+        let file_path = self.common.intern_path(file_path);
         self.syntax.has_source(file_path).then_some(file_path)
     }
 
@@ -46,9 +45,11 @@ impl<'tcx> TopCx<'tcx> {
             return Ok(file_path);
         }
 
-        let text = std::fs::read_to_string(&*file_path)?;
+        let text = fs::read_to_string(&*file_path)?;
+        let text = self.common.intern(&text);
         self.syntax
-            .parse_physical_file(file_path, self.common.intern(&text))
+            .parse_physical_file(file_path, text)
+            .map(|()| file_path)
     }
 }
 

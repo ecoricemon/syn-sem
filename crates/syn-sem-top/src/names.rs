@@ -493,39 +493,45 @@ impl ModulePath {
         module: &ast::ItemMod<'tcx>,
     ) -> Result<Option<FilePath<'tcx>>> {
         if let Some(path) = path_attr(module) {
-            return self.find_child_file(tcx, self.attr_candidates(path));
+            return self.find_child_file(
+                tcx,
+                [
+                    self.module_dir.join(&path).as_ref(),
+                    self.source_dir().join(path).as_ref(),
+                ],
+            );
         }
 
         let name = module.ident.inner.as_ref();
         self.find_child_file(
             tcx,
             [
-                self.module_dir.join(format!("{name}.rs")),
-                self.module_dir.join(name).join("mod.rs"),
+                self.module_dir.join(format!("{name}.rs")).as_ref(),
+                self.module_dir.join(name).join("mod.rs").as_ref(),
             ],
         )
     }
 
-    fn attr_candidates(&self, path: PathBuf) -> [PathBuf; 2] {
-        [self.module_dir.join(&path), self.source_dir().join(path)]
-    }
-
-    fn find_child_file<'tcx>(
+    fn find_child_file<'tcx, 'a, II, I>(
         &self,
         tcx: &'tcx TopCx<'tcx>,
-        candidates: impl IntoIterator<Item = PathBuf>,
-    ) -> Result<Option<FilePath<'tcx>>> {
-        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates: II,
+    ) -> Result<Option<FilePath<'tcx>>>
+    where
+        II: IntoIterator<IntoIter = I>,
+        I: Iterator<Item = &'a Path> + Clone,
+    {
+        let candidates: I = candidates.into_iter();
 
-        for path in &candidates {
-            if let Some(file_path) = tcx.parsed_file_path(path) {
+        for path in candidates.clone() {
+            if let Some(file_path) = tcx.has_parsed(path) {
                 return Ok(Some(file_path));
             }
         }
 
         for path in candidates {
             if path.is_file() {
-                return tcx.read_physical_file(&path).map(Some);
+                return tcx.read_physical_file(path).map(Some);
             }
         }
 

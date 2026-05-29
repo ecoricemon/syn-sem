@@ -32,7 +32,7 @@ impl<'cx> SyntaxCx<'cx> {
         &'cx self,
         file_path: FilePath<'cx>,
         text: SourceText<'cx>,
-    ) -> Result<FilePath<'cx>> {
+    ) -> Result<()> {
         self.parse_file(file_path, text, SourceKind::Physical)
     }
 
@@ -41,7 +41,7 @@ impl<'cx> SyntaxCx<'cx> {
         &'cx self,
         file_path: FilePath<'cx>,
         text: SourceText<'cx>,
-    ) -> Result<FilePath<'cx>> {
+    ) -> Result<()> {
         self.parse_file(file_path, text, SourceKind::Virtual)
     }
 
@@ -106,7 +106,7 @@ impl<'cx> SyntaxCx<'cx> {
         file_path: FilePath<'cx>,
         text: SourceText<'cx>,
         kind: SourceKind,
-    ) -> Result<FilePath<'cx>> {
+    ) -> Result<()> {
         let syntax = Box::new(syn::parse_str::<syn::File>(text.as_ref())?);
         let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
         syntax.locate_as_entry(&mut locator)?;
@@ -122,7 +122,7 @@ impl<'cx> SyntaxCx<'cx> {
         );
         let source = Box::new(Source::new(kind, text, locator, syntax, ast));
         self.files.insert(file_path, source);
-        Ok(file_path)
+        Ok(())
     }
 }
 

@@ -1,7 +1,10 @@
 use crate::SyntaxCx;
 use any_intern::Interned;
 use num_traits::ToPrimitive;
-use std::ops::Deref;
+use std::{
+    fmt::{self, Display},
+    ops::Deref,
+};
 use syn::punctuated::Punctuated;
 use syn_locator::{Locate, Locator};
 use syn_sem_common::{FilePath, SourceText};
@@ -147,11 +150,17 @@ impl<'cx> FromSyn<'cx, syn::Token![self]> for Ident<'cx> {
     }
 }
 
-impl<'cx> Deref for Ident<'cx> {
+impl Deref for Ident<'_> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl Display for Ident<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self.inner.as_ref(), f)
     }
 }
 
