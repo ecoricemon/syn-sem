@@ -371,7 +371,7 @@ impl<'gcx> AnalyzeCx<'_, 'gcx> {
                 stree: self.stree,
                 ptree: self.ptree,
                 s2p: self.s2p,
-                evaluted: self.evaluated,
+                evaluated: self.evaluated,
                 type_inspector: self.type_inspector,
                 logic: self.logic,
                 tasks: self.tasks,

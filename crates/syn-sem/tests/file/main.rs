@@ -15,7 +15,7 @@ fn test_read_file() {
 /// The physical files used here also are referenced by `test_read_virtual_file` for consistency.
 fn test_read_physical_file() {
     let analyzed = AnalysisSession::default()
-        .run(|anaylzer| anaylzer.analyze("tests/file/a1.rs"))
+        .run(|analyzer| analyzer.analyze("tests/file/a1.rs"))
         .unwrap();
     let ptree = &analyzed.sem.ptree;
     let crate_ = ptree.crate_name();
