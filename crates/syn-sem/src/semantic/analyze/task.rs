@@ -1,4 +1,4 @@
-//! # Taks id
+//! # Task id
 //!
 //! Each task contains its unique identification. Tasks could be rescheduled, so we could count up
 //! the rescheduling for the same task then make panics when the rescheduling has happened too

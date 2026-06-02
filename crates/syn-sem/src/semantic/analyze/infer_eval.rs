@@ -589,7 +589,7 @@ impl<'gcx, T: ItemTrait> EvalHelper<'_, 'gcx, T> {
                 base: self.base,
             })
         }
-        // The espression doesn't contain const generic params, then evaluates it now.
+        // The expression doesn't contain const generic params, then evaluates it now.
         else {
             let infer_logic_host = InferLogicHost {
                 gcx: self.gcx,
@@ -664,7 +664,7 @@ impl<'gcx, T: ItemTrait> eval::Host<'gcx> for EvalHost<'_, 'gcx, T> {
             let mut top = expr.syn_id();
             let mut type_hint = None;
 
-            // If found top element for infering the expression, exits the loop.
+            // If found top element for inferring the expression, exits the loop.
             let mut cur = top;
             while let Some(parent) = stree.get_parent(cur).cloned() {
                 let any = parent.as_any();

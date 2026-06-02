@@ -184,7 +184,7 @@ impl<'gcx, T: ItemTrait> PathTree<'gcx, T> {
                 None => SearchTypeNotFound(()),
             }
         }
-        // In a block context, we can also see items defined in parant blocks without explicit
+        // In a block context, we can also see items defined in parent blocks without explicit
         // prefix like 'super' or something like that. So, we have to consider parent blocks as
         // well.
         else {
@@ -259,7 +259,7 @@ impl<'gcx, T: ItemTrait> PathTree<'gcx, T> {
     ///
     /// This method ignores unresolved `use`.
     //
-    // NOTE: May work incorrectly with blocks since current logic just finds previous occurences.
+    // NOTE: May work incorrectly with blocks since current logic just finds previous occurrences.
     // Symbol table approach would fix that, or we could fix the logic to consider blocks.
     pub(crate) fn search_item<I>(&self, mut base: NodeIndex, key: I, pivot: usize) -> Option<PathId>
     where

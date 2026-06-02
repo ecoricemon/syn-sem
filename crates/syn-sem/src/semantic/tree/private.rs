@@ -10,10 +10,10 @@
 //!     }
 //! }
 //! ```
-//! We use node index instead of path id becuase a node can have only one
+//! We use node index instead of path id because a node can have only one
 //! module, plus, it makes visibility check easy.
 
-// TOOD: Delete unnecessary functions.
+// TODO: Delete unnecessary functions.
 
 use super::{
     format,

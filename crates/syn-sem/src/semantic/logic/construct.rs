@@ -1034,7 +1034,7 @@ impl<'a, 'b, 'gcx, H: Host<'gcx>> Finder<'a, 'b, 'gcx, H> {
 
         let self_ty = self.type_to_term(qself_ty)?;
 
-        // Replaces the self type of the defualt generic context.
+        // Replaces the self type of the default generic context.
         self.default_cx.replace_self_type(self_ty.clone());
 
         let trait_ = self.path_segments_to_term(trait_path.clone().take(num_segments - 1))?;
@@ -1214,7 +1214,7 @@ impl<'gcx> Bound<'gcx> {
     ) -> TriResult<(), ()> {
         // Stores idents of generic parameters. When we meet those idents later, we will make them
         // variables.
-        self.var_symbols.push(String::new()); // Empty string is a seperator
+        self.var_symbols.push(String::new()); // Empty string is a separator
         for param in &generics.params {
             match param {
                 syn::GenericParam::Type(ty_param) => {
@@ -1322,7 +1322,7 @@ impl<'gcx> Bound<'gcx> {
     fn pop_generics(&mut self) {
         loop {
             match self.var_symbols.last() {
-                // Empty string is a seperator.
+                // Empty string is a separator.
                 Some(ident) if ident.is_empty() => {
                     self.var_symbols.pop();
                     break;
@@ -1382,7 +1382,7 @@ impl<'a, 'gcx> DefaultGenericCx<'a, 'gcx> {
         self.self_ty.as_ref()
     }
 
-    /// e.g. [None, Soem(A), Some(Self)] -> 3
+    /// e.g. [None, Some(A), Some(Self)] -> 3
     fn get_generics_len<Q>(&self, name: &Q) -> Option<usize>
     where
         NameIn<'gcx>: borrow::Borrow<Q>,
@@ -1391,7 +1391,7 @@ impl<'a, 'gcx> DefaultGenericCx<'a, 'gcx> {
         self.map?.get(name).map(|defaults| defaults.len())
     }
 
-    /// e.g. [None, Soem(A), Some(Self)] -> A, self_ty
+    /// e.g. [None, Some(A), Some(Self)] -> A, self_ty
     fn get_default_types<Q>(
         &self,
         name: &Q,

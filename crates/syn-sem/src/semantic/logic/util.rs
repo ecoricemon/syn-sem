@@ -12,7 +12,7 @@ where
 }
 
 // If the functor is an integer or floating types, wrap it in 'int()' or 'float()'. This makes us
-// to be able to represent an ambigous types such as 'int($X)' or 'float($X)'.
+// to be able to represent an ambiguous types such as 'int($X)' or 'float($X)'.
 pub(crate) fn try_make_int_or_float_term<'gcx>(
     functor: &str,
     gcx: &'gcx GlobalCx<'gcx>,
