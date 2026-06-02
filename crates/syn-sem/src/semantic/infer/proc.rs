@@ -2434,7 +2434,7 @@ pub(crate) mod tests {
             let a = 0;
             // Suffix
             let a = 0_u32;
-            // Explict type
+            // Explicit type
             let a: u32 = 0;
             // Array
             let a = [0; 1];

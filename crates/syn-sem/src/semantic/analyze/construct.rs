@@ -145,7 +145,7 @@ impl<'gcx> ConstructCx<'_, 'gcx> {
     }
 
     fn add_item(&mut self, item: &syn::Item) -> Result<()> {
-        // Tracks only when the path has been initialzied by tracking a file.
+        // Tracks only when the path has been initialized by tracking a file.
         if self.path.is_empty() {
             return Ok(());
         }

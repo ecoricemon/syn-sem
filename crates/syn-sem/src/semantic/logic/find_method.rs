@@ -148,13 +148,13 @@ where
             // ref: https://doc.rust-lang.org/reference/expressions/method-call-expr.html
 
             match recv_state {
-                // Automatical borrow: T -> ref(T)
+                // Automatic borrow: T -> ref(T)
                 ReceiverState::T => {
                     let receiver = &mut var_sig.args[1];
                     *receiver = term::ref_1(receiver.clone(), self.gcx);
                     recv_state = ReceiverState::RefT;
                 }
-                // Automatical borrow: ref(T) -> ref(mut(T))
+                // Automatic borrow: ref(T) -> ref(mut(T))
                 ReceiverState::RefT => {
                     let receiver = &mut var_sig.args[1]; // ref(T)
                     let t = &mut receiver.args[0]; // T
@@ -162,7 +162,7 @@ where
                     recv_state = ReceiverState::RefMutT;
                 }
 
-                // Automatical dereference: Not yet implemented
+                // Automatic dereference: Not yet implemented
                 //
                 // # Note
                 // Dereferencing here means `Deref` trait. not dereferencing to references. Result
@@ -191,7 +191,7 @@ where
     ///
     /// # Note
     ///
-    /// Every argument can have either only one varialble or zero. If not, it's undefined behavior.
+    /// Every argument can have either only one variable or zero. If not, it's undefined behavior.
     fn resolve(
         &mut self,
         parent: TermIn<'gcx>,
@@ -214,7 +214,7 @@ where
     ///
     /// # Note
     ///
-    /// Every argument can have either only one varialble or zero. If not, it's undefined behavior.
+    /// Every argument can have either only one variable or zero. If not, it's undefined behavior.
     fn _resolve(
         impl_logic: &mut ImplLogic<'gcx>,
         query: ExprIn<'gcx>,

@@ -523,7 +523,7 @@ pub(crate) mod generic {
 
         let child = path.syn_id();
         while let Some((i, ancestor)) = stree.get_ancestor(child, &targets[..num_targets]) {
-            // If the nearest ancestor dosen't have a generic param for the input, then we remove
+            // If the nearest ancestor doesn't have a generic param for the input, then we remove
             // similar targets because those targets are impossible to be accessed from the input
             // from then on. For example, inside of nested functions cannot see generic params of
             // the outer functions.
