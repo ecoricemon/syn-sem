@@ -64,23 +64,23 @@ fn resolves_local_use_paths_from_top_context() {
 
     let b_scope = module_scope(db, db.root_scope(), 1);
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "Public"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Public"),
         DefKind::Struct
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "Renamed"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Renamed"),
         DefKind::Struct
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "a"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "a"),
         DefKind::Module
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "Local"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Local"),
         DefKind::Struct
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "FromSuper"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "FromSuper"),
         DefKind::Struct
     );
 }
@@ -118,15 +118,15 @@ fn applies_restricted_visibility_to_imports() {
     let b_scope = module_scope(db, root, 1);
 
     assert_eq!(
-        resolve_target_kind(&tcx, db, child_scope, Namespace::Type, "InA"),
+        follow_aliases_kind(&tcx, db, child_scope, Namespace::Type, "InA"),
         DefKind::Struct
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "CrateVisible"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "CrateVisible"),
         DefKind::Struct
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "SuperVisible"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "SuperVisible"),
         DefKind::Struct
     );
     assert_eq!(
@@ -160,11 +160,11 @@ fn imports_enum_variants_in_type_and_value_namespaces() {
     let b_scope = module_scope(db, db.root_scope(), 1);
 
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Type, "V"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "V"),
         DefKind::Variant
     );
     assert_eq!(
-        resolve_target_kind(&tcx, db, b_scope, Namespace::Value, "V"),
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Value, "V"),
         DefKind::Variant
     );
 }
@@ -246,13 +246,13 @@ fn resolve_kind<'tcx>(
     name: &str,
 ) -> DefKind {
     let name = tcx.common.intern(name);
-    let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
     db[def].kind
 }
 
-fn resolve_target_kind<'tcx>(
+fn follow_aliases_kind<'tcx>(
     tcx: &'tcx TopCx<'tcx>,
     db: &NameDb<'tcx>,
     scope: ScopeId,
@@ -260,10 +260,10 @@ fn resolve_target_kind<'tcx>(
     name: &str,
 ) -> DefKind {
     let name = tcx.common.intern(name);
-    let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
-    db[db.resolve_target(def)].kind
+    db[db.follow_aliases(def)].kind
 }
 
 fn resolve_result<'tcx>(
@@ -273,7 +273,30 @@ fn resolve_result<'tcx>(
     namespace: Namespace,
     name: &str,
 ) -> ResolveResult {
-    db.resolve_lexical(scope, namespace, tcx.common.intern(name))
+    resolve_lexical(db, scope, namespace, tcx.common.intern(name))
+}
+
+fn resolve_lexical(
+    db: &NameDb<'_>,
+    mut scope: ScopeId,
+    namespace: Namespace,
+    name: syn_sem_name::Name<'_>,
+) -> ResolveResult {
+    loop {
+        if let Some(binding) = db.binding(scope, namespace, name) {
+            let mut defs = binding.iter();
+            return match defs.len() {
+                0 => ResolveResult::NotFound,
+                1 => ResolveResult::Found(defs.next().unwrap()),
+                _ => ResolveResult::Ambiguous(defs.collect()),
+            };
+        }
+
+        let Some(parent) = db[scope].parent else {
+            return ResolveResult::NotFound;
+        };
+        scope = parent;
+    }
 }
 
 fn module_scope(db: &NameDb<'_>, parent: ScopeId, nth: usize) -> ScopeId {

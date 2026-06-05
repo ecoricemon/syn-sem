@@ -13,3 +13,15 @@ pub enum Namespace {
     /// Lifetime namespace.
     Lifetime,
 }
+
+impl Namespace {
+    /// Returns all Rust namespaces handled by the name database.
+    pub const fn all() -> [Self; 4] {
+        [
+            Namespace::Type,
+            Namespace::Value,
+            Namespace::Macro,
+            Namespace::Lifetime,
+        ]
+    }
+}

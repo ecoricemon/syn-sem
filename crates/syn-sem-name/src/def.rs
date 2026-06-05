@@ -92,18 +92,29 @@ impl DefKind {
     /// Returns the default namespaces populated by this definition kind.
     pub const fn namespaces(self) -> &'static [Namespace] {
         match self {
+            // Type namespace
             Self::Module
             | Self::Struct
             | Self::Enum
             | Self::Trait
             | Self::TypeAlias
             | Self::TypeParam => &[Namespace::Type],
+
+            // Type & Value namespaces
             Self::Variant => &[Namespace::Type, Namespace::Value],
+
+            // Value namespace
             Self::Fn | Self::Const | Self::Static | Self::Local | Self::ConstParam => {
                 &[Namespace::Value]
             }
+
+            // Lifetime namespace
             Self::LifetimeParam => &[Namespace::Lifetime],
+
+            // Macro namespace
             Self::Macro => &[Namespace::Macro],
+
+            // None
             Self::Field | Self::Use | Self::Impl => &[],
         }
     }

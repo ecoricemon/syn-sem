@@ -4,26 +4,6 @@ use crate::{
 };
 use std::ops::{Index, IndexMut};
 
-const ALL_NAMESPACES: [Namespace; 4] = [
-    Namespace::Type,
-    Namespace::Value,
-    Namespace::Macro,
-    Namespace::Lifetime,
-];
-
-/// Result of resolving a name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolveResult {
-    /// Name resolved to one definition.
-    Found(DefId),
-
-    /// Name resolved to multiple candidate definitions.
-    Ambiguous(Vec<DefId>),
-
-    /// Name was not found.
-    NotFound,
-}
-
 /// Name-resolution database.
 #[derive(Debug, Clone)]
 pub struct NameDb<'cx> {
@@ -51,6 +31,16 @@ impl<'cx> NameDb<'cx> {
     /// Returns all imports.
     pub fn imports(&self) -> &[Import<'cx>] {
         &self.imports
+    }
+
+    /// Returns the binding for `name` directly declared in `scope` and `namespace`.
+    pub fn binding(
+        &self,
+        scope: ScopeId,
+        namespace: Namespace,
+        name: Name<'cx>,
+    ) -> Option<&Binding> {
+        self[scope].bindings.get(namespace, name)
     }
 
     /// Adds a scope under `parent`.
@@ -110,52 +100,6 @@ impl<'cx> NameDb<'cx> {
         id
     }
 
-    /// Adds an import alias definition without binding it.
-    pub fn add_import_def(
-        &mut self,
-        parent_scope: ScopeId,
-        name: Option<Name<'cx>>,
-        visibility: Visibility,
-        origin: Origin,
-        target: DefId,
-    ) -> DefId {
-        let id = DefId::new(self.defs.len());
-        self.defs.push(Def {
-            id,
-            name,
-            kind: DefKind::Use,
-            parent_scope,
-            child_scope: None,
-            target: Some(target),
-            visibility,
-            origin,
-        });
-        id
-    }
-
-    /// Returns an existing matching import alias or creates one.
-    pub fn get_or_add_import_def(
-        &mut self,
-        parent_scope: ScopeId,
-        name: Option<Name<'cx>>,
-        visibility: Visibility,
-        origin: Origin,
-        target: DefId,
-    ) -> DefId {
-        if let Some(def) = self.defs.iter().find(|def| {
-            def.kind == DefKind::Use
-                && def.parent_scope == parent_scope
-                && def.name == name
-                && def.visibility == visibility
-                && def.origin == origin
-                && def.target == Some(target)
-        }) {
-            return def.id;
-        }
-
-        self.add_import_def(parent_scope, name, visibility, origin, target)
-    }
-
     /// Adds an unresolved import.
     pub fn add_import(
         &mut self,
@@ -178,34 +122,16 @@ impl<'cx> NameDb<'cx> {
         id
     }
 
-    /// Returns a mutable definition.
-    pub fn def_mut(&mut self, def: DefId) -> &mut Def<'cx> {
-        &mut self.defs[def.index()]
-    }
-
-    /// Returns a mutable import.
-    pub fn import_mut(&mut self, import: ImportId) -> &mut Import<'cx> {
-        &mut self.imports[import.index()]
-    }
-
     /// Links a definition to a child scope that contains its importable members.
     pub fn set_child_scope(&mut self, def: DefId, child_scope: ScopeId) {
-        self.def_mut(def).child_scope = Some(child_scope);
+        self.defs[def.index()].child_scope = Some(child_scope);
     }
 
-    /// Inserts a binding unless that exact definition is already present.
-    pub fn insert_unique_binding(
-        &mut self,
-        scope: ScopeId,
-        namespace: Namespace,
-        name: Name<'cx>,
-        def: DefId,
-    ) -> bool {
-        self[scope].bindings.insert_unique(namespace, name, def)
-    }
-
-    /// Follows import aliases and returns the underlying target definition.
-    pub fn resolve_target(&self, mut def: DefId) -> DefId {
+    /// Follows `DefKind::Use` alias definitions to their underlying definition.
+    ///
+    /// For example, if `use b::C` points at `pub use a::C`, and that re-export points at the
+    /// original struct `C`, this returns the struct definition.
+    pub fn follow_aliases(&self, mut def: DefId) -> DefId {
         let mut remaining = self.defs.len();
         while remaining > 0 {
             let Some(target) = self[def].target else {
@@ -251,8 +177,67 @@ impl<'cx> NameDb<'cx> {
         }
     }
 
-    /// Resolves a single-segment name lexically in one namespace.
-    pub fn resolve_lexical(
+    fn get_or_insert_import_def(
+        &mut self,
+        parent_scope: ScopeId,
+        name: Option<Name<'cx>>,
+        visibility: Visibility,
+        origin: Origin,
+        target: DefId,
+    ) -> DefId {
+        if let Some(def) = self.defs.iter().find(|def| {
+            def.kind == DefKind::Use
+                && def.parent_scope == parent_scope
+                && def.name == name
+                && def.visibility == visibility
+                && def.origin == origin
+                && def.target == Some(target)
+        }) {
+            return def.id;
+        }
+
+        let id = DefId::new(self.defs.len());
+        self.defs.push(Def {
+            id,
+            name,
+            kind: DefKind::Use,
+            parent_scope,
+            child_scope: None,
+            target: Some(target),
+            visibility,
+            origin,
+        });
+        id
+    }
+
+    fn insert_unique_binding(
+        &mut self,
+        scope: ScopeId,
+        namespace: Namespace,
+        name: Name<'cx>,
+        def: DefId,
+    ) -> bool {
+        self[scope].bindings.insert_unique(namespace, name, def)
+    }
+
+    fn to_import_alias_target(&self, bindings: &[(Namespace, DefId)]) -> Option<ImportAliasTarget> {
+        let (_, first) = *bindings
+            .first()
+            .expect("import alias target requires at least one resolved binding");
+        let target = self.follow_aliases(first);
+        let mut namespaces = Vec::with_capacity(bindings.len());
+
+        for &(namespace, def) in bindings {
+            if self.follow_aliases(def) != target {
+                return None;
+            }
+            namespaces.push(namespace);
+        }
+
+        Some(ImportAliasTarget { target, namespaces })
+    }
+
+    fn resolve_lexical(
         &self,
         mut scope: ScopeId,
         namespace: Namespace,
@@ -275,8 +260,7 @@ impl<'cx> NameDb<'cx> {
         }
     }
 
-    /// Returns whether `descendant` is equal to or nested inside `ancestor`.
-    pub fn is_descendant_scope(&self, mut descendant: ScopeId, ancestor: ScopeId) -> bool {
+    fn is_descendant_scope(&self, mut descendant: ScopeId, ancestor: ScopeId) -> bool {
         loop {
             if descendant == ancestor {
                 return true;
@@ -289,56 +273,79 @@ impl<'cx> NameDb<'cx> {
         }
     }
 
+    /// Resolves one collected `use` declaration into local bindings.
+    ///
+    /// The original [`Import`] entry remains the source-level record. Successful resolution adds
+    /// one or more [`DefKind::Use`] alias definitions and binds those alias definitions in the
+    /// scope that contains the `use`.
+    ///
+    /// For example, `use a::b::C` where `C` is a struct resolves the path to
+    /// `(Namespace::Type, DefId(C))`, creates a `DefKind::Use` alias named `C` whose target is the
+    /// original struct definition, then inserts that alias into the type namespace of the `use`
+    /// scope.
     fn resolve_import(&mut self, import: ImportId) -> ImportResolve {
-        let import_data = self[import].clone();
+        let import_data = &self[import];
         match import_data.kind {
             ImportKind::Single | ImportKind::Rename(_) => {
-                let Some(local_name) = self.import_local_name(&import_data) else {
-                    return match self.resolve_path(import_data.scope, &import_data.source_path) {
-                        PathResolve::Found(_) => ImportResolve::Resolved,
-                        PathResolve::Ambiguous => ImportResolve::Ambiguous,
-                        PathResolve::NotFound => ImportResolve::Pending,
+                let local_name = match self.import_local_name(import_data) {
+                    ImportLocalName::Name(name) => name,
+                    ImportLocalName::NoBinding => {
+                        let bindings =
+                            self.resolve_import_path(import_data.scope, &import_data.source_path);
+                        return match bindings {
+                            LookupResolve::Found(_) => ImportResolve::Resolved,
+                            LookupResolve::Ambiguous => ImportResolve::Ambiguous,
+                            LookupResolve::NotFound => ImportResolve::Pending,
+                        };
+                    }
+                    ImportLocalName::Ambiguous => return ImportResolve::Ambiguous,
+                    ImportLocalName::Pending => return ImportResolve::Pending,
+                };
+
+                let bindings =
+                    match self.resolve_import_path(import_data.scope, &import_data.source_path) {
+                        LookupResolve::Found(bindings) => bindings,
+                        LookupResolve::Ambiguous => return ImportResolve::Ambiguous,
+                        LookupResolve::NotFound => return ImportResolve::Pending,
                     };
+
+                let Some(alias_target) = self.to_import_alias_target(&bindings) else {
+                    return ImportResolve::Ambiguous;
                 };
 
-                let bindings = match self.resolve_path(import_data.scope, &import_data.source_path)
-                {
-                    PathResolve::Found(bindings) => bindings,
-                    PathResolve::Ambiguous => return ImportResolve::Ambiguous,
-                    PathResolve::NotFound => return ImportResolve::Pending,
-                };
-
-                let target = self.resolve_target(bindings[0].1);
-                let alias = self.get_or_add_import_def(
+                let import_data = import_data.clone();
+                let alias = self.get_or_insert_import_def(
                     import_data.scope,
                     Some(local_name),
                     import_data.visibility,
                     import_data.origin,
-                    target,
+                    alias_target.target,
                 );
-                for (namespace, _) in bindings {
+                for namespace in alias_target.namespaces {
                     self.insert_unique_binding(import_data.scope, namespace, local_name, alias);
                 }
                 ImportResolve::Resolved
             }
             ImportKind::Glob => {
-                let bindings = match self.resolve_path(import_data.scope, &import_data.source_path)
-                {
-                    PathResolve::Found(bindings) => bindings,
-                    PathResolve::Ambiguous => return ImportResolve::Ambiguous,
-                    PathResolve::NotFound => return ImportResolve::Pending,
-                };
+                // `use a::b::*;` imports each visible binding from the target's child scope. Each
+                // imported child gets its own local `DefKind::Use` alias in the `use` scope.
+                let bindings =
+                    match self.resolve_import_path(import_data.scope, &import_data.source_path) {
+                        LookupResolve::Found(bindings) => bindings,
+                        LookupResolve::Ambiguous => return ImportResolve::Ambiguous,
+                        LookupResolve::NotFound => return ImportResolve::Pending,
+                    };
 
                 let [(_, target)] = bindings.as_slice() else {
                     return ImportResolve::Ambiguous;
                 };
-                let target = self.resolve_target(*target);
+                let target = self.follow_aliases(*target);
                 let Some(child_scope) = self[target].child_scope else {
                     return ImportResolve::Pending;
                 };
 
                 let mut visible = Vec::new();
-                for namespace in ALL_NAMESPACES {
+                for namespace in Namespace::all() {
                     for (&name, binding) in self[child_scope].bindings.map(namespace) {
                         for def in binding.iter() {
                             if self.is_visible_from(def, import_data.scope) {
@@ -348,9 +355,10 @@ impl<'cx> NameDb<'cx> {
                     }
                 }
 
+                let import_data = import_data.clone();
                 for (namespace, name, def) in visible {
-                    let target = self.resolve_target(def);
-                    let alias = self.get_or_add_import_def(
+                    let target = self.follow_aliases(def);
+                    let alias = self.get_or_insert_import_def(
                         import_data.scope,
                         Some(name),
                         import_data.visibility,
@@ -365,34 +373,66 @@ impl<'cx> NameDb<'cx> {
         }
     }
 
-    fn import_local_name(&self, import: &Import<'cx>) -> Option<Name<'cx>> {
+    /// Returns the local binding name introduced by an import.
+    ///
+    /// For example,
+    /// - `use a::b::C` introduces `C`
+    /// - `use a::b::C as D` introduces `D`
+    /// - `use crate::a::{self}` introduces `a`
+    /// - Glob imports and underscore imports such as `use a::b::*` or `use a::b::C as _` introduce
+    ///   no single local name.
+    ///
+    /// A trailing `self` depends on resolving its parent path. If that parent path is ambiguous or
+    /// not found yet, the result preserves that state instead of treating `self` as a local name.
+    fn import_local_name(&self, import: &Import<'cx>) -> ImportLocalName<'cx> {
         let name = match import.kind {
             ImportKind::Single => {
-                let terminal = *import.source_path.last()?;
+                let Some(&terminal) = import.source_path.last() else {
+                    return ImportLocalName::Pending;
+                };
+
                 if terminal.as_ref() == "self" {
                     let parent = &import.source_path[..import.source_path.len().saturating_sub(1)];
-                    let PathResolve::Found(bindings) = self.resolve_path(import.scope, parent)
-                    else {
-                        return Some(terminal);
+
+                    let bindings = match self.resolve_import_path(import.scope, parent) {
+                        LookupResolve::Found(bindings) => bindings,
+                        LookupResolve::Ambiguous => return ImportLocalName::Ambiguous,
+                        LookupResolve::NotFound => return ImportLocalName::Pending,
                     };
-                    let [(_, def)] = bindings.as_slice() else {
-                        return Some(terminal);
+
+                    let Some(alias_target) = self.to_import_alias_target(&bindings) else {
+                        return ImportLocalName::Ambiguous;
                     };
-                    self[self.resolve_target(*def)].name?
+
+                    let Some(name) = self[alias_target.target].name else {
+                        return ImportLocalName::Pending;
+                    };
+
+                    name
                 } else {
                     terminal
                 }
             }
             ImportKind::Rename(name) => name,
-            ImportKind::Glob => return None,
+            ImportKind::Glob => return ImportLocalName::NoBinding,
         };
 
-        (name.as_ref() != "_").then_some(name)
+        if name.as_ref() == "_" {
+            ImportLocalName::NoBinding
+        } else {
+            ImportLocalName::Name(name)
+        }
     }
 
-    fn resolve_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> PathResolve {
+    /// Resolves an import path from `scope` into visible candidate definitions.
+    ///
+    /// For example, resolving `crate::a::C` starts at the root scope, finds module `a`, follows
+    /// `a`'s child scope, then resolves `C` in that child scope. If the terminal name exists in
+    /// multiple namespaces with the same target, such as an enum variant, the result contains each
+    /// namespace-target pair.
+    fn resolve_import_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> LookupResolve {
         if path.is_empty() {
-            return PathResolve::NotFound;
+            return LookupResolve::NotFound;
         }
 
         let use_scope = scope;
@@ -414,15 +454,15 @@ impl<'cx> NameDb<'cx> {
                 "self" => {
                     if is_last {
                         return current_def
-                            .map(|def| PathResolve::Found(vec![(Namespace::Type, def)]))
-                            .unwrap_or(PathResolve::NotFound);
+                            .map(|def| LookupResolve::Found(vec![(Namespace::Type, def)]))
+                            .unwrap_or(LookupResolve::NotFound);
                     }
                     index += 1;
                     continue;
                 }
                 "super" => {
                     let Some(parent) = self.parent_module_scope(current_scope) else {
-                        return PathResolve::NotFound;
+                        return LookupResolve::NotFound;
                     };
                     current_scope = parent;
                     current_def = None;
@@ -439,9 +479,8 @@ impl<'cx> NameDb<'cx> {
             };
 
             let bindings = match bindings {
-                NameResolve::Found(bindings) => bindings,
-                NameResolve::Ambiguous => return PathResolve::Ambiguous,
-                NameResolve::NotFound => return PathResolve::NotFound,
+                LookupResolve::Found(bindings) => bindings,
+                other => return other,
             };
 
             let visible = bindings
@@ -450,44 +489,45 @@ impl<'cx> NameDb<'cx> {
                 .collect::<Vec<_>>();
 
             if visible.is_empty() {
-                return PathResolve::NotFound;
+                return LookupResolve::NotFound;
             }
 
             if is_last {
-                return PathResolve::Found(visible);
+                return LookupResolve::Found(visible);
             }
 
             let [(_, def)] = visible.as_slice() else {
-                return PathResolve::Ambiguous;
+                return LookupResolve::Ambiguous;
             };
-            let target = self.resolve_target(*def);
+
+            let target = self.follow_aliases(*def);
             let Some(child_scope) = self[target].child_scope else {
-                return PathResolve::NotFound;
+                return LookupResolve::NotFound;
             };
             current_scope = child_scope;
             current_def = Some(target);
             index += 1;
         }
 
-        PathResolve::NotFound
+        LookupResolve::NotFound
     }
 
-    fn resolve_name_all(&self, scope: ScopeId, name: Name<'cx>, lexical: bool) -> NameResolve {
+    fn resolve_name_all(&self, scope: ScopeId, name: Name<'cx>, lexical: bool) -> LookupResolve {
         let mut defs = Vec::new();
-        for namespace in ALL_NAMESPACES {
+        for namespace in Namespace::all() {
             match self.resolve_name_in_namespace(scope, namespace, name, lexical) {
-                NameResolve::Found(found) => defs.extend(found),
-                NameResolve::Ambiguous => return NameResolve::Ambiguous,
-                NameResolve::NotFound => {}
+                LookupResolve::Found(found) => defs.extend(found),
+                LookupResolve::Ambiguous => return LookupResolve::Ambiguous,
+                LookupResolve::NotFound => {}
             }
         }
 
         if defs.is_empty() {
-            NameResolve::NotFound
+            LookupResolve::NotFound
         } else {
             defs.sort_by_key(|(_, def)| def.index());
             defs.dedup();
-            NameResolve::Found(defs)
+            LookupResolve::Found(defs)
         }
     }
 
@@ -497,28 +537,28 @@ impl<'cx> NameDb<'cx> {
         namespace: Namespace,
         name: Name<'cx>,
         lexical: bool,
-    ) -> NameResolve {
+    ) -> LookupResolve {
         if lexical {
             match self.resolve_lexical(scope, namespace, name) {
-                ResolveResult::Found(def) => NameResolve::Found(vec![(namespace, def)]),
-                ResolveResult::Ambiguous(_) => NameResolve::Ambiguous,
-                ResolveResult::NotFound => NameResolve::NotFound,
+                ResolveResult::Found(def) => LookupResolve::Found(vec![(namespace, def)]),
+                ResolveResult::Ambiguous(_) => LookupResolve::Ambiguous,
+                ResolveResult::NotFound => LookupResolve::NotFound,
             }
         } else {
             self[scope]
                 .bindings
                 .get(namespace, name)
                 .map(|binding| self.binding_result(namespace, binding))
-                .unwrap_or(NameResolve::NotFound)
+                .unwrap_or(LookupResolve::NotFound)
         }
     }
 
-    fn binding_result(&self, namespace: Namespace, binding: &Binding) -> NameResolve {
+    fn binding_result(&self, namespace: Namespace, binding: &Binding) -> LookupResolve {
         let defs = binding.iter().collect::<Vec<_>>();
         match defs.len() {
-            0 => NameResolve::NotFound,
-            1 => NameResolve::Found(vec![(namespace, defs[0])]),
-            _ => NameResolve::Ambiguous,
+            0 => LookupResolve::NotFound,
+            1 => LookupResolve::Found(vec![(namespace, defs[0])]),
+            _ => LookupResolve::Ambiguous,
         }
     }
 
@@ -559,19 +599,49 @@ impl<'cx> NameDb<'cx> {
     }
 }
 
+/// Result of resolving a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveResult {
+    /// Name resolved to one definition.
+    Found(DefId),
+
+    /// Name resolved to multiple candidate definitions.
+    Ambiguous(Vec<DefId>),
+
+    /// Name was not found.
+    NotFound,
+}
+
 enum ImportResolve {
     Resolved,
     Ambiguous,
     Pending,
 }
 
-enum PathResolve {
-    Found(Vec<(Namespace, DefId)>),
+enum ImportLocalName<'cx> {
+    /// Import introduces this local binding name.
+    Name(Name<'cx>),
+
+    /// Import introduces no single local binding, such as a glob or underscore import.
+    NoBinding,
+
+    /// Local name computation found an ambiguous path.
     Ambiguous,
-    NotFound,
+
+    /// Local name computation depends on an import that is not resolved yet.
+    Pending,
 }
 
-enum NameResolve {
+/// Normalized target information for creating one import alias definition.
+///
+/// For example, `use a::E::V` for an enum variant can produce one alias target for `V` with both
+/// the type and value namespaces.
+struct ImportAliasTarget {
+    target: DefId,
+    namespaces: Vec<Namespace>,
+}
+
+enum LookupResolve {
     Found(Vec<(Namespace, DefId)>),
     Ambiguous,
     NotFound,
@@ -580,8 +650,10 @@ enum NameResolve {
 impl Default for NameDb<'_> {
     /// Creates a name database with a crate-root scope.
     fn default() -> Self {
+        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::CrateRoot, None);
+
         Self {
-            scopes: vec![Scope::new(ScopeId::new(0), ScopeKind::CrateRoot, None)],
+            scopes: vec![root_scope],
             defs: Vec::new(),
             imports: Vec::new(),
         }
@@ -791,7 +863,7 @@ mod tests {
         let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
             panic!("expected {name:?} to resolve in {namespace:?}");
         };
-        db[db.resolve_target(def)].kind
+        db[db.follow_aliases(def)].kind
     }
 
     #[test]
@@ -863,6 +935,45 @@ mod tests {
         );
         assert_eq!(
             db.resolve_lexical(b_scope, Namespace::Type, hidden),
+            ResolveResult::NotFound
+        );
+    }
+
+    #[test]
+    fn self_import_preserves_parent_path_failure() {
+        let ccx = CommonCx::new();
+        let mut db = NameDb::default();
+        let root = db.root_scope();
+        let a = ccx.intern("a");
+        let b = ccx.intern("b");
+        let missing = ccx.intern("missing");
+        let self_name = ccx.intern("self");
+
+        module(&mut db, root, a, Visibility::Public);
+        module(&mut db, root, a, Visibility::Public);
+        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+
+        db.add_import(
+            b_scope,
+            vec![ccx.intern("super"), a, self_name],
+            ImportKind::Single,
+            Visibility::Private,
+            Origin::Synthetic,
+        );
+        db.add_import(
+            b_scope,
+            vec![ccx.intern("super"), missing, self_name],
+            ImportKind::Single,
+            Visibility::Private,
+            Origin::Synthetic,
+        );
+
+        db.resolve_imports();
+
+        assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
+        assert_eq!(db.imports()[1].status, ImportStatus::NotFound);
+        assert_eq!(
+            db.resolve_lexical(b_scope, Namespace::Type, self_name),
             ResolveResult::NotFound
         );
     }
@@ -996,6 +1107,52 @@ mod tests {
         };
         assert_eq!(defs.len(), 2);
         assert_eq!(db.imports()[2].status, ImportStatus::NotFound);
+    }
+
+    #[test]
+    fn single_import_is_ambiguous_when_namespaces_resolve_to_distinct_targets() {
+        let ccx = CommonCx::new();
+        let mut db = NameDb::default();
+        let root = db.root_scope();
+        let a = ccx.intern("a");
+        let b = ccx.intern("b");
+        let x = ccx.intern("X");
+
+        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+        db.add_def(
+            a_scope,
+            DefKind::Struct,
+            Some(x),
+            Visibility::Public,
+            Origin::Synthetic,
+        );
+        db.add_def(
+            a_scope,
+            DefKind::Const,
+            Some(x),
+            Visibility::Public,
+            Origin::Synthetic,
+        );
+        db.add_import(
+            b_scope,
+            vec![ccx.intern("super"), a, x],
+            ImportKind::Single,
+            Visibility::Private,
+            Origin::Synthetic,
+        );
+
+        db.resolve_imports();
+
+        assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
+        assert_eq!(
+            db.resolve_lexical(b_scope, Namespace::Type, x),
+            ResolveResult::NotFound
+        );
+        assert_eq!(
+            db.resolve_lexical(b_scope, Namespace::Value, x),
+            ResolveResult::NotFound
+        );
     }
 
     #[test]

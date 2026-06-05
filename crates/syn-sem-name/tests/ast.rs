@@ -175,11 +175,34 @@ fn expect_def(
     name: Name<'_>,
     kind: DefKind,
 ) -> DefId {
-    let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
     assert_eq!(db[def].kind, kind);
     def
+}
+
+fn resolve_lexical(
+    db: &NameDb<'_>,
+    mut scope: ScopeId,
+    namespace: Namespace,
+    name: Name<'_>,
+) -> ResolveResult {
+    loop {
+        if let Some(binding) = db.binding(scope, namespace, name) {
+            let mut defs = binding.iter();
+            return match defs.len() {
+                0 => ResolveResult::NotFound,
+                1 => ResolveResult::Found(defs.next().unwrap()),
+                _ => ResolveResult::Ambiguous(defs.collect()),
+            };
+        }
+
+        let Some(parent) = db[scope].parent else {
+            return ResolveResult::NotFound;
+        };
+        scope = parent;
+    }
 }
 
 #[test]
