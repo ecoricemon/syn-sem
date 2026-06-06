@@ -220,23 +220,42 @@ impl<'cx> NameDb<'cx> {
         self[scope].bindings.insert_unique(namespace, name, def)
     }
 
-    fn to_import_alias_target(&self, bindings: &[(Namespace, DefId)]) -> Option<ImportAliasTarget> {
-        let (_, first) = *bindings
+    /// Validates path lookup candidates for one local import binding.
+    ///
+    /// Every candidate must resolve through aliases to the same final target. The returned value
+    /// keeps that target and the namespaces where the import should be bound. For example, enum
+    /// variant `V` from `use a::E::V;` can validate as one target with both type and value
+    /// namespaces.
+    ///
+    /// Empty candidates or candidates with different final targets are caller invariant
+    /// violations and panic.
+    fn validate_import_binding_candidates(
+        &self,
+        candidates: &[(Namespace, DefId)],
+    ) -> ValidatedImportBinding {
+        let (_, first) = *candidates
             .first()
-            .expect("import alias target requires at least one resolved binding");
+            .expect("import binding validation requires at least one resolved binding");
         let target = self.follow_aliases(first);
-        let mut namespaces = Vec::with_capacity(bindings.len());
+        let mut namespaces = Vec::with_capacity(candidates.len());
 
-        for &(namespace, def) in bindings {
-            if self.follow_aliases(def) != target {
-                return None;
-            }
+        for &(namespace, def) in candidates {
+            assert_eq!(
+                self.follow_aliases(def),
+                target,
+                "import binding candidates must resolve to one final target"
+            );
             namespaces.push(namespace);
         }
 
-        Some(ImportAliasTarget { target, namespaces })
+        ValidatedImportBinding { target, namespaces }
     }
 
+    /// Resolves one name by walking lexical parent scopes.
+    ///
+    /// This is a low-level lookup primitive: it checks only the requested namespace and stops at
+    /// the first scope with a matching binding. It does not apply visibility, statement order, or
+    /// path-specific rules such as `crate`, `self`, or `super`.
     fn resolve_lexical(
         &self,
         mut scope: ScopeId,
@@ -290,57 +309,56 @@ impl<'cx> NameDb<'cx> {
                 let local_name = match self.import_local_name(import_data) {
                     ImportLocalName::Name(name) => name,
                     ImportLocalName::NoBinding => {
-                        let bindings =
-                            self.resolve_import_path(import_data.scope, &import_data.source_path);
-                        return match bindings {
-                            LookupResolve::Found(_) => ImportResolve::Resolved,
-                            LookupResolve::Ambiguous => ImportResolve::Ambiguous,
-                            LookupResolve::NotFound => ImportResolve::Pending,
+                        return match self
+                            .resolve_import_path(import_data.scope, &import_data.source_path)
+                        {
+                            CandidateResolution::Found(_) => ImportResolve::Resolved,
+                            CandidateResolution::Ambiguous => ImportResolve::Ambiguous,
+                            CandidateResolution::NotFound => ImportResolve::Pending,
                         };
                     }
                     ImportLocalName::Ambiguous => return ImportResolve::Ambiguous,
                     ImportLocalName::Pending => return ImportResolve::Pending,
                 };
 
-                let bindings =
+                let candidates =
                     match self.resolve_import_path(import_data.scope, &import_data.source_path) {
-                        LookupResolve::Found(bindings) => bindings,
-                        LookupResolve::Ambiguous => return ImportResolve::Ambiguous,
-                        LookupResolve::NotFound => return ImportResolve::Pending,
+                        CandidateResolution::Found(candidates) => candidates,
+                        CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
+                        CandidateResolution::NotFound => return ImportResolve::Pending,
                     };
 
-                let Some(alias_target) = self.to_import_alias_target(&bindings) else {
-                    return ImportResolve::Ambiguous;
-                };
+                let import_binding = self.validate_import_binding_candidates(&candidates);
 
+                // Creates or reuses the local `DefKind::Use` definition that points at the final
+                // target, such as the original `C` definition for `use a::b::C`.
                 let import_data = import_data.clone();
                 let alias = self.get_or_insert_import_def(
                     import_data.scope,
                     Some(local_name),
                     import_data.visibility,
                     import_data.origin,
-                    alias_target.target,
+                    import_binding.target,
                 );
-                for namespace in alias_target.namespaces {
+                for namespace in import_binding.namespaces {
                     self.insert_unique_binding(import_data.scope, namespace, local_name, alias);
                 }
                 ImportResolve::Resolved
             }
             ImportKind::Glob => {
-                // `use a::b::*;` imports each visible binding from the target's child scope. Each
-                // imported child gets its own local `DefKind::Use` alias in the `use` scope.
-                let bindings =
+                let candidates =
                     match self.resolve_import_path(import_data.scope, &import_data.source_path) {
-                        LookupResolve::Found(bindings) => bindings,
-                        LookupResolve::Ambiguous => return ImportResolve::Ambiguous,
-                        LookupResolve::NotFound => return ImportResolve::Pending,
+                        CandidateResolution::Found(candidates) => candidates,
+                        CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
+                        CandidateResolution::NotFound => return ImportResolve::Pending,
                     };
 
-                let [(_, target)] = bindings.as_slice() else {
+                let [(_, glob_candidate)] = candidates.as_slice() else {
                     return ImportResolve::Ambiguous;
                 };
-                let target = self.follow_aliases(*target);
-                let Some(child_scope) = self[target].child_scope else {
+
+                let glob_target = self.follow_aliases(*glob_candidate);
+                let Some(child_scope) = self[glob_target].child_scope else {
                     return ImportResolve::Pending;
                 };
 
@@ -394,17 +412,15 @@ impl<'cx> NameDb<'cx> {
                 if terminal.as_ref() == "self" {
                     let parent = &import.source_path[..import.source_path.len().saturating_sub(1)];
 
-                    let bindings = match self.resolve_import_path(import.scope, parent) {
-                        LookupResolve::Found(bindings) => bindings,
-                        LookupResolve::Ambiguous => return ImportLocalName::Ambiguous,
-                        LookupResolve::NotFound => return ImportLocalName::Pending,
+                    let candidates = match self.resolve_import_path(import.scope, parent) {
+                        CandidateResolution::Found(candidates) => candidates,
+                        CandidateResolution::Ambiguous => return ImportLocalName::Ambiguous,
+                        CandidateResolution::NotFound => return ImportLocalName::Pending,
                     };
 
-                    let Some(alias_target) = self.to_import_alias_target(&bindings) else {
-                        return ImportLocalName::Ambiguous;
-                    };
+                    let import_binding = self.validate_import_binding_candidates(&candidates);
 
-                    let Some(name) = self[alias_target.target].name else {
+                    let Some(name) = self[import_binding.target].name else {
                         return ImportLocalName::Pending;
                     };
 
@@ -430,9 +446,9 @@ impl<'cx> NameDb<'cx> {
     /// `a`'s child scope, then resolves `C` in that child scope. If the terminal name exists in
     /// multiple namespaces with the same target, such as an enum variant, the result contains each
     /// namespace-target pair.
-    fn resolve_import_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> LookupResolve {
+    fn resolve_import_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> CandidateResolution {
         if path.is_empty() {
-            return LookupResolve::NotFound;
+            return CandidateResolution::NotFound;
         }
 
         let use_scope = scope;
@@ -454,15 +470,15 @@ impl<'cx> NameDb<'cx> {
                 "self" => {
                     if is_last {
                         return current_def
-                            .map(|def| LookupResolve::Found(vec![(Namespace::Type, def)]))
-                            .unwrap_or(LookupResolve::NotFound);
+                            .map(|def| CandidateResolution::Found(vec![(Namespace::Type, def)]))
+                            .unwrap_or(CandidateResolution::NotFound);
                     }
                     index += 1;
                     continue;
                 }
                 "super" => {
                     let Some(parent) = self.parent_module_scope(current_scope) else {
-                        return LookupResolve::NotFound;
+                        return CandidateResolution::NotFound;
                     };
                     current_scope = parent;
                     current_def = None;
@@ -472,93 +488,107 @@ impl<'cx> NameDb<'cx> {
                 _ => {}
             }
 
-            let bindings = if is_last {
-                self.resolve_name_all(current_scope, segment, index == 0)
+            let candidates = if is_last {
+                self.resolve_name_in_all_namespaces(current_scope, segment, index == 0)
             } else {
                 self.resolve_name_in_namespace(current_scope, Namespace::Type, segment, index == 0)
             };
 
-            let bindings = match bindings {
-                LookupResolve::Found(bindings) => bindings,
+            let candidates = match candidates {
+                CandidateResolution::Found(candidates) => candidates,
                 other => return other,
             };
 
-            let visible = bindings
+            let visible = candidates
                 .into_iter()
                 .filter(|(_, def)| self.is_visible_from(*def, use_scope))
                 .collect::<Vec<_>>();
 
             if visible.is_empty() {
-                return LookupResolve::NotFound;
+                return CandidateResolution::NotFound;
             }
 
             if is_last {
-                return LookupResolve::Found(visible);
+                return CandidateResolution::Found(visible);
             }
 
             let [(_, def)] = visible.as_slice() else {
-                return LookupResolve::Ambiguous;
+                return CandidateResolution::Ambiguous;
             };
 
             let target = self.follow_aliases(*def);
             let Some(child_scope) = self[target].child_scope else {
-                return LookupResolve::NotFound;
+                return CandidateResolution::NotFound;
             };
             current_scope = child_scope;
             current_def = Some(target);
             index += 1;
         }
 
-        LookupResolve::NotFound
+        CandidateResolution::NotFound
     }
 
-    fn resolve_name_all(&self, scope: ScopeId, name: Name<'cx>, lexical: bool) -> LookupResolve {
+    /// Resolves one name across all namespaces.
+    ///
+    /// This is used for terminal import path segments, where a name can legally resolve in more
+    /// than one namespace. For example, an enum variant can produce both type and value namespace
+    /// candidates that point at the same definition.
+    fn resolve_name_in_all_namespaces(
+        &self,
+        scope: ScopeId,
+        name: Name<'cx>,
+        is_lexical: bool,
+    ) -> CandidateResolution {
         let mut defs = Vec::new();
         for namespace in Namespace::all() {
-            match self.resolve_name_in_namespace(scope, namespace, name, lexical) {
-                LookupResolve::Found(found) => defs.extend(found),
-                LookupResolve::Ambiguous => return LookupResolve::Ambiguous,
-                LookupResolve::NotFound => {}
+            match self.resolve_name_in_namespace(scope, namespace, name, is_lexical) {
+                CandidateResolution::Found(found) => defs.extend(found),
+                CandidateResolution::Ambiguous => return CandidateResolution::Ambiguous,
+                CandidateResolution::NotFound => {}
             }
         }
 
         if defs.is_empty() {
-            LookupResolve::NotFound
+            CandidateResolution::NotFound
         } else {
             defs.sort_by_key(|(_, def)| def.index());
             defs.dedup();
-            LookupResolve::Found(defs)
+            CandidateResolution::Found(defs)
         }
     }
 
+    /// Resolves one name in one namespace for an import path segment.
+    ///
+    /// When `is_lexical` is true, lookup walks parent scopes with [`Self::resolve_lexical`]. When
+    /// false, lookup checks only the current scope's binding map. Import paths use lexical lookup
+    /// for their first ordinary segment and current-scope lookup after descending into a child
+    /// scope.
     fn resolve_name_in_namespace(
         &self,
         scope: ScopeId,
         namespace: Namespace,
         name: Name<'cx>,
-        lexical: bool,
-    ) -> LookupResolve {
-        if lexical {
+        is_lexical: bool,
+    ) -> CandidateResolution {
+        if is_lexical {
             match self.resolve_lexical(scope, namespace, name) {
-                ResolveResult::Found(def) => LookupResolve::Found(vec![(namespace, def)]),
-                ResolveResult::Ambiguous(_) => LookupResolve::Ambiguous,
-                ResolveResult::NotFound => LookupResolve::NotFound,
+                ResolveResult::Found(def) => CandidateResolution::Found(vec![(namespace, def)]),
+                ResolveResult::Ambiguous(_) => CandidateResolution::Ambiguous,
+                ResolveResult::NotFound => CandidateResolution::NotFound,
             }
         } else {
             self[scope]
                 .bindings
                 .get(namespace, name)
-                .map(|binding| self.binding_result(namespace, binding))
-                .unwrap_or(LookupResolve::NotFound)
-        }
-    }
-
-    fn binding_result(&self, namespace: Namespace, binding: &Binding) -> LookupResolve {
-        let defs = binding.iter().collect::<Vec<_>>();
-        match defs.len() {
-            0 => LookupResolve::NotFound,
-            1 => LookupResolve::Found(vec![(namespace, defs[0])]),
-            _ => LookupResolve::Ambiguous,
+                .map(|binding| {
+                    let mut defs = binding.iter();
+                    match defs.len() {
+                        0 => CandidateResolution::NotFound,
+                        1 => CandidateResolution::Found(vec![(namespace, defs.next().unwrap())]),
+                        _ => CandidateResolution::Ambiguous,
+                    }
+                })
+                .unwrap_or(CandidateResolution::NotFound)
         }
     }
 
@@ -632,18 +662,30 @@ enum ImportLocalName<'cx> {
     Pending,
 }
 
-/// Normalized target information for creating one import alias definition.
+/// Validated information for binding one resolved import locally.
 ///
-/// For example, `use a::E::V` for an enum variant can produce one alias target for `V` with both
-/// the type and value namespaces.
-struct ImportAliasTarget {
+/// `target` is the final non-`Use` definition after following aliases, such as a module, struct,
+/// enum, function, or variant. `namespaces` lists where the import should be bound locally.
+///
+/// For example, `use a::E::V` for an enum variant can validate to target `V` with both the type
+/// and value namespaces.
+struct ValidatedImportBinding {
     target: DefId,
     namespaces: Vec<Namespace>,
 }
 
-enum LookupResolve {
+/// Result of resolving namespace-tagged definition candidates.
+///
+/// For example, resolving `V` in `use a::E::V` can find the same enum variant in both the type
+/// and value namespaces, producing `Found([(Type, V), (Value, V)])`.
+enum CandidateResolution {
+    /// Lookup found one or more namespace-tagged candidates.
     Found(Vec<(Namespace, DefId)>),
+
+    /// Lookup found multiple candidates where a single candidate was required.
     Ambiguous,
+
+    /// Lookup found no candidates.
     NotFound,
 }
 
@@ -695,145 +737,196 @@ mod tests {
     use super::*;
     use syn_sem_common::CommonCx;
 
-    #[test]
-    fn lexical_resolution_prefers_inner_scope() {
-        let ccx = CommonCx::new();
-        let x = ccx.intern("x");
+    mod lexical_resolution {
+        use super::*;
 
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
+        // Covers lexical lookup from this code shape:
+        //
+        // let x = outer;
+        //
+        // fn f() {
+        //     let x = inner;
+        //     x
+        // }
+        //
+        // Lookup from the function body finds the inner `x`; lookup from root finds the outer `x`.
+        #[test]
+        fn lexical_resolution_prefers_inner_scope() {
+            let ccx = CommonCx::new();
+            let x = ccx.intern("x");
 
-        let outer = db.add_def(
-            root,
-            DefKind::Local,
-            Some(x),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        let inner = db.add_def(
-            body,
-            DefKind::Local,
-            Some(x),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
 
-        assert_eq!(
-            db.resolve_lexical(body, Namespace::Value, x),
-            ResolveResult::Found(inner)
-        );
-        assert_eq!(
-            db.resolve_lexical(root, Namespace::Value, x),
-            ResolveResult::Found(outer)
-        );
+            let outer = db.add_def(
+                root,
+                DefKind::Local,
+                Some(x),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            let inner = db.add_def(
+                body,
+                DefKind::Local,
+                Some(x),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+
+            assert_eq!(
+                db.resolve_lexical(body, Namespace::Value, x),
+                ResolveResult::Found(inner)
+            );
+            assert_eq!(
+                db.resolve_lexical(root, Namespace::Value, x),
+                ResolveResult::Found(outer)
+            );
+        }
+
+        // Covers lexical lookup from this code shape:
+        //
+        // fn f<T>() {
+        //     let _: T;
+        // }
+        //
+        // The function body can see names declared in the generic-parameter scope.
+        #[test]
+        fn generic_scope_is_visible_from_function_body() {
+            let ccx = CommonCx::new();
+            let t = ccx.intern("T");
+
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
+            let body = db.add_scope(ScopeKind::FunctionBody, Some(generic_scope));
+
+            let type_param = db.add_def(
+                generic_scope,
+                DefKind::TypeParam,
+                Some(t),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+
+            assert_eq!(
+                db.resolve_lexical(body, Namespace::Type, t),
+                ResolveResult::Found(type_param)
+            );
+        }
+
+        // Covers lexical lookup from this code shape:
+        //
+        // fn f() {
+        //     {
+        //         struct Local;
+        //         let _: Local;
+        //     }
+        // }
+        //
+        // The block-local item is visible from the same block in the type namespace.
+        #[test]
+        fn local_item_can_be_resolved_in_type_namespace() {
+            let ccx = CommonCx::new();
+            let local = ccx.intern("Local");
+
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
+            let block = db.add_scope(ScopeKind::Block, Some(body));
+
+            let local_struct = db.add_def(
+                block,
+                DefKind::Struct,
+                Some(local),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+
+            assert_eq!(
+                db.resolve_lexical(block, Namespace::Type, local),
+                ResolveResult::Found(local_struct)
+            );
+        }
     }
 
-    #[test]
-    fn namespaces_are_independent() {
-        let ccx = CommonCx::new();
-        let t = ccx.intern("T");
+    mod namespaces {
+        use super::*;
 
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let type_param = db.add_def(
-            root,
-            DefKind::TypeParam,
-            Some(t),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        let local = db.add_def(
-            root,
-            DefKind::Local,
-            Some(t),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+        // Covers namespace lookup from this test DB state:
+        //
+        // type namespace:
+        //     T -> type parameter
+        //
+        // value namespace:
+        //     T -> local binding
+        //
+        // The same spelling can resolve to different definitions in different namespaces.
+        #[test]
+        fn namespaces_are_independent() {
+            let ccx = CommonCx::new();
+            let t = ccx.intern("T");
 
-        assert_eq!(
-            db.resolve_lexical(root, Namespace::Type, t),
-            ResolveResult::Found(type_param)
-        );
-        assert_eq!(
-            db.resolve_lexical(root, Namespace::Value, t),
-            ResolveResult::Found(local)
-        );
-    }
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let type_param = db.add_def(
+                root,
+                DefKind::TypeParam,
+                Some(t),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            let local = db.add_def(
+                root,
+                DefKind::Local,
+                Some(t),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-    #[test]
-    fn generic_scope_is_visible_from_function_body() {
-        let ccx = CommonCx::new();
-        let t = ccx.intern("T");
+            assert_eq!(
+                db.resolve_lexical(root, Namespace::Type, t),
+                ResolveResult::Found(type_param)
+            );
+            assert_eq!(
+                db.resolve_lexical(root, Namespace::Value, t),
+                ResolveResult::Found(local)
+            );
+        }
 
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
-        let body = db.add_scope(ScopeKind::FunctionBody, Some(generic_scope));
+        // Covers namespace lookup from this code shape:
+        //
+        // fn f<const N: usize>() {
+        //     let _ = N;
+        // }
+        //
+        // The const parameter `N` lives in the value namespace, not the type namespace.
+        #[test]
+        fn const_generic_lives_in_value_namespace() {
+            let ccx = CommonCx::new();
+            let n = ccx.intern("N");
 
-        let type_param = db.add_def(
-            generic_scope,
-            DefKind::TypeParam,
-            Some(t),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
 
-        assert_eq!(
-            db.resolve_lexical(body, Namespace::Type, t),
-            ResolveResult::Found(type_param)
-        );
-    }
+            let const_param = db.add_def(
+                generic_scope,
+                DefKind::ConstParam,
+                Some(n),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-    #[test]
-    fn local_item_can_be_resolved_in_type_namespace() {
-        let ccx = CommonCx::new();
-        let local = ccx.intern("Local");
-
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
-        let block = db.add_scope(ScopeKind::Block, Some(body));
-
-        let local_struct = db.add_def(
-            block,
-            DefKind::Struct,
-            Some(local),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-
-        assert_eq!(
-            db.resolve_lexical(block, Namespace::Type, local),
-            ResolveResult::Found(local_struct)
-        );
-    }
-
-    #[test]
-    fn const_generic_lives_in_value_namespace() {
-        let ccx = CommonCx::new();
-        let n = ccx.intern("N");
-
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
-
-        let const_param = db.add_def(
-            generic_scope,
-            DefKind::ConstParam,
-            Some(n),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-
-        assert_eq!(
-            db.resolve_lexical(generic_scope, Namespace::Value, n),
-            ResolveResult::Found(const_param)
-        );
-        assert_eq!(
-            db.resolve_lexical(generic_scope, Namespace::Type, n),
-            ResolveResult::NotFound
-        );
+            assert_eq!(
+                db.resolve_lexical(generic_scope, Namespace::Value, n),
+                ResolveResult::Found(const_param)
+            );
+            assert_eq!(
+                db.resolve_lexical(generic_scope, Namespace::Type, n),
+                ResolveResult::NotFound
+            );
+        }
     }
 
     fn module<'cx>(
@@ -866,340 +959,425 @@ mod tests {
         db[db.follow_aliases(def)].kind
     }
 
-    #[test]
-    fn resolves_single_rename_self_and_underscore_imports() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let s = ccx.intern("S");
-        let t = ccx.intern("T");
-        let hidden = ccx.intern("_");
+    mod import_resolution {
+        use super::*;
 
-        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-        db.add_def(
-            a_scope,
-            DefKind::Struct,
-            Some(s),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, s],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, s],
-            ImportKind::Rename(t),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, ccx.intern("self")],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, s],
-            ImportKind::Rename(hidden),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+        // Covers imports from this module shape:
+        //
+        // mod a {
+        //     pub struct S;
+        // }
+        //
+        // mod b {
+        //     use super::a::S;
+        //     use super::a::S as T;
+        //     use super::a::{self};
+        //     use super::a::S as _;
+        // }
+        //
+        // The first three introduce local bindings to the resolved target; `_` does not.
+        #[test]
+        fn resolves_single_rename_self_and_underscore_imports() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let s = ccx.intern("S");
+            let t = ccx.intern("T");
+            let hidden = ccx.intern("_");
 
-        db.resolve_imports();
+            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(s),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, s],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, s],
+                ImportKind::Rename(t),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, ccx.intern("self")],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, s],
+                ImportKind::Rename(hidden),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        assert!(db
-            .imports()
-            .iter()
-            .all(|import| import.status == ImportStatus::Resolved));
-        assert_eq!(
-            target_kind(&db, b_scope, Namespace::Type, s),
-            DefKind::Struct
-        );
-        assert_eq!(
-            target_kind(&db, b_scope, Namespace::Type, t),
-            DefKind::Struct
-        );
-        assert_eq!(
-            target_kind(&db, b_scope, Namespace::Type, a),
-            DefKind::Module
-        );
-        assert_eq!(
-            db.resolve_lexical(b_scope, Namespace::Type, hidden),
-            ResolveResult::NotFound
-        );
-    }
+            db.resolve_imports();
 
-    #[test]
-    fn self_import_preserves_parent_path_failure() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let missing = ccx.intern("missing");
-        let self_name = ccx.intern("self");
+            assert!(db
+                .imports()
+                .iter()
+                .all(|import| import.status == ImportStatus::Resolved));
+            assert_eq!(
+                target_kind(&db, b_scope, Namespace::Type, s),
+                DefKind::Struct
+            );
+            assert_eq!(
+                target_kind(&db, b_scope, Namespace::Type, t),
+                DefKind::Struct
+            );
+            assert_eq!(
+                target_kind(&db, b_scope, Namespace::Type, a),
+                DefKind::Module
+            );
+            assert_eq!(
+                db.resolve_lexical(b_scope, Namespace::Type, hidden),
+                ResolveResult::NotFound
+            );
+        }
 
-        module(&mut db, root, a, Visibility::Public);
-        module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+        // Covers imports from this invalid test DB state:
+        //
+        // mod a {}
+        // mod a {} // invalid test DB state: `a` is ambiguous.
+        //
+        // mod b {
+        //     use super::a::{self};
+        //     use super::missing::{self};
+        // }
+        //
+        // The first import preserves the ambiguous parent-path failure; the second is not found.
+        #[test]
+        fn self_import_preserves_parent_path_failure() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let missing = ccx.intern("missing");
+            let self_name = ccx.intern("self");
 
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, self_name],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), missing, self_name],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+            module(&mut db, root, a, Visibility::Public);
+            module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
 
-        db.resolve_imports();
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, self_name],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), missing, self_name],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
-        assert_eq!(db.imports()[1].status, ImportStatus::NotFound);
-        assert_eq!(
-            db.resolve_lexical(b_scope, Namespace::Type, self_name),
-            ResolveResult::NotFound
-        );
-    }
+            db.resolve_imports();
 
-    #[test]
-    fn resolves_chained_reexports_and_globs_with_visibility() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let c = ccx.intern("c");
-        let d = ccx.intern("d");
-        let public = ccx.intern("Public");
-        let private = ccx.intern("Private");
+            assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
+            assert_eq!(db.imports()[1].status, ImportStatus::NotFound);
+            assert_eq!(
+                db.resolve_lexical(b_scope, Namespace::Type, self_name),
+                ResolveResult::NotFound
+            );
+        }
 
-        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-        let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
-        let (_, d_scope) = module(&mut db, root, d, Visibility::Public);
-        db.add_def(
-            a_scope,
-            DefKind::Struct,
-            Some(public),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_def(
-            a_scope,
-            DefKind::Struct,
-            Some(private),
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, public],
-            ImportKind::Single,
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            c_scope,
-            vec![ccx.intern("super"), b, public],
-            ImportKind::Single,
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            d_scope,
-            vec![ccx.intern("super"), a],
-            ImportKind::Glob,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+        // Covers imports from this module shape:
+        //
+        // mod a {
+        //     pub struct Public;
+        //     struct Private;
+        // }
+        //
+        // mod b {
+        //     pub use super::a::Public;
+        // }
+        //
+        // mod c {
+        //     use super::b::Public;
+        // }
+        //
+        // mod d {
+        //     use super::a::*;
+        // }
+        //
+        // Chained re-exports resolve to the original target, and globs skip private children.
+        #[test]
+        fn resolves_chained_reexports_and_globs_with_visibility() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let c = ccx.intern("c");
+            let d = ccx.intern("d");
+            let public = ccx.intern("Public");
+            let private = ccx.intern("Private");
 
-        db.resolve_imports();
+            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
+            let (_, d_scope) = module(&mut db, root, d, Visibility::Public);
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(public),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(private),
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, public],
+                ImportKind::Single,
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                c_scope,
+                vec![ccx.intern("super"), b, public],
+                ImportKind::Single,
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                d_scope,
+                vec![ccx.intern("super"), a],
+                ImportKind::Glob,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        assert!(db
-            .imports()
-            .iter()
-            .all(|import| import.status == ImportStatus::Resolved));
-        assert_eq!(
-            target_kind(&db, c_scope, Namespace::Type, public),
-            DefKind::Struct
-        );
-        assert_eq!(
-            target_kind(&db, d_scope, Namespace::Type, public),
-            DefKind::Struct
-        );
-        assert_eq!(
-            db.resolve_lexical(d_scope, Namespace::Type, private),
-            ResolveResult::NotFound
-        );
-    }
+            db.resolve_imports();
 
-    #[test]
-    fn import_resolution_reports_ambiguity_and_not_found() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let c = ccx.intern("c");
-        let x = ccx.intern("X");
-        let missing = ccx.intern("Missing");
+            assert!(db
+                .imports()
+                .iter()
+                .all(|import| import.status == ImportStatus::Resolved));
+            assert_eq!(
+                target_kind(&db, c_scope, Namespace::Type, public),
+                DefKind::Struct
+            );
+            assert_eq!(
+                target_kind(&db, d_scope, Namespace::Type, public),
+                DefKind::Struct
+            );
+            assert_eq!(
+                db.resolve_lexical(d_scope, Namespace::Type, private),
+                ResolveResult::NotFound
+            );
+        }
 
-        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-        let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
-        db.add_def(
-            a_scope,
-            DefKind::Struct,
-            Some(x),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_def(
-            b_scope,
-            DefKind::Struct,
-            Some(x),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            c_scope,
-            vec![ccx.intern("super"), a],
-            ImportKind::Glob,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            c_scope,
-            vec![ccx.intern("super"), b],
-            ImportKind::Glob,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            c_scope,
-            vec![ccx.intern("super"), a, missing],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+        // Covers imports from this module shape:
+        //
+        // mod a {
+        //     pub struct X;
+        // }
+        //
+        // mod b {
+        //     pub struct X;
+        // }
+        //
+        // mod c {
+        //     use super::a::*;
+        //     use super::b::*;
+        //     use super::a::Missing;
+        // }
+        //
+        // The two globs make `X` ambiguous in `c`; `Missing` reports not found.
+        #[test]
+        fn import_resolution_reports_ambiguity_and_not_found() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let c = ccx.intern("c");
+            let x = ccx.intern("X");
+            let missing = ccx.intern("Missing");
 
-        db.resolve_imports();
+            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(x),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_def(
+                b_scope,
+                DefKind::Struct,
+                Some(x),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                c_scope,
+                vec![ccx.intern("super"), a],
+                ImportKind::Glob,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                c_scope,
+                vec![ccx.intern("super"), b],
+                ImportKind::Glob,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                c_scope,
+                vec![ccx.intern("super"), a, missing],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        let ResolveResult::Ambiguous(defs) = db.resolve_lexical(c_scope, Namespace::Type, x) else {
-            panic!("expected imported globs to make {x:?} ambiguous");
-        };
-        assert_eq!(defs.len(), 2);
-        assert_eq!(db.imports()[2].status, ImportStatus::NotFound);
-    }
+            db.resolve_imports();
 
-    #[test]
-    fn single_import_is_ambiguous_when_namespaces_resolve_to_distinct_targets() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let x = ccx.intern("X");
+            let ResolveResult::Ambiguous(defs) = db.resolve_lexical(c_scope, Namespace::Type, x)
+            else {
+                panic!("expected imported globs to make {x:?} ambiguous");
+            };
+            assert_eq!(defs.len(), 2);
+            assert_eq!(db.imports()[2].status, ImportStatus::NotFound);
+        }
 
-        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-        db.add_def(
-            a_scope,
-            DefKind::Struct,
-            Some(x),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_def(
-            a_scope,
-            DefKind::Const,
-            Some(x),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, x],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+        // Covers imports from this module shape:
+        //
+        // mod a {
+        //     pub struct X;
+        //     pub const X: ();
+        // }
+        //
+        // mod b {
+        //     use super::a::X;
+        // }
+        //
+        // This is an invalid DB state for a single import binding: the terminal candidates resolve
+        // to different final targets across namespaces, so validation must panic.
+        #[test]
+        #[should_panic(expected = "import binding candidates must resolve to one final target")]
+        fn single_import_panics_when_namespace_candidates_resolve_to_distinct_targets() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let x = ccx.intern("X");
 
-        db.resolve_imports();
+            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(x),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_def(
+                a_scope,
+                DefKind::Const,
+                Some(x),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, x],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
-        assert_eq!(
-            db.resolve_lexical(b_scope, Namespace::Type, x),
-            ResolveResult::NotFound
-        );
-        assert_eq!(
-            db.resolve_lexical(b_scope, Namespace::Value, x),
-            ResolveResult::NotFound
-        );
-    }
+            db.resolve_imports();
+        }
 
-    #[test]
-    fn imported_enum_variant_keeps_type_and_value_namespaces() {
-        let ccx = CommonCx::new();
-        let mut db = NameDb::default();
-        let root = db.root_scope();
-        let a = ccx.intern("a");
-        let b = ccx.intern("b");
-        let e = ccx.intern("E");
-        let v = ccx.intern("V");
+        // Covers imports from this module shape:
+        //
+        // mod a {
+        //     pub enum E {
+        //         V,
+        //     }
+        // }
+        //
+        // mod b {
+        //     use super::a::E::V;
+        // }
+        //
+        // The variant `V` is imported into both type and value namespaces while still pointing at
+        // one final variant definition.
+        #[test]
+        fn imported_enum_variant_keeps_type_and_value_namespaces() {
+            let ccx = CommonCx::new();
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let a = ccx.intern("a");
+            let b = ccx.intern("b");
+            let e = ccx.intern("E");
+            let v = ccx.intern("V");
 
-        let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-        let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-        let enum_def = db.add_def(
-            a_scope,
-            DefKind::Enum,
-            Some(e),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        let enum_scope = db.add_scope(ScopeKind::Item, Some(a_scope));
-        db.set_child_scope(enum_def, enum_scope);
-        db.add_def(
-            enum_scope,
-            DefKind::Variant,
-            Some(v),
-            Visibility::Public,
-            Origin::Synthetic,
-        );
-        db.add_import(
-            b_scope,
-            vec![ccx.intern("super"), a, e, v],
-            ImportKind::Single,
-            Visibility::Private,
-            Origin::Synthetic,
-        );
+            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
+            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let enum_def = db.add_def(
+                a_scope,
+                DefKind::Enum,
+                Some(e),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            let enum_scope = db.add_scope(ScopeKind::Item, Some(a_scope));
+            db.set_child_scope(enum_def, enum_scope);
+            db.add_def(
+                enum_scope,
+                DefKind::Variant,
+                Some(v),
+                Visibility::Public,
+                Origin::Synthetic,
+            );
+            db.add_import(
+                b_scope,
+                vec![ccx.intern("super"), a, e, v],
+                ImportKind::Single,
+                Visibility::Private,
+                Origin::Synthetic,
+            );
 
-        db.resolve_imports();
+            db.resolve_imports();
 
-        assert_eq!(
-            target_kind(&db, b_scope, Namespace::Type, v),
-            DefKind::Variant
-        );
-        assert_eq!(
-            target_kind(&db, b_scope, Namespace::Value, v),
-            DefKind::Variant
-        );
+            assert_eq!(
+                target_kind(&db, b_scope, Namespace::Type, v),
+                DefKind::Variant
+            );
+            assert_eq!(
+                target_kind(&db, b_scope, Namespace::Value, v),
+                DefKind::Variant
+            );
+        }
     }
 }
