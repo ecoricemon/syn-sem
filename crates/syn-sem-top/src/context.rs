@@ -1,4 +1,4 @@
-use crate::Semantics;
+use crate::{NameCollector, Semantics};
 use std::{fs, path::Path};
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
@@ -30,7 +30,7 @@ impl<'tcx> TopCx<'tcx> {
     /// Analyzes a previously inserted or read entry file.
     pub fn analyze(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
         let file = self.syntax.lookup_source(entry_path)?.ast();
-        let names = crate::collect_names_in_top(self, entry_path, file)?;
+        let names = NameCollector::new(self).collect(entry_path, file)?;
         Ok(Semantics::new(self, names))
     }
 

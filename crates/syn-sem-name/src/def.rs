@@ -135,13 +135,12 @@ pub enum Visibility {
 
 /// Source origin associated with a definition or import.
 ///
-/// The name crate deliberately does not depend on a concrete AST crate. Users can store their own
-/// stable node index here and interpret it at the integration boundary.
+/// This is the place where future source mapping can attach diagnostics, go-to-definition
+/// information, or incremental invalidation data to `Def` and `Import` entries. For now, the name
+/// database records untracked origins because no stable AST-node identity is wired through the
+/// integration layer yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Origin {
-    /// No source node is associated with this entry.
-    Synthetic,
-
-    /// Opaque AST node index owned by the caller.
-    AstNode(usize),
+    /// Source origin is not tracked for this entry.
+    Untracked,
 }

@@ -629,6 +629,19 @@ impl<'cx> NameDb<'cx> {
     }
 }
 
+impl Default for NameDb<'_> {
+    /// Creates a name database with a crate-root scope.
+    fn default() -> Self {
+        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::CrateRoot, None);
+
+        Self {
+            scopes: vec![root_scope],
+            defs: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+}
+
 /// Result of resolving a name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveResult {
@@ -687,19 +700,6 @@ enum CandidateResolution {
 
     /// Lookup found no candidates.
     NotFound,
-}
-
-impl Default for NameDb<'_> {
-    /// Creates a name database with a crate-root scope.
-    fn default() -> Self {
-        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::CrateRoot, None);
-
-        Self {
-            scopes: vec![root_scope],
-            defs: Vec::new(),
-            imports: Vec::new(),
-        }
-    }
 }
 
 impl<'cx> Index<ScopeId> for NameDb<'cx> {
@@ -764,14 +764,14 @@ mod tests {
                 DefKind::Local,
                 Some(x),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             let inner = db.add_def(
                 body,
                 DefKind::Local,
                 Some(x),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             assert_eq!(
@@ -806,7 +806,7 @@ mod tests {
                 DefKind::TypeParam,
                 Some(t),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             assert_eq!(
@@ -840,7 +840,7 @@ mod tests {
                 DefKind::Struct,
                 Some(local),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             assert_eq!(
@@ -874,14 +874,14 @@ mod tests {
                 DefKind::TypeParam,
                 Some(t),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             let local = db.add_def(
                 root,
                 DefKind::Local,
                 Some(t),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             assert_eq!(
@@ -915,7 +915,7 @@ mod tests {
                 DefKind::ConstParam,
                 Some(n),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             assert_eq!(
@@ -940,7 +940,7 @@ mod tests {
             DefKind::Module,
             Some(name),
             visibility,
-            Origin::Synthetic,
+            Origin::Untracked,
         );
         let scope = db.add_scope(ScopeKind::Module, Some(parent));
         db.set_child_scope(def, scope);
@@ -994,35 +994,35 @@ mod tests {
                 DefKind::Struct,
                 Some(s),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Rename(t),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, ccx.intern("self")],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Rename(hidden),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();
@@ -1079,14 +1079,14 @@ mod tests {
                 vec![ccx.intern("super"), a, self_name],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), missing, self_name],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();
@@ -1140,35 +1140,35 @@ mod tests {
                 DefKind::Struct,
                 Some(public),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(private),
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, public],
                 ImportKind::Single,
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b, public],
                 ImportKind::Single,
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 d_scope,
                 vec![ccx.intern("super"), a],
                 ImportKind::Glob,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();
@@ -1227,35 +1227,35 @@ mod tests {
                 DefKind::Struct,
                 Some(x),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_def(
                 b_scope,
                 DefKind::Struct,
                 Some(x),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a],
                 ImportKind::Glob,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b],
                 ImportKind::Glob,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a, missing],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();
@@ -1298,21 +1298,21 @@ mod tests {
                 DefKind::Struct,
                 Some(x),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_def(
                 a_scope,
                 DefKind::Const,
                 Some(x),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, x],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();
@@ -1349,7 +1349,7 @@ mod tests {
                 DefKind::Enum,
                 Some(e),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             let enum_scope = db.add_scope(ScopeKind::Item, Some(a_scope));
             db.set_child_scope(enum_def, enum_scope);
@@ -1358,14 +1358,14 @@ mod tests {
                 DefKind::Variant,
                 Some(v),
                 Visibility::Public,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, e, v],
                 ImportKind::Single,
                 Visibility::Private,
-                Origin::Synthetic,
+                Origin::Untracked,
             );
 
             db.resolve_imports();

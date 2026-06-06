@@ -137,6 +137,40 @@ fn applies_restricted_visibility_to_imports() {
 }
 
 #[test]
+#[should_panic(expected = "restricted visibility path must start with `crate`, `self`, or `super`")]
+fn invalid_restricted_visibility_anchor_panics() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("invalid_visibility.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub(in a) struct Invalid;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let _ = tcx.analyze(entry_path);
+}
+
+#[test]
+#[should_panic(expected = "restricted visibility path segment must resolve")]
+fn unresolved_restricted_visibility_path_panics() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("unresolved_visibility.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub(in crate::missing) struct Invalid;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let _ = tcx.analyze(entry_path);
+}
+
+#[test]
 fn imports_enum_variants_in_type_and_value_namespaces() {
     let tcx = TopCx::default();
     let entry_path = tcx.common.intern("variants.rs");

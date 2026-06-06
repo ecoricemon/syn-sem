@@ -142,7 +142,7 @@ impl<'cx> AstNameCollector<'cx> {
             kind,
             Some(name),
             Visibility::Private,
-            Origin::Synthetic,
+            Origin::Untracked,
         )
     }
 }

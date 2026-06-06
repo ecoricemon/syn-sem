@@ -6,59 +6,88 @@ use syn_sem_name::{
     DefId, DefKind, ImportKind, Name, NameDb, Namespace, Origin, ScopeId, ScopeKind, Visibility,
 };
 
-pub(crate) fn collect_names_in_top<'tcx>(
+pub(crate) struct NameCollector<'tcx> {
     tcx: &'tcx TopCx<'tcx>,
-    file_path: FilePath<'tcx>,
-    file: &ast::File<'tcx>,
-) -> Result<NameDb<'tcx>> {
-    let mut collector = NameCollector::default();
-    let root = collector.db.root_scope();
-    let path = ModulePath::root(PathBuf::from(&*file_path));
-    for item in file.items {
-        collector.collect_item_in_top(tcx, root, item, &path)?;
-    }
-    collector.db.resolve_imports();
-    Ok(collector.db)
-}
-
-#[derive(Default)]
-struct NameCollector<'tcx> {
     db: NameDb<'tcx>,
 }
 
 impl<'tcx> NameCollector<'tcx> {
-    fn collect_item(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
+    pub(crate) fn new(tcx: &'tcx TopCx<'tcx>) -> Self {
+        Self {
+            tcx,
+            db: NameDb::default(),
+        }
+    }
+
+    pub(crate) fn collect(
+        mut self,
+        file_path: FilePath<'tcx>,
+        file: &ast::File<'tcx>,
+    ) -> Result<NameDb<'tcx>> {
+        let root = self.db.root_scope();
+        let path = ModulePath::from_entry_file(PathBuf::from(&*file_path));
+        for item in file.items {
+            self.collect_item_from_module_tree(root, item, &path)?;
+        }
+        self.db.resolve_imports();
+        Ok(self.db)
+    }
+
+    /// Collects one item while walking a crate's module tree.
+    ///
+    /// Unlike [`Self::collect_item_from_ast`], this variant follows `mod foo;` declarations to
+    /// their source files and continues collecting there.
+    fn collect_item_from_module_tree(
+        &mut self,
+        scope: ScopeId,
+        item: &ast::Item<'tcx>,
+        path: &ModulePath,
+    ) -> Result<()> {
+        match item {
+            ast::Item::Mod(item) => self.collect_mod_from_module_tree(scope, item, path),
+            _ => {
+                self.collect_item_from_ast(scope, item);
+                Ok(())
+            }
+        }
+    }
+
+    /// Collects one AST item into the current name database without loading extra files.
+    ///
+    /// Inline modules are collected recursively, declarations create `Def`s, and `use` trees are
+    /// recorded as imports to be resolved after collection finishes.
+    fn collect_item_from_ast(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
         match item {
             ast::Item::Const(item) => {
-                self.add_named(
+                self.add_named_def(
                     scope,
                     DefKind::Const,
                     item.ident.inner,
-                    self.ast_visibility(scope, &item.vis),
+                    self.visibility_from_ast(scope, &item.vis),
                 );
             }
             ast::Item::Enum(item) => self.collect_enum(scope, item),
             ast::Item::Fn(item) => {
-                self.collect_fn(scope, item, self.ast_visibility(scope, &item.vis))
+                self.collect_fn(scope, item, self.visibility_from_ast(scope, &item.vis))
             }
             ast::Item::Impl(item) => self.collect_impl(scope, item),
-            ast::Item::Mod(item) => self.collect_mod(scope, item),
+            ast::Item::Mod(item) => self.collect_mod_from_ast(scope, item),
             ast::Item::Struct(item) => {
-                self.add_named(
+                self.add_named_def(
                     scope,
                     DefKind::Struct,
                     item.ident.inner,
-                    self.ast_visibility(scope, &item.vis),
+                    self.visibility_from_ast(scope, &item.vis),
                 );
                 self.collect_generics(scope, &item.generics);
             }
             ast::Item::Trait(item) => self.collect_trait(scope, item),
             ast::Item::Type(item) => {
-                self.add_named(
+                self.add_named_def(
                     scope,
                     DefKind::TypeAlias,
                     item.ident.inner,
-                    self.ast_visibility(scope, &item.vis),
+                    self.visibility_from_ast(scope, &item.vis),
                 );
                 self.collect_generics(scope, &item.generics);
             }
@@ -67,76 +96,23 @@ impl<'tcx> NameCollector<'tcx> {
                     scope,
                     Vec::new(),
                     &item.tree,
-                    self.ast_visibility(scope, &item.vis),
+                    self.visibility_from_ast(scope, &item.vis),
                 );
             }
         }
     }
 
-    fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
-        let visibility = self.ast_visibility(parent_scope, &item.vis);
-        let enum_def = self.add_named(parent_scope, DefKind::Enum, item.ident.inner, visibility);
-        let item_scope = self.db.add_scope(ScopeKind::Item, Some(parent_scope));
-        self.db.set_child_scope(enum_def, item_scope);
-        self.collect_generics_into(item_scope, &item.generics);
-
-        for variant in item.variants {
-            self.add_named(
-                item_scope,
-                DefKind::Variant,
-                variant.ident.inner,
-                visibility,
-            );
-        }
-    }
-
-    fn collect_mod(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'tcx>) {
-        let module_def = self.add_named(
-            parent_scope,
-            DefKind::Module,
-            item.ident.inner,
-            self.ast_visibility(parent_scope, &item.vis),
-        );
-        let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
-        self.db.set_child_scope(module_def, module_scope);
-
-        if let Some(items) = item.items {
-            for item in items {
-                self.collect_item(module_scope, item);
-            }
-        }
-    }
-
-    /// Top-level collection differs from AST-only collection only for out-of-line modules:
-    /// `mod foo;` may require loading and collecting names from another source file.
-    fn collect_item_in_top(
+    fn collect_mod_from_module_tree(
         &mut self,
-        tcx: &'tcx TopCx<'tcx>,
-        scope: ScopeId,
-        item: &ast::Item<'tcx>,
-        path: &ModulePath,
-    ) -> Result<()> {
-        match item {
-            ast::Item::Mod(item) => self.collect_mod_in_top(tcx, scope, item, path),
-            _ => {
-                self.collect_item(scope, item);
-                Ok(())
-            }
-        }
-    }
-
-    fn collect_mod_in_top(
-        &mut self,
-        tcx: &'tcx TopCx<'tcx>,
         parent_scope: ScopeId,
         item: &ast::ItemMod<'tcx>,
         path: &ModulePath,
     ) -> Result<()> {
-        let module_def = self.add_named(
+        let module_def = self.add_named_def(
             parent_scope,
             DefKind::Module,
             item.ident.inner,
-            self.ast_visibility(parent_scope, &item.vis),
+            self.visibility_from_ast(parent_scope, &item.vis),
         );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
         self.db.set_child_scope(module_def, module_scope);
@@ -148,28 +124,63 @@ impl<'tcx> NameCollector<'tcx> {
                 module_dir,
             };
             for item in items {
-                self.collect_item_in_top(tcx, module_scope, item, &path)?;
+                self.collect_item_from_module_tree(module_scope, item, &path)?;
             }
-        } else if let Some(file_path) = path.child_file(tcx, item)? {
-            let file = tcx.syntax.lookup_source(file_path)?.ast();
+        } else if let Some(file_path) = path.child_file(self.tcx, item)? {
+            let file = self.tcx.syntax.lookup_source(file_path)?.ast();
             let path = ModulePath {
                 source_file: file_path.as_ref().into(),
                 module_dir,
             };
             for item in file.items {
-                self.collect_item_in_top(tcx, module_scope, item, &path)?;
+                self.collect_item_from_module_tree(module_scope, item, &path)?;
             }
         }
 
         Ok(())
     }
 
+    fn collect_mod_from_ast(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'tcx>) {
+        let module_def = self.add_named_def(
+            parent_scope,
+            DefKind::Module,
+            item.ident.inner,
+            self.visibility_from_ast(parent_scope, &item.vis),
+        );
+        let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
+        self.db.set_child_scope(module_def, module_scope);
+
+        if let Some(items) = item.items {
+            for item in items {
+                self.collect_item_from_ast(module_scope, item);
+            }
+        }
+    }
+
+    fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
+        let visibility = self.visibility_from_ast(parent_scope, &item.vis);
+        let enum_def =
+            self.add_named_def(parent_scope, DefKind::Enum, item.ident.inner, visibility);
+        let item_scope = self.db.add_scope(ScopeKind::Item, Some(parent_scope));
+        self.db.set_child_scope(enum_def, item_scope);
+        self.collect_generics_into(item_scope, &item.generics);
+
+        for variant in item.variants {
+            self.add_named_def(
+                item_scope,
+                DefKind::Variant,
+                variant.ident.inner,
+                visibility,
+            );
+        }
+    }
+
     fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'tcx>) {
-        self.add_named(
+        self.add_named_def(
             parent_scope,
             DefKind::Trait,
             item.ident.inner,
-            self.ast_visibility(parent_scope, &item.vis),
+            self.visibility_from_ast(parent_scope, &item.vis),
         );
         let trait_scope = self.db.add_scope(ScopeKind::Trait, Some(parent_scope));
         self.collect_generics_into(trait_scope, &item.generics);
@@ -177,7 +188,7 @@ impl<'tcx> NameCollector<'tcx> {
         for item in item.items {
             match item {
                 ast::TraitItem::Const(item) => {
-                    self.add_named(
+                    self.add_named_def(
                         trait_scope,
                         DefKind::Const,
                         item.ident.inner,
@@ -197,7 +208,7 @@ impl<'tcx> NameCollector<'tcx> {
                     }
                 }
                 ast::TraitItem::Type(item) => {
-                    self.add_named(
+                    self.add_named_def(
                         trait_scope,
                         DefKind::TypeAlias,
                         item.ident.inner,
@@ -215,7 +226,7 @@ impl<'tcx> NameCollector<'tcx> {
             DefKind::Impl,
             None,
             Visibility::Private,
-            Origin::Synthetic,
+            Origin::Untracked,
         );
 
         let impl_scope = self.db.add_scope(ScopeKind::Impl, Some(parent_scope));
@@ -224,7 +235,7 @@ impl<'tcx> NameCollector<'tcx> {
         for item in item.items {
             match item {
                 ast::ImplItem::Const(item) => {
-                    self.add_named(
+                    self.add_named_def(
                         impl_scope,
                         DefKind::Const,
                         item.ident.inner,
@@ -242,7 +253,7 @@ impl<'tcx> NameCollector<'tcx> {
                     self.collect_block(impl_scope, &item.block);
                 }
                 ast::ImplItem::Type(item) => {
-                    self.add_named(
+                    self.add_named_def(
                         impl_scope,
                         DefKind::TypeAlias,
                         item.ident.inner,
@@ -285,7 +296,7 @@ impl<'tcx> NameCollector<'tcx> {
         sig: &ast::Signature<'tcx>,
         visibility: Visibility,
     ) {
-        self.add_named(parent_scope, kind, sig.ident.inner, visibility);
+        self.add_named_def(parent_scope, kind, sig.ident.inner, visibility);
     }
 
     fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'tcx>) {
@@ -294,7 +305,7 @@ impl<'tcx> NameCollector<'tcx> {
         for stmt in block.stmts {
             match stmt {
                 ast::Stmt::Local(local) => self.collect_pat(block_scope, &local.pat),
-                ast::Stmt::Item(item) => self.collect_item(block_scope, item),
+                ast::Stmt::Item(item) => self.collect_item_from_ast(block_scope, item),
                 ast::Stmt::Expr(_) => {}
             }
         }
@@ -311,7 +322,7 @@ impl<'tcx> NameCollector<'tcx> {
         for param in generics.params {
             match param {
                 ast::GenericParam::Type(param) => {
-                    self.add_named(
+                    self.add_named_def(
                         scope,
                         DefKind::TypeParam,
                         param.ident.inner,
@@ -319,7 +330,7 @@ impl<'tcx> NameCollector<'tcx> {
                     );
                 }
                 ast::GenericParam::Const(param) => {
-                    self.add_named(
+                    self.add_named_def(
                         scope,
                         DefKind::ConstParam,
                         param.ident.inner,
@@ -334,7 +345,7 @@ impl<'tcx> NameCollector<'tcx> {
     fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'tcx>) {
         match pat {
             ast::Pat::Ident(pat) => {
-                self.add_named(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
+                self.add_named_def(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
             }
             ast::Pat::Reference(pat) => self.collect_pat(scope, pat.pat),
             ast::Pat::Slice(pat) => {
@@ -378,7 +389,7 @@ impl<'tcx> NameCollector<'tcx> {
                     source_path,
                     ImportKind::Single,
                     visibility,
-                    Origin::Synthetic,
+                    Origin::Untracked,
                 );
             }
             ast::UseTree::Rename(tree) => {
@@ -389,7 +400,7 @@ impl<'tcx> NameCollector<'tcx> {
                     source_path,
                     ImportKind::Rename(tree.rename.inner),
                     visibility,
-                    Origin::Synthetic,
+                    Origin::Untracked,
                 );
             }
             ast::UseTree::Glob(_) => {
@@ -398,7 +409,7 @@ impl<'tcx> NameCollector<'tcx> {
                     prefix,
                     ImportKind::Glob,
                     visibility,
-                    Origin::Synthetic,
+                    Origin::Untracked,
                 );
             }
             ast::UseTree::Group(tree) => {
@@ -409,7 +420,7 @@ impl<'tcx> NameCollector<'tcx> {
         }
     }
 
-    fn add_named(
+    fn add_named_def(
         &mut self,
         scope: ScopeId,
         kind: DefKind,
@@ -417,45 +428,61 @@ impl<'tcx> NameCollector<'tcx> {
         visibility: Visibility,
     ) -> DefId {
         self.db
-            .add_def(scope, kind, Some(name), visibility, Origin::Synthetic)
+            .add_def(scope, kind, Some(name), visibility, Origin::Untracked)
     }
 
-    fn ast_visibility(&self, scope: ScopeId, vis: &ast::Visibility<'tcx>) -> Visibility {
+    fn visibility_from_ast(&self, scope: ScopeId, vis: &ast::Visibility<'tcx>) -> Visibility {
         match vis {
             ast::Visibility::Public(_) => Visibility::Public,
-            ast::Visibility::Restricted(path) => self
-                .visibility_scope(scope, path)
-                .map(Visibility::Restricted)
-                .unwrap_or(Visibility::Private),
+            ast::Visibility::Restricted(path) => {
+                Visibility::Restricted(self.resolve_restricted_visibility_scope(scope, path))
+            }
             ast::Visibility::Private => Visibility::Private,
         }
     }
 
-    fn visibility_scope(&self, scope: ScopeId, path: &ast::Path<'tcx>) -> Option<ScopeId> {
+    fn resolve_restricted_visibility_scope(
+        &self,
+        scope: ScopeId,
+        path: &ast::Path<'tcx>,
+    ) -> ScopeId {
         let mut scope = self.nearest_module_scope(scope);
         let mut segments = path.segments.iter();
-        let first = segments.next()?;
+        let first = segments
+            .next()
+            .expect("restricted visibility path must have at least one segment");
 
         match first.ident.inner.as_ref() {
             "crate" => scope = self.db.root_scope(),
             "self" => {}
-            "super" => scope = self.parent_module_scope(scope)?,
-            _ => return None,
+            "super" => {
+                scope = self
+                    .parent_module_scope(scope)
+                    .expect("restricted visibility `super` must have a parent module")
+            }
+            _ => panic!("restricted visibility path must start with `crate`, `self`, or `super`"),
         }
 
         for segment in segments {
-            if segment.has_args() {
-                return None;
-            }
+            assert!(
+                !segment.has_args(),
+                "restricted visibility path segments must not have arguments"
+            );
+
             let binding = self.db[scope]
                 .bindings
-                .get(Namespace::Type, segment.ident.inner)?;
-            let def = binding.single()?;
+                .get(Namespace::Type, segment.ident.inner)
+                .expect("restricted visibility path segment must resolve");
+            let def = binding
+                .single()
+                .expect("restricted visibility path segment must resolve unambiguously");
             let target = self.db.follow_aliases(def);
-            scope = self.db[target].child_scope?;
+            scope = self.db[target]
+                .child_scope
+                .expect("restricted visibility path segment must name a scope-bearing item");
         }
 
-        Some(scope)
+        scope
     }
 
     fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
@@ -508,18 +535,28 @@ fn path_attr(item: &ast::ItemMod<'_>) -> Option<PathBuf> {
     })
 }
 
+/// Tracks filesystem locations while walking a Rust module tree.
+///
+/// It records both the file currently being collected and the directory used to search for that
+/// module's out-of-line child files, such as `foo.rs` or `foo/mod.rs`.
 struct ModulePath {
+    /// Source file currently being collected.
     source_file: PathBuf,
+
+    /// Directory used to search for child modules declared from this module.
     module_dir: PathBuf,
 }
 
 impl ModulePath {
-    fn root(file_path: PathBuf) -> Self {
+    fn from_entry_file(file_path: PathBuf) -> Self {
         let source_dir = file_path.parent().unwrap_or_else(|| Path::new(""));
-        let module_dir = match file_path.file_stem().and_then(|stem| stem.to_str()) {
-            Some("lib" | "main" | "mod") => source_dir.to_path_buf(),
-            Some(stem) => source_dir.join(stem),
-            None => source_dir.to_path_buf(),
+        let stem = file_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("root module path must be a Rust source file path");
+        let module_dir = match stem {
+            "lib" | "main" | "mod" => source_dir.to_path_buf(),
+            stem => source_dir.join(stem),
         };
 
         Self {
