@@ -21,6 +21,12 @@ pub struct Def<'cx> {
     /// Definitions without importable children leave this unset.
     pub child_scope: Option<ScopeId>,
 
+    /// Scope containing this definition's generic parameters.
+    ///
+    /// Generic parameters are lexical names, not importable children. Definitions without generic
+    /// parameters leave this unset.
+    pub generic_scope: Option<ScopeId>,
+
     /// Definition this definition aliases.
     ///
     /// Import definitions use this to point at their resolved target.

@@ -203,6 +203,105 @@ fn imports_enum_variants_in_type_and_value_namespaces() {
     );
 }
 
+#[test]
+fn connects_generic_scopes_to_defs_consistently() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("generics.rs");
+    let text = tcx.common.intern(
+        r#"
+        struct S<T>;
+
+        enum E<U> {
+            V,
+        }
+
+        trait Tr<W> {
+            fn m<X>();
+        }
+
+        impl<Y> S<Y> {
+            fn make<Z>() {}
+        }
+
+        fn f<N>() {}
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let semantics = tcx.analyze(entry_path).unwrap();
+    let db = semantics.names();
+    let root = db.root_scope();
+
+    let s_def = resolve_def(&tcx, db, root, Namespace::Type, "S");
+    let s_generic_scope = db[s_def].generic_scope.expect("S should have generics");
+    assert_eq!(db[s_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, s_generic_scope, Namespace::Type, "T"),
+        ResolveResult::Found(resolve_def(&tcx, db, s_generic_scope, Namespace::Type, "T"))
+    );
+    assert!(db[s_def].child_scope.is_none());
+
+    let e_def = resolve_def(&tcx, db, root, Namespace::Type, "E");
+    let e_generic_scope = db[e_def].generic_scope.expect("E should have generics");
+    let e_item_scope = db[e_def].child_scope.expect("E should expose variants");
+    assert_eq!(db[e_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(db[e_item_scope].kind, ScopeKind::Item);
+    assert_eq!(db[e_item_scope].parent, Some(e_generic_scope));
+    assert_eq!(
+        resolve_result(&tcx, db, e_generic_scope, Namespace::Type, "U"),
+        ResolveResult::Found(resolve_def(&tcx, db, e_generic_scope, Namespace::Type, "U"))
+    );
+    assert_eq!(
+        resolve_result(&tcx, db, e_item_scope, Namespace::Type, "V"),
+        ResolveResult::Found(resolve_def(&tcx, db, e_item_scope, Namespace::Type, "V"))
+    );
+    assert!(db
+        .binding(e_item_scope, Namespace::Type, tcx.common.intern("U"))
+        .is_none());
+
+    let trait_def = resolve_def(&tcx, db, root, Namespace::Type, "Tr");
+    let trait_generic_scope = db[trait_def]
+        .generic_scope
+        .expect("Tr should have generics");
+    assert_eq!(db[trait_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, trait_generic_scope, Namespace::Type, "W"),
+        ResolveResult::Found(resolve_def(
+            &tcx,
+            db,
+            trait_generic_scope,
+            Namespace::Type,
+            "W"
+        ))
+    );
+
+    let f_def = resolve_def(&tcx, db, root, Namespace::Value, "f");
+    let f_generic_scope = db[f_def].generic_scope.expect("f should have generics");
+    assert_eq!(db[f_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, f_generic_scope, Namespace::Type, "N"),
+        ResolveResult::Found(resolve_def(&tcx, db, f_generic_scope, Namespace::Type, "N"))
+    );
+
+    let impl_def = db
+        .defs()
+        .iter()
+        .find(|def| def.kind == DefKind::Impl)
+        .expect("impl def should be collected");
+    let impl_generic_scope = impl_def.generic_scope.expect("impl should have generics");
+    assert_eq!(db[impl_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, impl_generic_scope, Namespace::Type, "Y"),
+        ResolveResult::Found(resolve_def(
+            &tcx,
+            db,
+            impl_generic_scope,
+            Namespace::Type,
+            "Y"
+        ))
+    );
+}
+
 fn insert_virtual_fixture_tree<'tcx>(tcx: &'tcx TopCx<'tcx>) -> FilePath<'tcx> {
     let entry_path = tcx.common.intern("a1.rs");
     let text = tcx.common.intern(include_str!("file/a1.rs"));
@@ -284,6 +383,20 @@ fn resolve_kind<'tcx>(
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
     db[def].kind
+}
+
+fn resolve_def<'tcx>(
+    tcx: &'tcx TopCx<'tcx>,
+    db: &NameDb<'tcx>,
+    scope: ScopeId,
+    namespace: Namespace,
+    name: &str,
+) -> syn_sem_name::DefId {
+    let name = tcx.common.intern(name);
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
+        panic!("expected {name:?} to resolve in {namespace:?}");
+    };
+    def
 }
 
 fn follow_aliases_kind<'tcx>(

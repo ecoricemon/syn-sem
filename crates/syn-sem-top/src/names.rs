@@ -73,23 +73,23 @@ impl<'tcx> NameCollector<'tcx> {
             ast::Item::Impl(item) => self.collect_impl(scope, item),
             ast::Item::Mod(item) => self.collect_mod_from_ast(scope, item),
             ast::Item::Struct(item) => {
-                self.add_named_def(
+                let def = self.add_named_def(
                     scope,
                     DefKind::Struct,
                     item.ident.inner,
                     self.visibility_from_ast(scope, &item.vis),
                 );
-                self.collect_generics(scope, &item.generics);
+                self.collect_generic_scope(def, scope, &item.generics);
             }
             ast::Item::Trait(item) => self.collect_trait(scope, item),
             ast::Item::Type(item) => {
-                self.add_named_def(
+                let def = self.add_named_def(
                     scope,
                     DefKind::TypeAlias,
                     item.ident.inner,
                     self.visibility_from_ast(scope, &item.vis),
                 );
-                self.collect_generics(scope, &item.generics);
+                self.collect_generic_scope(def, scope, &item.generics);
             }
             ast::Item::Use(item) => {
                 self.collect_use_tree(
@@ -158,13 +158,19 @@ impl<'tcx> NameCollector<'tcx> {
     }
 
     fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
+        // Enum Def
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let enum_def =
             self.add_named_def(parent_scope, DefKind::Enum, item.ident.inner, visibility);
-        let item_scope = self.db.add_scope(ScopeKind::Item, Some(parent_scope));
-        self.db.set_child_scope(enum_def, item_scope);
-        self.collect_generics_into(item_scope, &item.generics);
 
+        // Generic scope
+        let item_parent_scope = self
+            .collect_generic_scope(enum_def, parent_scope, &item.generics)
+            .unwrap_or(parent_scope);
+
+        // Variant Def
+        let item_scope = self.db.add_scope(ScopeKind::Item, Some(item_parent_scope));
+        self.db.set_child_scope(enum_def, item_scope);
         for variant in item.variants {
             self.add_named_def(
                 item_scope,
@@ -176,52 +182,57 @@ impl<'tcx> NameCollector<'tcx> {
     }
 
     fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'tcx>) {
-        self.add_named_def(
+        let trait_def = self.add_named_def(
             parent_scope,
             DefKind::Trait,
             item.ident.inner,
             self.visibility_from_ast(parent_scope, &item.vis),
         );
-        let trait_scope = self.db.add_scope(ScopeKind::Trait, Some(parent_scope));
-        self.collect_generics_into(trait_scope, &item.generics);
+        let trait_parent_scope = self
+            .collect_generic_scope(trait_def, parent_scope, &item.generics)
+            .unwrap_or(parent_scope);
+        let trait_scope = self
+            .db
+            .add_scope(ScopeKind::Trait, Some(trait_parent_scope));
 
         for item in item.items {
             match item {
                 ast::TraitItem::Const(item) => {
-                    self.add_named_def(
+                    let def = self.add_named_def(
                         trait_scope,
                         DefKind::Const,
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generics(trait_scope, &item.generics);
+                    self.collect_generic_scope(def, trait_scope, &item.generics);
                 }
                 ast::TraitItem::Fn(item) => {
-                    self.collect_fn_signature(
+                    let def = self.add_named_def(
                         trait_scope,
                         DefKind::Fn,
-                        &item.sig,
+                        item.sig.ident.inner,
                         Visibility::Private,
                     );
+                    self.collect_generic_scope(def, trait_scope, &item.sig.generics);
                     if let Some(block) = &item.default {
                         self.collect_block(trait_scope, block);
                     }
                 }
                 ast::TraitItem::Type(item) => {
-                    self.add_named_def(
+                    let def = self.add_named_def(
                         trait_scope,
                         DefKind::TypeAlias,
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generics(trait_scope, &item.generics);
+                    self.collect_generic_scope(def, trait_scope, &item.generics);
                 }
             }
         }
     }
 
     fn collect_impl(&mut self, parent_scope: ScopeId, item: &ast::ItemImpl<'tcx>) {
-        self.db.add_def(
+        let impl_def = self.db.add_def(
             parent_scope,
             DefKind::Impl,
             None,
@@ -229,37 +240,40 @@ impl<'tcx> NameCollector<'tcx> {
             Origin::Untracked,
         );
 
-        let impl_scope = self.db.add_scope(ScopeKind::Impl, Some(parent_scope));
-        self.collect_generics_into(impl_scope, &item.generics);
+        let impl_parent_scope = self
+            .collect_generic_scope(impl_def, parent_scope, &item.generics)
+            .unwrap_or(parent_scope);
+        let impl_scope = self.db.add_scope(ScopeKind::Impl, Some(impl_parent_scope));
 
         for item in item.items {
             match item {
                 ast::ImplItem::Const(item) => {
-                    self.add_named_def(
+                    let def = self.add_named_def(
                         impl_scope,
                         DefKind::Const,
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generics(impl_scope, &item.generics);
+                    self.collect_generic_scope(def, impl_scope, &item.generics);
                 }
                 ast::ImplItem::Fn(item) => {
-                    self.collect_fn_signature(
+                    let def = self.add_named_def(
                         impl_scope,
                         DefKind::Fn,
-                        &item.sig,
+                        item.sig.ident.inner,
                         Visibility::Private,
                     );
+                    self.collect_generic_scope(def, impl_scope, &item.sig.generics);
                     self.collect_block(impl_scope, &item.block);
                 }
                 ast::ImplItem::Type(item) => {
-                    self.add_named_def(
+                    let def = self.add_named_def(
                         impl_scope,
                         DefKind::TypeAlias,
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generics(impl_scope, &item.generics);
+                    self.collect_generic_scope(def, impl_scope, &item.generics);
                 }
             }
         }
@@ -271,32 +285,21 @@ impl<'tcx> NameCollector<'tcx> {
         item: &ast::ItemFn<'tcx>,
         visibility: Visibility,
     ) {
-        self.collect_fn_signature(parent_scope, DefKind::Fn, &item.sig, visibility);
-
-        let generic_scope = self
-            .db
-            .add_scope(ScopeKind::GenericParams, Some(parent_scope));
-        self.collect_generics_into(generic_scope, &item.generics);
+        let fn_def =
+            self.add_named_def(parent_scope, DefKind::Fn, item.sig.ident.inner, visibility);
+        let body_parent_scope = self
+            .collect_generic_scope(fn_def, parent_scope, &item.generics)
+            .unwrap_or(parent_scope);
 
         let body_scope = self
             .db
-            .add_scope(ScopeKind::FunctionBody, Some(generic_scope));
+            .add_scope(ScopeKind::FunctionBody, Some(body_parent_scope));
 
         for param in item.sig.params.iter().skip(1) {
             self.collect_pat(body_scope, param.pat.pat);
         }
 
         self.collect_block(body_scope, &item.block);
-    }
-
-    fn collect_fn_signature(
-        &mut self,
-        parent_scope: ScopeId,
-        kind: DefKind,
-        sig: &ast::Signature<'tcx>,
-        visibility: Visibility,
-    ) {
-        self.add_named_def(parent_scope, kind, sig.ident.inner, visibility);
     }
 
     fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'tcx>) {
@@ -311,19 +314,27 @@ impl<'tcx> NameCollector<'tcx> {
         }
     }
 
-    fn collect_generics(&mut self, parent_scope: ScopeId, generics: &ast::Generics<'tcx>) {
+    /// Creates and links a `GenericParams` scope for `def`, then collects generic parameter defs.
+    fn collect_generic_scope(
+        &mut self,
+        def: DefId,
+        parent_scope: ScopeId,
+        generics: &ast::Generics<'tcx>,
+    ) -> Option<ScopeId> {
+        if generics.params.is_empty() {
+            return None;
+        }
+
         let generic_scope = self
             .db
             .add_scope(ScopeKind::GenericParams, Some(parent_scope));
-        self.collect_generics_into(generic_scope, generics);
-    }
+        self.db.set_generic_scope(def, generic_scope);
 
-    fn collect_generics_into(&mut self, scope: ScopeId, generics: &ast::Generics<'tcx>) {
         for param in generics.params {
             match param {
                 ast::GenericParam::Type(param) => {
                     self.add_named_def(
-                        scope,
+                        generic_scope,
                         DefKind::TypeParam,
                         param.ident.inner,
                         Visibility::Private,
@@ -331,7 +342,7 @@ impl<'tcx> NameCollector<'tcx> {
                 }
                 ast::GenericParam::Const(param) => {
                     self.add_named_def(
-                        scope,
+                        generic_scope,
                         DefKind::ConstParam,
                         param.ident.inner,
                         Visibility::Private,
@@ -340,6 +351,8 @@ impl<'tcx> NameCollector<'tcx> {
                 ast::GenericParam::Unsupported(_) => {}
             }
         }
+
+        Some(generic_scope)
     }
 
     fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'tcx>) {

@@ -86,6 +86,7 @@ impl<'cx> NameDb<'cx> {
             kind,
             parent_scope,
             child_scope: None,
+            generic_scope: None,
             target: None,
             visibility,
             origin,
@@ -125,6 +126,11 @@ impl<'cx> NameDb<'cx> {
     /// Links a definition to a child scope that contains its importable members.
     pub fn set_child_scope(&mut self, def: DefId, child_scope: ScopeId) {
         self.defs[def.index()].child_scope = Some(child_scope);
+    }
+
+    /// Links a definition to the scope containing its generic parameters.
+    pub fn set_generic_scope(&mut self, def: DefId, generic_scope: ScopeId) {
+        self.defs[def.index()].generic_scope = Some(generic_scope);
     }
 
     /// Follows `DefKind::Use` alias definitions to their underlying definition.
@@ -203,6 +209,7 @@ impl<'cx> NameDb<'cx> {
             kind: DefKind::Use,
             parent_scope,
             child_scope: None,
+            generic_scope: None,
             target: Some(target),
             visibility,
             origin,
