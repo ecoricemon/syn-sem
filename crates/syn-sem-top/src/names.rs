@@ -58,47 +58,15 @@ impl<'tcx> NameCollector<'tcx> {
     /// recorded as imports to be resolved after collection finishes.
     fn collect_item_from_ast(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
         match item {
-            ast::Item::Const(item) => {
-                self.add_named_def(
-                    scope,
-                    DefKind::Const,
-                    item.ident.inner,
-                    self.visibility_from_ast(scope, &item.vis),
-                );
-            }
+            ast::Item::Const(item) => self.collect_const(scope, item),
             ast::Item::Enum(item) => self.collect_enum(scope, item),
-            ast::Item::Fn(item) => {
-                self.collect_fn(scope, item, self.visibility_from_ast(scope, &item.vis))
-            }
+            ast::Item::Fn(item) => self.collect_fn(scope, item),
             ast::Item::Impl(item) => self.collect_impl(scope, item),
             ast::Item::Mod(item) => self.collect_mod_from_ast(scope, item),
-            ast::Item::Struct(item) => {
-                let def = self.add_named_def(
-                    scope,
-                    DefKind::Struct,
-                    item.ident.inner,
-                    self.visibility_from_ast(scope, &item.vis),
-                );
-                self.collect_generic_scope(def, scope, &item.generics);
-            }
+            ast::Item::Struct(item) => self.collect_struct(scope, item),
             ast::Item::Trait(item) => self.collect_trait(scope, item),
-            ast::Item::Type(item) => {
-                let def = self.add_named_def(
-                    scope,
-                    DefKind::TypeAlias,
-                    item.ident.inner,
-                    self.visibility_from_ast(scope, &item.vis),
-                );
-                self.collect_generic_scope(def, scope, &item.generics);
-            }
-            ast::Item::Use(item) => {
-                self.collect_use_tree(
-                    scope,
-                    Vec::new(),
-                    &item.tree,
-                    self.visibility_from_ast(scope, &item.vis),
-                );
-            }
+            ast::Item::Type(item) => self.collect_type(scope, item),
+            ast::Item::Use(item) => self.collect_use(scope, item),
         }
     }
 
@@ -115,7 +83,7 @@ impl<'tcx> NameCollector<'tcx> {
             self.visibility_from_ast(parent_scope, &item.vis),
         );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
-        self.db.set_child_scope(module_def, module_scope);
+        self.db.set_path_scope(module_def, module_scope);
         let module_dir = path.child_dir(item);
 
         if let Some(items) = item.items {
@@ -148,7 +116,7 @@ impl<'tcx> NameCollector<'tcx> {
             self.visibility_from_ast(parent_scope, &item.vis),
         );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
-        self.db.set_child_scope(module_def, module_scope);
+        self.db.set_path_scope(module_def, module_scope);
 
         if let Some(items) = item.items {
             for item in items {
@@ -157,23 +125,60 @@ impl<'tcx> NameCollector<'tcx> {
         }
     }
 
+    /// For `const C: usize = 0;`, this creates the following definition and scope hierarchy:
+    ///
+    /// ```text
+    /// parent_scope
+    /// └─ DefKind::Const C
+    /// ```
+    fn collect_const(&mut self, parent_scope: ScopeId, item: &ast::ItemConst<'tcx>) {
+        // Const Def
+        self.add_named_def(
+            parent_scope,
+            DefKind::Const,
+            item.ident.inner,
+            self.visibility_from_ast(parent_scope, &item.vis),
+        );
+    }
+
+    /// For `enum E<T> { V }`, this creates the following definition and scope hierarchy:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Enum E
+    /// │  ├─ scopes.generic -> GenericParams scope
+    /// │  └─ scopes.path    -> Item scope
+    /// └─ GenericParams scope
+    ///    └─ Item scope
+    ///       └─ DefKind::Variant V
+    /// ```
+    ///
+    /// Without generics, the hierarchy is still not flattened into `parent_scope`:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Enum E
+    /// │  └─ scopes.path -> Item scope
+    /// └─ Item scope
+    ///    └─ DefKind::Variant V
+    /// ```
     fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
         // Enum Def
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let enum_def =
             self.add_named_def(parent_scope, DefKind::Enum, item.ident.inner, visibility);
 
-        // Generic scope
-        let item_parent_scope = self
-            .collect_generic_scope(enum_def, parent_scope, &item.generics)
+        // Generic Scope
+        let path_parent_scope = self
+            .attach_generic_scope(enum_def, parent_scope, &item.generics)
             .unwrap_or(parent_scope);
 
         // Variant Def
-        let item_scope = self.db.add_scope(ScopeKind::Item, Some(item_parent_scope));
-        self.db.set_child_scope(enum_def, item_scope);
+        let path_scope = self.db.add_scope(ScopeKind::Item, Some(path_parent_scope));
+        self.db.set_path_scope(enum_def, path_scope);
         for variant in item.variants {
             self.add_named_def(
-                item_scope,
+                path_scope,
                 DefKind::Variant,
                 variant.ident.inner,
                 visibility,
@@ -181,15 +186,125 @@ impl<'tcx> NameCollector<'tcx> {
         }
     }
 
+    /// For `fn f<T>(x: T) { let y = x; }`, this creates the following definition and scope
+    /// hierarchy:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Fn f
+    /// │  ├─ scopes.generic -> GenericParams scope
+    /// │  └─ scopes.body    -> Function scope
+    /// └─ GenericParams scope
+    ///    └─ Function scope
+    ///       ├─ DefKind::Local x
+    ///       └─ Block scope
+    ///          └─ DefKind::Local y
+    /// ```
+    ///
+    /// Without generics, the function scope is attached directly under `parent_scope`:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Fn f
+    /// │  └─ scopes.body -> Function scope
+    /// └─ Function scope
+    ///    ├─ DefKind::Local x
+    ///    └─ Block scope
+    ///       └─ DefKind::Local y
+    /// ```
+    fn collect_fn(&mut self, parent_scope: ScopeId, item: &ast::ItemFn<'tcx>) {
+        // Fn Def
+        let visibility = self.visibility_from_ast(parent_scope, &item.vis);
+        let fn_def =
+            self.add_named_def(parent_scope, DefKind::Fn, item.sig.ident.inner, visibility);
+
+        // Generic Scope
+        let function_parent_scope = self
+            .attach_generic_scope(fn_def, parent_scope, &item.generics)
+            .unwrap_or(parent_scope);
+
+        // Function Scope
+        let function_scope = self
+            .db
+            .add_scope(ScopeKind::Function, Some(function_parent_scope));
+        self.db.set_body_scope(fn_def, function_scope);
+
+        // Parameters in the function scope
+        for param in item.sig.params.iter().skip(1) {
+            self.collect_pat(function_scope, param.pat.pat);
+        }
+
+        // Block scope
+        self.collect_block(function_scope, &item.block);
+    }
+
+    /// For `struct S<T>;`, this creates the following definition and scope hierarchy:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Struct S
+    /// │  └─ scopes.generic -> GenericParams scope
+    /// └─ GenericParams scope
+    /// ```
+    ///
+    /// Without generics:
+    ///
+    /// ```text
+    /// parent_scope
+    /// └─ DefKind::Struct S
+    /// ```
+    fn collect_struct(&mut self, parent_scope: ScopeId, item: &ast::ItemStruct<'tcx>) {
+        // Struct Def
+        let def = self.add_named_def(
+            parent_scope,
+            DefKind::Struct,
+            item.ident.inner,
+            self.visibility_from_ast(parent_scope, &item.vis),
+        );
+
+        // Generic Scope
+        self.attach_generic_scope(def, parent_scope, &item.generics);
+    }
+
+    /// For `trait Tr<T> { type Assoc<U>; fn f<V>(&self) {} }`, this creates the following
+    /// definition and scope hierarchy:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Trait Tr
+    /// │  └─ scopes.generic -> GenericParams scope
+    /// └─ GenericParams scope
+    ///    └─ Trait scope
+    ///       ├─ DefKind::TypeAlias Assoc
+    ///       │  └─ scopes.generic -> GenericParams scope
+    ///       ├─ GenericParams scope
+    ///       ├─ DefKind::Fn f
+    ///       │  └─ scopes.generic -> GenericParams scope
+    ///       ├─ GenericParams scope
+    ///       └─ Block scope
+    /// ```
+    ///
+    /// Without trait generics:
+    ///
+    /// ```text
+    /// parent_scope
+    /// ├─ DefKind::Trait Tr
+    /// └─ Trait scope
+    ///    ├─ DefKind::TypeAlias Assoc
+    ///    └─ DefKind::Fn f
+    /// ```
     fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'tcx>) {
+        // Trait Def
         let trait_def = self.add_named_def(
             parent_scope,
             DefKind::Trait,
             item.ident.inner,
             self.visibility_from_ast(parent_scope, &item.vis),
         );
+
+        // Generic Scope
         let trait_parent_scope = self
-            .collect_generic_scope(trait_def, parent_scope, &item.generics)
+            .attach_generic_scope(trait_def, parent_scope, &item.generics)
             .unwrap_or(parent_scope);
         let trait_scope = self
             .db
@@ -204,7 +319,7 @@ impl<'tcx> NameCollector<'tcx> {
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, trait_scope, &item.generics);
+                    self.attach_generic_scope(def, trait_scope, &item.generics);
                 }
                 ast::TraitItem::Fn(item) => {
                     let def = self.add_named_def(
@@ -213,7 +328,7 @@ impl<'tcx> NameCollector<'tcx> {
                         item.sig.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, trait_scope, &item.sig.generics);
+                    self.attach_generic_scope(def, trait_scope, &item.sig.generics);
                     if let Some(block) = &item.default {
                         self.collect_block(trait_scope, block);
                     }
@@ -225,7 +340,7 @@ impl<'tcx> NameCollector<'tcx> {
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, trait_scope, &item.generics);
+                    self.attach_generic_scope(def, trait_scope, &item.generics);
                 }
             }
         }
@@ -241,7 +356,7 @@ impl<'tcx> NameCollector<'tcx> {
         );
 
         let impl_parent_scope = self
-            .collect_generic_scope(impl_def, parent_scope, &item.generics)
+            .attach_generic_scope(impl_def, parent_scope, &item.generics)
             .unwrap_or(parent_scope);
         let impl_scope = self.db.add_scope(ScopeKind::Impl, Some(impl_parent_scope));
 
@@ -254,7 +369,7 @@ impl<'tcx> NameCollector<'tcx> {
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, impl_scope, &item.generics);
+                    self.attach_generic_scope(def, impl_scope, &item.generics);
                 }
                 ast::ImplItem::Fn(item) => {
                     let def = self.add_named_def(
@@ -263,7 +378,7 @@ impl<'tcx> NameCollector<'tcx> {
                         item.sig.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, impl_scope, &item.sig.generics);
+                    self.attach_generic_scope(def, impl_scope, &item.sig.generics);
                     self.collect_block(impl_scope, &item.block);
                 }
                 ast::ImplItem::Type(item) => {
@@ -273,33 +388,25 @@ impl<'tcx> NameCollector<'tcx> {
                         item.ident.inner,
                         Visibility::Private,
                     );
-                    self.collect_generic_scope(def, impl_scope, &item.generics);
+                    self.attach_generic_scope(def, impl_scope, &item.generics);
                 }
             }
         }
     }
 
-    fn collect_fn(
-        &mut self,
-        parent_scope: ScopeId,
-        item: &ast::ItemFn<'tcx>,
-        visibility: Visibility,
-    ) {
-        let fn_def =
-            self.add_named_def(parent_scope, DefKind::Fn, item.sig.ident.inner, visibility);
-        let body_parent_scope = self
-            .collect_generic_scope(fn_def, parent_scope, &item.generics)
-            .unwrap_or(parent_scope);
+    fn collect_type(&mut self, parent_scope: ScopeId, item: &ast::ItemType<'tcx>) {
+        let def = self.add_named_def(
+            parent_scope,
+            DefKind::TypeAlias,
+            item.ident.inner,
+            self.visibility_from_ast(parent_scope, &item.vis),
+        );
+        self.attach_generic_scope(def, parent_scope, &item.generics);
+    }
 
-        let body_scope = self
-            .db
-            .add_scope(ScopeKind::FunctionBody, Some(body_parent_scope));
-
-        for param in item.sig.params.iter().skip(1) {
-            self.collect_pat(body_scope, param.pat.pat);
-        }
-
-        self.collect_block(body_scope, &item.block);
+    fn collect_use(&mut self, scope: ScopeId, item: &ast::ItemUse<'tcx>) {
+        let visibility = self.visibility_from_ast(scope, &item.vis);
+        self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
     }
 
     fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'tcx>) {
@@ -314,8 +421,8 @@ impl<'tcx> NameCollector<'tcx> {
         }
     }
 
-    /// Creates and links a `GenericParams` scope for `def`, then collects generic parameter defs.
-    fn collect_generic_scope(
+    /// Creates and attaches a `GenericParams` scope for `def`, then collects generic parameter defs.
+    fn attach_generic_scope(
         &mut self,
         def: DefId,
         parent_scope: ScopeId,
@@ -491,7 +598,8 @@ impl<'tcx> NameCollector<'tcx> {
                 .expect("restricted visibility path segment must resolve unambiguously");
             let target = self.db.follow_aliases(def);
             scope = self.db[target]
-                .child_scope
+                .scopes
+                .path
                 .expect("restricted visibility path segment must name a scope-bearing item");
         }
 

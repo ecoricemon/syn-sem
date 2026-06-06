@@ -27,7 +27,18 @@ Rust namespaces must stay separate:
 Generic parameters should be represented as definitions, not recovered through
 ad hoc syntax ancestry.
 
+Definition-attached scopes should keep roles separate. `DefScopes::path` is for
+path-reachable children such as enum variants, `DefScopes::generic` is for
+lexical generic parameters, and `DefScopes::body` is for value-body bindings.
+
 Name resolution should be use-site based, scope-aware, and namespace-aware.
+
+## Future Considerations
+
+Struct fields are not currently modeled as definitions or scopes. If field
+modeling becomes necessary, add a dedicated field/member concept instead of
+forcing fields into `DefScopes::path`, because fields are not path-reachable
+children like enum variants.
 
 ## Primary Public Items
 

@@ -233,17 +233,17 @@ fn connects_generic_scopes_to_defs_consistently() {
     let root = db.root_scope();
 
     let s_def = resolve_def(&tcx, db, root, Namespace::Type, "S");
-    let s_generic_scope = db[s_def].generic_scope.expect("S should have generics");
+    let s_generic_scope = db[s_def].scopes.generic.expect("S should have generics");
     assert_eq!(db[s_generic_scope].kind, ScopeKind::GenericParams);
     assert_eq!(
         resolve_result(&tcx, db, s_generic_scope, Namespace::Type, "T"),
         ResolveResult::Found(resolve_def(&tcx, db, s_generic_scope, Namespace::Type, "T"))
     );
-    assert!(db[s_def].child_scope.is_none());
+    assert!(db[s_def].scopes.path.is_none());
 
     let e_def = resolve_def(&tcx, db, root, Namespace::Type, "E");
-    let e_generic_scope = db[e_def].generic_scope.expect("E should have generics");
-    let e_item_scope = db[e_def].child_scope.expect("E should expose variants");
+    let e_generic_scope = db[e_def].scopes.generic.expect("E should have generics");
+    let e_item_scope = db[e_def].scopes.path.expect("E should expose variants");
     assert_eq!(db[e_generic_scope].kind, ScopeKind::GenericParams);
     assert_eq!(db[e_item_scope].kind, ScopeKind::Item);
     assert_eq!(db[e_item_scope].parent, Some(e_generic_scope));
@@ -261,7 +261,8 @@ fn connects_generic_scopes_to_defs_consistently() {
 
     let trait_def = resolve_def(&tcx, db, root, Namespace::Type, "Tr");
     let trait_generic_scope = db[trait_def]
-        .generic_scope
+        .scopes
+        .generic
         .expect("Tr should have generics");
     assert_eq!(db[trait_generic_scope].kind, ScopeKind::GenericParams);
     assert_eq!(
@@ -276,8 +277,11 @@ fn connects_generic_scopes_to_defs_consistently() {
     );
 
     let f_def = resolve_def(&tcx, db, root, Namespace::Value, "f");
-    let f_generic_scope = db[f_def].generic_scope.expect("f should have generics");
+    let f_generic_scope = db[f_def].scopes.generic.expect("f should have generics");
+    let f_body_scope = db[f_def].scopes.body.expect("f should have a body");
     assert_eq!(db[f_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(db[f_body_scope].kind, ScopeKind::Function);
+    assert_eq!(db[f_body_scope].parent, Some(f_generic_scope));
     assert_eq!(
         resolve_result(&tcx, db, f_generic_scope, Namespace::Type, "N"),
         ResolveResult::Found(resolve_def(&tcx, db, f_generic_scope, Namespace::Type, "N"))
@@ -288,7 +292,7 @@ fn connects_generic_scopes_to_defs_consistently() {
         .iter()
         .find(|def| def.kind == DefKind::Impl)
         .expect("impl def should be collected");
-    let impl_generic_scope = impl_def.generic_scope.expect("impl should have generics");
+    let impl_generic_scope = impl_def.scopes.generic.expect("impl should have generics");
     assert_eq!(db[impl_generic_scope].kind, ScopeKind::GenericParams);
     assert_eq!(
         resolve_result(&tcx, db, impl_generic_scope, Namespace::Type, "Y"),

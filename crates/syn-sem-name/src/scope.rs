@@ -43,8 +43,8 @@ pub enum ScopeKind {
     /// Generic parameter scope.
     GenericParams,
 
-    /// Function body scope.
-    FunctionBody,
+    /// Function scope containing parameter bindings and enclosing the function block scope.
+    Function,
 
     /// Block expression or statement block scope.
     Block,

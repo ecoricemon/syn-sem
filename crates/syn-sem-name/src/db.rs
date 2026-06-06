@@ -85,8 +85,7 @@ impl<'cx> NameDb<'cx> {
             name,
             kind,
             parent_scope,
-            child_scope: None,
-            generic_scope: None,
+            scopes: Default::default(),
             target: None,
             visibility,
             origin,
@@ -123,14 +122,19 @@ impl<'cx> NameDb<'cx> {
         id
     }
 
-    /// Links a definition to a child scope that contains its importable members.
-    pub fn set_child_scope(&mut self, def: DefId, child_scope: ScopeId) {
-        self.defs[def.index()].child_scope = Some(child_scope);
+    /// Links a definition to a path scope that contains its path-reachable members.
+    pub fn set_path_scope(&mut self, def: DefId, path_scope: ScopeId) {
+        self.defs[def.index()].scopes.path = Some(path_scope);
     }
 
     /// Links a definition to the scope containing its generic parameters.
     pub fn set_generic_scope(&mut self, def: DefId, generic_scope: ScopeId) {
-        self.defs[def.index()].generic_scope = Some(generic_scope);
+        self.defs[def.index()].scopes.generic = Some(generic_scope);
+    }
+
+    /// Links a definition to the scope containing its value body.
+    pub fn set_body_scope(&mut self, def: DefId, body_scope: ScopeId) {
+        self.defs[def.index()].scopes.body = Some(body_scope);
     }
 
     /// Follows `DefKind::Use` alias definitions to their underlying definition.
@@ -208,8 +212,7 @@ impl<'cx> NameDb<'cx> {
             name,
             kind: DefKind::Use,
             parent_scope,
-            child_scope: None,
-            generic_scope: None,
+            scopes: Default::default(),
             target: Some(target),
             visibility,
             origin,
@@ -365,13 +368,13 @@ impl<'cx> NameDb<'cx> {
                 };
 
                 let glob_target = self.follow_aliases(*glob_candidate);
-                let Some(child_scope) = self[glob_target].child_scope else {
+                let Some(path_scope) = self[glob_target].scopes.path else {
                     return ImportResolve::Pending;
                 };
 
                 let mut visible = Vec::new();
                 for namespace in Namespace::all() {
-                    for (&name, binding) in self[child_scope].bindings.map(namespace) {
+                    for (&name, binding) in self[path_scope].bindings.map(namespace) {
                         for def in binding.iter() {
                             if self.is_visible_from(def, import_data.scope) {
                                 visible.push((namespace, name, def));
@@ -524,10 +527,10 @@ impl<'cx> NameDb<'cx> {
             };
 
             let target = self.follow_aliases(*def);
-            let Some(child_scope) = self[target].child_scope else {
+            let Some(path_scope) = self[target].scopes.path else {
                 return CandidateResolution::NotFound;
             };
-            current_scope = child_scope;
+            current_scope = path_scope;
             current_def = Some(target);
             index += 1;
         }
@@ -764,7 +767,7 @@ mod tests {
 
             let mut db = NameDb::default();
             let root = db.root_scope();
-            let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
+            let body = db.add_scope(ScopeKind::Function, Some(root));
 
             let outer = db.add_def(
                 root,
@@ -806,7 +809,7 @@ mod tests {
             let mut db = NameDb::default();
             let root = db.root_scope();
             let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
-            let body = db.add_scope(ScopeKind::FunctionBody, Some(generic_scope));
+            let body = db.add_scope(ScopeKind::Function, Some(generic_scope));
 
             let type_param = db.add_def(
                 generic_scope,
@@ -839,7 +842,7 @@ mod tests {
 
             let mut db = NameDb::default();
             let root = db.root_scope();
-            let body = db.add_scope(ScopeKind::FunctionBody, Some(root));
+            let body = db.add_scope(ScopeKind::Function, Some(root));
             let block = db.add_scope(ScopeKind::Block, Some(body));
 
             let local_struct = db.add_def(
@@ -950,7 +953,7 @@ mod tests {
             Origin::Untracked,
         );
         let scope = db.add_scope(ScopeKind::Module, Some(parent));
-        db.set_child_scope(def, scope);
+        db.set_path_scope(def, scope);
         (def, scope)
     }
 
@@ -1359,7 +1362,7 @@ mod tests {
                 Origin::Untracked,
             );
             let enum_scope = db.add_scope(ScopeKind::Item, Some(a_scope));
-            db.set_child_scope(enum_def, enum_scope);
+            db.set_path_scope(enum_def, enum_scope);
             db.add_def(
                 enum_scope,
                 DefKind::Variant,

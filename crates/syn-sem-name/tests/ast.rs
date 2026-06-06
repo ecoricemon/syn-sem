@@ -66,9 +66,7 @@ impl<'cx> AstNameCollector<'cx> {
             .add_scope(ScopeKind::GenericParams, Some(parent_scope));
         self.collect_generics_into(generic_scope, &item.generics);
 
-        let body_scope = self
-            .db
-            .add_scope(ScopeKind::FunctionBody, Some(generic_scope));
+        let body_scope = self.db.add_scope(ScopeKind::Function, Some(generic_scope));
 
         for param in item.sig.params.iter().skip(1) {
             self.collect_pat(body_scope, param.pat.pat);

@@ -15,17 +15,8 @@ pub struct Def<'cx> {
     /// Scope that owns this definition.
     pub parent_scope: ScopeId,
 
-    /// Scope containing this definition's importable children.
-    ///
-    /// Modules and item-like definitions such as enums can expose names through a child scope.
-    /// Definitions without importable children leave this unset.
-    pub child_scope: Option<ScopeId>,
-
-    /// Scope containing this definition's generic parameters.
-    ///
-    /// Generic parameters are lexical names, not importable children. Definitions without generic
-    /// parameters leave this unset.
-    pub generic_scope: Option<ScopeId>,
+    /// Scopes owned by or directly attached to this definition.
+    pub scopes: DefScopes,
 
     /// Definition this definition aliases.
     ///
@@ -37,6 +28,31 @@ pub struct Def<'cx> {
 
     /// Source origin associated with this definition.
     pub origin: Origin,
+}
+
+/// Scopes owned by or directly attached to a definition.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DefScopes {
+    /// Scope used when path resolution descends through this definition.
+    ///
+    /// This is for names reachable with paths or imports. For example, `enum E { V }` gives the
+    /// `E` definition a path scope containing variant `V`, so `use crate::E::V;` can descend from
+    /// `E` into that scope. Definitions without path-reachable children leave this unset.
+    pub path: Option<ScopeId>,
+
+    /// Scope containing lexical generic parameters owned by this definition.
+    ///
+    /// For example, `fn f<T>() {}` gives the `f` definition a generic scope containing `T`.
+    /// Generic parameters are lexical names, not path-reachable children, so this is separate from
+    /// [`Self::path`]. Definitions without generic parameters leave this unset.
+    pub generic: Option<ScopeId>,
+
+    /// Scope containing the value body owned by this definition.
+    ///
+    /// For example, `fn f(x: i32) { let y = x; }` gives the `f` definition a body scope containing
+    /// parameter binding `x`; the block inside the body then gets its own nested block scope for
+    /// names such as `y`. Definitions without a collected body leave this unset.
+    pub body: Option<ScopeId>,
 }
 
 /// Kind of definition stored in the name database.
