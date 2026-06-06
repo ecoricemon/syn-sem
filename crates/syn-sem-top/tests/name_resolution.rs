@@ -1,6 +1,6 @@
 use std::fs;
 use syn_sem_common::FilePath;
-use syn_sem_name::{DefKind, NameDb, Namespace, ResolveResult, ScopeId, ScopeKind};
+use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId, ScopeKind};
 use syn_sem_top::TopCx;
 
 #[test]
@@ -25,6 +25,281 @@ fn resolves_names_from_virtual_module_files() {
 
     let semantics = tcx.analyze(entry_path).unwrap();
     assert_fixture_modules(&tcx, semantics.names());
+}
+
+#[test]
+fn resolves_local_use_paths_from_top_context() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("use_paths.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a;
+
+        mod b {
+            use crate::a::Public;
+            use crate::a::{self, Public as Renamed};
+
+            mod inner {
+                pub(super) struct Local;
+            }
+
+            use self::inner::Local;
+            use super::a::Public as FromSuper;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+    tcx.insert_virtual_file(
+        tcx.common.intern("use_paths/a.rs"),
+        tcx.common.intern("pub struct Public;"),
+    )
+    .unwrap();
+
+    let semantics = tcx.analyze(entry_path).unwrap();
+    let db = semantics.names();
+    assert!(db
+        .imports()
+        .iter()
+        .all(|import| import.status == ImportStatus::Resolved));
+
+    let b_scope = module_scope(db, db.root_scope(), 1);
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Public"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Renamed"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "a"),
+        DefKind::Module
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "Local"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "FromSuper"),
+        DefKind::Struct
+    );
+}
+
+#[test]
+fn applies_restricted_visibility_to_imports() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("visibility.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub(crate) struct CrateVisible;
+            pub(super) struct SuperVisible;
+            pub(in crate::a) struct InA;
+
+            pub mod child {
+                use super::InA;
+            }
+        }
+
+        mod b {
+            use crate::a::CrateVisible;
+            use crate::a::SuperVisible;
+            use crate::a::InA;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let semantics = tcx.analyze(entry_path).unwrap();
+    let db = semantics.names();
+    let root = db.root_scope();
+    let a_scope = module_scope(db, root, 0);
+    let child_scope = module_scope(db, a_scope, 0);
+    let b_scope = module_scope(db, root, 1);
+
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, child_scope, Namespace::Type, "InA"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "CrateVisible"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "SuperVisible"),
+        DefKind::Struct
+    );
+    assert_eq!(
+        resolve_result(&tcx, db, b_scope, Namespace::Type, "InA"),
+        ResolveResult::NotFound
+    );
+    assert_eq!(db.imports()[3].status, ImportStatus::NotFound);
+}
+
+#[test]
+#[should_panic(expected = "restricted visibility path must start with `crate`, `self`, or `super`")]
+fn invalid_restricted_visibility_anchor_panics() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("invalid_visibility.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub(in a) struct Invalid;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let _ = tcx.analyze(entry_path);
+}
+
+#[test]
+#[should_panic(expected = "restricted visibility path segment must resolve")]
+fn unresolved_restricted_visibility_path_panics() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("unresolved_visibility.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub(in crate::missing) struct Invalid;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let _ = tcx.analyze(entry_path);
+}
+
+#[test]
+fn imports_enum_variants_in_type_and_value_namespaces() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("variants.rs");
+    let text = tcx.common.intern(
+        r#"
+        mod a {
+            pub enum E {
+                V,
+            }
+        }
+
+        mod b {
+            use crate::a::E::V;
+        }
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let semantics = tcx.analyze(entry_path).unwrap();
+    let db = semantics.names();
+    let b_scope = module_scope(db, db.root_scope(), 1);
+
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Type, "V"),
+        DefKind::Variant
+    );
+    assert_eq!(
+        follow_aliases_kind(&tcx, db, b_scope, Namespace::Value, "V"),
+        DefKind::Variant
+    );
+}
+
+#[test]
+fn connects_generic_scopes_to_defs_consistently() {
+    let tcx = TopCx::default();
+    let entry_path = tcx.common.intern("generics.rs");
+    let text = tcx.common.intern(
+        r#"
+        struct S<T>;
+
+        enum E<U> {
+            V,
+        }
+
+        trait Tr<W> {
+            fn m<X>();
+        }
+
+        impl<Y> S<Y> {
+            fn make<Z>() {}
+        }
+
+        fn f<N>() {}
+        "#,
+    );
+    tcx.insert_virtual_file(entry_path, text).unwrap();
+
+    let semantics = tcx.analyze(entry_path).unwrap();
+    let db = semantics.names();
+    let root = db.root_scope();
+
+    let s_def = resolve_def(&tcx, db, root, Namespace::Type, "S");
+    let s_generic_scope = db[s_def].generic_scope.expect("S should have generics");
+    assert_eq!(db[s_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, s_generic_scope, Namespace::Type, "T"),
+        ResolveResult::Found(resolve_def(&tcx, db, s_generic_scope, Namespace::Type, "T"))
+    );
+    assert!(db[s_def].child_scope.is_none());
+
+    let e_def = resolve_def(&tcx, db, root, Namespace::Type, "E");
+    let e_generic_scope = db[e_def].generic_scope.expect("E should have generics");
+    let e_item_scope = db[e_def].child_scope.expect("E should expose variants");
+    assert_eq!(db[e_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(db[e_item_scope].kind, ScopeKind::Item);
+    assert_eq!(db[e_item_scope].parent, Some(e_generic_scope));
+    assert_eq!(
+        resolve_result(&tcx, db, e_generic_scope, Namespace::Type, "U"),
+        ResolveResult::Found(resolve_def(&tcx, db, e_generic_scope, Namespace::Type, "U"))
+    );
+    assert_eq!(
+        resolve_result(&tcx, db, e_item_scope, Namespace::Type, "V"),
+        ResolveResult::Found(resolve_def(&tcx, db, e_item_scope, Namespace::Type, "V"))
+    );
+    assert!(db
+        .binding(e_item_scope, Namespace::Type, tcx.common.intern("U"))
+        .is_none());
+
+    let trait_def = resolve_def(&tcx, db, root, Namespace::Type, "Tr");
+    let trait_generic_scope = db[trait_def]
+        .generic_scope
+        .expect("Tr should have generics");
+    assert_eq!(db[trait_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, trait_generic_scope, Namespace::Type, "W"),
+        ResolveResult::Found(resolve_def(
+            &tcx,
+            db,
+            trait_generic_scope,
+            Namespace::Type,
+            "W"
+        ))
+    );
+
+    let f_def = resolve_def(&tcx, db, root, Namespace::Value, "f");
+    let f_generic_scope = db[f_def].generic_scope.expect("f should have generics");
+    assert_eq!(db[f_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, f_generic_scope, Namespace::Type, "N"),
+        ResolveResult::Found(resolve_def(&tcx, db, f_generic_scope, Namespace::Type, "N"))
+    );
+
+    let impl_def = db
+        .defs()
+        .iter()
+        .find(|def| def.kind == DefKind::Impl)
+        .expect("impl def should be collected");
+    let impl_generic_scope = impl_def.generic_scope.expect("impl should have generics");
+    assert_eq!(db[impl_generic_scope].kind, ScopeKind::GenericParams);
+    assert_eq!(
+        resolve_result(&tcx, db, impl_generic_scope, Namespace::Type, "Y"),
+        ResolveResult::Found(resolve_def(
+            &tcx,
+            db,
+            impl_generic_scope,
+            Namespace::Type,
+            "Y"
+        ))
+    );
 }
 
 fn insert_virtual_fixture_tree<'tcx>(tcx: &'tcx TopCx<'tcx>) -> FilePath<'tcx> {
@@ -104,10 +379,71 @@ fn resolve_kind<'tcx>(
     name: &str,
 ) -> DefKind {
     let name = tcx.common.intern(name);
-    let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
     db[def].kind
+}
+
+fn resolve_def<'tcx>(
+    tcx: &'tcx TopCx<'tcx>,
+    db: &NameDb<'tcx>,
+    scope: ScopeId,
+    namespace: Namespace,
+    name: &str,
+) -> syn_sem_name::DefId {
+    let name = tcx.common.intern(name);
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
+        panic!("expected {name:?} to resolve in {namespace:?}");
+    };
+    def
+}
+
+fn follow_aliases_kind<'tcx>(
+    tcx: &'tcx TopCx<'tcx>,
+    db: &NameDb<'tcx>,
+    scope: ScopeId,
+    namespace: Namespace,
+    name: &str,
+) -> DefKind {
+    let name = tcx.common.intern(name);
+    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
+        panic!("expected {name:?} to resolve in {namespace:?}");
+    };
+    db[db.follow_aliases(def)].kind
+}
+
+fn resolve_result<'tcx>(
+    tcx: &'tcx TopCx<'tcx>,
+    db: &NameDb<'tcx>,
+    scope: ScopeId,
+    namespace: Namespace,
+    name: &str,
+) -> ResolveResult {
+    resolve_lexical(db, scope, namespace, tcx.common.intern(name))
+}
+
+fn resolve_lexical(
+    db: &NameDb<'_>,
+    mut scope: ScopeId,
+    namespace: Namespace,
+    name: syn_sem_name::Name<'_>,
+) -> ResolveResult {
+    loop {
+        if let Some(binding) = db.binding(scope, namespace, name) {
+            let mut defs = binding.iter();
+            return match defs.len() {
+                0 => ResolveResult::NotFound,
+                1 => ResolveResult::Found(defs.next().unwrap()),
+                _ => ResolveResult::Ambiguous(defs.collect()),
+            };
+        }
+
+        let Some(parent) = db[scope].parent else {
+            return ResolveResult::NotFound;
+        };
+        scope = parent;
+    }
 }
 
 fn module_scope(db: &NameDb<'_>, parent: ScopeId, nth: usize) -> ScopeId {

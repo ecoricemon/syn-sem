@@ -18,7 +18,7 @@ pub struct Scope<'cx> {
 
 impl<'cx> Scope<'cx> {
     /// Creates an empty scope.
-    pub fn new(id: ScopeId, kind: ScopeKind, parent: Option<ScopeId>) -> Self {
+    pub(crate) fn new(id: ScopeId, kind: ScopeKind, parent: Option<ScopeId>) -> Self {
         Self {
             id,
             parent,
@@ -66,16 +66,6 @@ pub struct Bindings<'cx> {
 }
 
 impl<'cx> Bindings<'cx> {
-    /// Creates empty bindings.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Inserts a definition under `name` in `namespace`.
-    pub fn insert(&mut self, namespace: Namespace, name: Name<'cx>, def: DefId) {
-        self.map_mut(namespace).entry(name).or_default().push(def);
-    }
-
     /// Returns the binding for `name` in `namespace`.
     pub fn get(&self, namespace: Namespace, name: Name<'cx>) -> Option<&Binding> {
         self.map(namespace).get(&name)
@@ -91,8 +81,35 @@ impl<'cx> Bindings<'cx> {
         }
     }
 
+    /// Creates empty bindings.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts a definition under `name` in `namespace`.
+    pub(crate) fn insert(&mut self, namespace: Namespace, name: Name<'cx>, def: DefId) {
+        self.map_mut(namespace).entry(name).or_default().push(def);
+    }
+
+    /// Inserts a definition unless the same definition is already bound there, then returns true
+    /// if the given definition is successfully inserted.
+    pub(crate) fn insert_unique(
+        &mut self,
+        namespace: Namespace,
+        name: Name<'cx>,
+        def: DefId,
+    ) -> bool {
+        let binding = self.map_mut(namespace).entry(name).or_default();
+        if binding.contains(def) {
+            false
+        } else {
+            binding.push(def);
+            true
+        }
+    }
+
     /// Returns the mutable map for `namespace`.
-    pub fn map_mut(&mut self, namespace: Namespace) -> &mut Map<Name<'cx>, Binding> {
+    pub(crate) fn map_mut(&mut self, namespace: Namespace) -> &mut Map<Name<'cx>, Binding> {
         match namespace {
             Namespace::Type => &mut self.types,
             Namespace::Value => &mut self.values,
@@ -109,16 +126,6 @@ pub struct Binding {
 }
 
 impl Binding {
-    /// Creates an empty binding.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Appends a definition to this binding.
-    pub fn push(&mut self, def: DefId) {
-        self.defs.push(def);
-    }
-
     /// Iterates definitions attached to this binding.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = DefId> + '_ {
         self.defs.iter().copied()
@@ -140,5 +147,15 @@ impl Binding {
     /// Returns whether the binding has no definitions.
     pub fn is_empty(&self) -> bool {
         self.defs.is_empty()
+    }
+
+    /// Appends a definition to this binding.
+    pub(crate) fn push(&mut self, def: DefId) {
+        self.defs.push(def);
+    }
+
+    /// Returns whether this binding already contains `def`.
+    pub(crate) fn contains(&self, def: DefId) -> bool {
+        self.defs.contains(&def)
     }
 }

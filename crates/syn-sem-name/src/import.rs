@@ -1,10 +1,10 @@
-use crate::{Name, Origin, ScopeId, Visibility};
+use crate::{ImportId, Name, Origin, ScopeId, Visibility};
 
 /// Import declaration collected during name resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import<'cx> {
     /// Import id.
-    pub id: crate::ImportId,
+    pub id: ImportId,
 
     /// Scope that receives the imported binding.
     pub scope: ScopeId,

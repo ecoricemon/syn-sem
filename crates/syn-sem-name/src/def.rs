@@ -15,6 +15,23 @@ pub struct Def<'cx> {
     /// Scope that owns this definition.
     pub parent_scope: ScopeId,
 
+    /// Scope containing this definition's importable children.
+    ///
+    /// Modules and item-like definitions such as enums can expose names through a child scope.
+    /// Definitions without importable children leave this unset.
+    pub child_scope: Option<ScopeId>,
+
+    /// Scope containing this definition's generic parameters.
+    ///
+    /// Generic parameters are lexical names, not importable children. Definitions without generic
+    /// parameters leave this unset.
+    pub generic_scope: Option<ScopeId>,
+
+    /// Definition this definition aliases.
+    ///
+    /// Import definitions use this to point at their resolved target.
+    pub target: Option<DefId>,
+
     /// Visibility of this definition.
     pub visibility: Visibility,
 
@@ -81,18 +98,29 @@ impl DefKind {
     /// Returns the default namespaces populated by this definition kind.
     pub const fn namespaces(self) -> &'static [Namespace] {
         match self {
+            // Type namespace
             Self::Module
             | Self::Struct
             | Self::Enum
             | Self::Trait
             | Self::TypeAlias
             | Self::TypeParam => &[Namespace::Type],
+
+            // Type & Value namespaces
             Self::Variant => &[Namespace::Type, Namespace::Value],
+
+            // Value namespace
             Self::Fn | Self::Const | Self::Static | Self::Local | Self::ConstParam => {
                 &[Namespace::Value]
             }
+
+            // Lifetime namespace
             Self::LifetimeParam => &[Namespace::Lifetime],
+
+            // Macro namespace
             Self::Macro => &[Namespace::Macro],
+
+            // None
             Self::Field | Self::Use | Self::Impl => &[],
         }
     }
@@ -113,13 +141,12 @@ pub enum Visibility {
 
 /// Source origin associated with a definition or import.
 ///
-/// The name crate deliberately does not depend on a concrete AST crate. Users can store their own
-/// stable node index here and interpret it at the integration boundary.
+/// This is the place where future source mapping can attach diagnostics, go-to-definition
+/// information, or incremental invalidation data to `Def` and `Import` entries. For now, the name
+/// database records untracked origins because no stable AST-node identity is wired through the
+/// integration layer yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Origin {
-    /// No source node is associated with this entry.
-    Synthetic,
-
-    /// Opaque AST node index owned by the caller.
-    AstNode(usize),
+    /// Source origin is not tracked for this entry.
+    Untracked,
 }
