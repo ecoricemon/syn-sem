@@ -5,7 +5,6 @@ members = ["crates/*"]
 [workspace.dependencies]
 syn-sem-common = { path = "crates/syn-sem-common" }
 syn-sem-ast = { path = "crates/syn-sem-ast" }
-syn-sem-forest = { path = "crates/syn-sem-forest" }
 syn-sem-name = { path = "crates/syn-sem-name" }
 syn-sem-model = { path = "crates/syn-sem-model" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }

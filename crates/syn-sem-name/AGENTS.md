@@ -10,7 +10,7 @@ lookup results.
 
 Keep this crate AST-agnostic in production dependencies. Higher layers may
 attach AST-specific identities through opaque origins, but this crate should not
-depend on `syn`, `syn-sem-forest`, or `syn-sem-ast` for its core model.
+depend on `syn` or `syn-sem-ast` for its core model.
 
 Do not add type inference, evaluation, monomorphization, or backend lowering
 responsibilities here.
