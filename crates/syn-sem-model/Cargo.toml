@@ -1,0 +1,13 @@
+[package]
+name = "syn-sem-model"
+publish = false
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.66.1"
+description = "Semantic program model for syn-sem"
+repository = "https://github.com/ecoricemon/syn-sem"
+
+[dependencies]
+syn-sem-common = { workspace = true }
+syn-sem-ast = { workspace = true }
+syn-sem-name = { workspace = true }
