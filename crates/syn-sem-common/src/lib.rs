@@ -4,8 +4,10 @@
 //! abstract source files. It deliberately stays independent from syntax, AST, name-resolution, and
 //! semantic crates.
 
+mod ast_node;
 mod context;
 
+pub use ast_node::*;
 pub use context::*;
 
 use any_intern::Interned;

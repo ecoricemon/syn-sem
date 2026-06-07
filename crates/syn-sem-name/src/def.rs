@@ -1,4 +1,6 @@
 use crate::{DefId, Name, Namespace, ScopeId};
+use std::marker::PhantomData;
+use syn_sem_common::{AstNode, AstNodeKind};
 
 /// Named definition known to the resolver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,4 +181,27 @@ pub enum Visibility {
 pub enum Origin {
     /// Source origin is not tracked for this entry.
     Untracked,
+}
+
+/// AST node identity associated with a definition.
+///
+/// This key intentionally avoids depending on `syn-sem-ast`. Integration layers can create keys
+/// from their own AST arenas and hand them to the name database, which then owns the lookup from an
+/// AST declaration node to [`DefId`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AstNodeId<'cx> {
+    ptr: usize,
+    kind: AstNodeKind,
+    _marker: PhantomData<&'cx ()>,
+}
+
+impl<'cx> AstNodeId<'cx> {
+    /// Creates an AST node identity from an arena-backed AST node.
+    pub fn from_ref<T: AstNode>(node: &'cx T) -> Self {
+        Self {
+            ptr: (node as *const T).cast::<()>() as usize,
+            kind: T::KIND,
+            _marker: PhantomData,
+        }
+    }
 }

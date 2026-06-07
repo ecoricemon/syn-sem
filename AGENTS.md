@@ -9,6 +9,11 @@ We are refactoring `crates/syn-sem` by extracting focused sub-crates.
 We are implementing `syn-sem-top` instead of modifying `syn-sem` in the middle
 of migration.
 
+Current crate boundaries, phase ordering, and ownership choices are migration
+guidance, not fixed architecture. Do not treat assistant-proposed architecture
+from earlier tasks as durable unless the user explicitly confirms it for the
+active task or it is recorded here as a lasting project direction.
+
 Each extracted crate may have its own `AGENTS.md` with crate-local role,
 boundary, model, and public-item guidance. Prefer the nearest crate-local file
 for details specific to that crate.
@@ -66,6 +71,12 @@ Keep extracted crates focused.
 
 Respect each crate's local boundary rules before adding dependencies or moving
 public items.
+
+Lower phases should expose owned information through focused query APIs instead
+of making higher phases reconstruct searches from raw storage. Higher phases
+should ask the owning crate for facts such as definition/source mappings,
+scopes, and resolution links, so they can stay focused on their own
+representation or analysis work.
 
 New reusable infrastructure should usually be extracted before being wired
 deeply into `syn-sem`.

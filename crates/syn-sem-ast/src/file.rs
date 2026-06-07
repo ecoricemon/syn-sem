@@ -1,4 +1,5 @@
 use crate::{FromSyn, InputDesc, Item, Span, SyntaxCx};
+use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A parsed Rust source file.
@@ -11,6 +12,10 @@ pub struct File<'cx> {
     pub items: &'cx [Item<'cx>],
     /// Source span of the whole file.
     pub span: Span<'cx>,
+}
+
+impl AstNode for File<'_> {
+    const KIND: AstNodeKind = AstNodeKind::File;
 }
 
 impl<'cx> FromSyn<'cx, syn::File> for File<'cx> {
