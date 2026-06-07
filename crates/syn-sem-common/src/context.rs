@@ -40,6 +40,7 @@ impl CommonCx {
         self.interner.intern_display(value, upper_size)
     }
 
+    /// Interns a filesystem path after converting it to UTF-8.
     pub fn intern_path(&self, path: &Path) -> InternedStr<'_> {
         let path = path.to_str().unwrap();
         self.intern(path)

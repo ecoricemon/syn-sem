@@ -1,6 +1,6 @@
 use crate::{
-    Binding, Def, DefId, DefKind, Import, ImportId, ImportKind, ImportStatus, Name, Namespace,
-    Origin, Scope, ScopeId, ScopeKind, Visibility,
+    AstNodeId, Binding, Def, DefId, DefKind, Import, ImportId, ImportKind, ImportStatus, Map, Name,
+    Namespace, Origin, Scope, ScopeId, ScopeKind, Visibility,
 };
 use std::ops::{Index, IndexMut};
 
@@ -10,6 +10,7 @@ pub struct NameDb<'cx> {
     scopes: Vec<Scope<'cx>>,
     defs: Vec<Def<'cx>>,
     imports: Vec<Import<'cx>>,
+    ast_defs: Map<AstNodeId<'cx>, DefId>,
 }
 
 impl<'cx> NameDb<'cx> {
@@ -31,6 +32,30 @@ impl<'cx> NameDb<'cx> {
     /// Returns all imports.
     pub fn imports(&self) -> &[Import<'cx>] {
         &self.imports
+    }
+
+    /// Returns the definition created from `node`, if one is tracked.
+    pub fn def_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<DefId> {
+        self.ast_defs.get(&node).copied()
+    }
+
+    /// Records that `def` was created from `node`.
+    pub fn set_def_ast_node(&mut self, def: DefId, node: AstNodeId<'cx>) {
+        let old = self.ast_defs.insert(node, def);
+        assert!(
+            old.is_none() || old == Some(def),
+            "one AST node cannot create multiple definitions"
+        );
+    }
+
+    /// Returns the path scope attached to `def`, if any.
+    pub fn def_path_scope(&self, def: DefId) -> Option<ScopeId> {
+        self[def].scopes.path
+    }
+
+    /// Returns the body scope attached to `def`, if any.
+    pub fn def_body_scope(&self, def: DefId) -> Option<ScopeId> {
+        self[def].scopes.body
     }
 
     /// Returns the binding for `name` directly declared in `scope` and `namespace`.
@@ -648,6 +673,7 @@ impl Default for NameDb<'_> {
             scopes: vec![root_scope],
             defs: Vec::new(),
             imports: Vec::new(),
+            ast_defs: Map::default(),
         }
     }
 }

@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
 use syn_sem_name::{
-    DefId, DefKind, ImportKind, Name, NameDb, Namespace, Origin, ScopeId, ScopeKind, Visibility,
+    AstNodeId, DefId, DefKind, ImportKind, Name, NameDb, Namespace, Origin, ScopeId, ScopeKind,
+    Visibility,
 };
 
 pub(crate) struct NameCollector<'tcx> {
@@ -40,11 +41,12 @@ impl<'tcx> NameCollector<'tcx> {
     fn collect_item_from_module_tree(
         &mut self,
         scope: ScopeId,
-        item: &ast::Item<'tcx>,
+        item: &'tcx ast::Item<'tcx>,
         path: &ModulePath,
     ) -> Result<()> {
+        let ast_node = AstNodeId::from_ref(item);
         match item {
-            ast::Item::Mod(item) => self.collect_mod_from_module_tree(scope, item, path),
+            ast::Item::Mod(item) => self.collect_mod_from_module_tree(scope, item, path, ast_node),
             _ => {
                 self.collect_item_from_ast(scope, item);
                 Ok(())
@@ -56,16 +58,17 @@ impl<'tcx> NameCollector<'tcx> {
     ///
     /// Inline modules are collected recursively, declarations create `Def`s, and `use` trees are
     /// recorded as imports to be resolved after collection finishes.
-    fn collect_item_from_ast(&mut self, scope: ScopeId, item: &ast::Item<'tcx>) {
+    fn collect_item_from_ast(&mut self, scope: ScopeId, item: &'tcx ast::Item<'tcx>) {
+        let ast_node = AstNodeId::from_ref(item);
         match item {
-            ast::Item::Const(item) => self.collect_const(scope, item),
-            ast::Item::Enum(item) => self.collect_enum(scope, item),
-            ast::Item::Fn(item) => self.collect_fn(scope, item),
-            ast::Item::Impl(item) => self.collect_impl(scope, item),
-            ast::Item::Mod(item) => self.collect_mod_from_ast(scope, item),
-            ast::Item::Struct(item) => self.collect_struct(scope, item),
-            ast::Item::Trait(item) => self.collect_trait(scope, item),
-            ast::Item::Type(item) => self.collect_type(scope, item),
+            ast::Item::Const(item) => self.collect_const(scope, item, ast_node),
+            ast::Item::Enum(item) => self.collect_enum(scope, item, ast_node),
+            ast::Item::Fn(item) => self.collect_fn(scope, item, ast_node),
+            ast::Item::Impl(item) => self.collect_impl(scope, item, ast_node),
+            ast::Item::Mod(item) => self.collect_mod_from_ast(scope, item, ast_node),
+            ast::Item::Struct(item) => self.collect_struct(scope, item, ast_node),
+            ast::Item::Trait(item) => self.collect_trait(scope, item, ast_node),
+            ast::Item::Type(item) => self.collect_type(scope, item, ast_node),
             ast::Item::Use(item) => self.collect_use(scope, item),
         }
     }
@@ -73,12 +76,14 @@ impl<'tcx> NameCollector<'tcx> {
     fn collect_mod_from_module_tree(
         &mut self,
         parent_scope: ScopeId,
-        item: &ast::ItemMod<'tcx>,
+        item: &'tcx ast::ItemMod<'tcx>,
         path: &ModulePath,
+        ast_node: AstNodeId<'tcx>,
     ) -> Result<()> {
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let module_def =
             self.add_named_def(parent_scope, DefKind::Module, item.ident.inner, visibility);
+        self.db.set_def_ast_node(module_def, ast_node);
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
         self.db.set_path_scope(module_def, module_scope);
         let module_dir = path.child_dir(item);
@@ -105,10 +110,16 @@ impl<'tcx> NameCollector<'tcx> {
         Ok(())
     }
 
-    fn collect_mod_from_ast(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'tcx>) {
+    fn collect_mod_from_ast(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemMod<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let module_def =
             self.add_named_def(parent_scope, DefKind::Module, item.ident.inner, visibility);
+        self.db.set_def_ast_node(module_def, ast_node);
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
         self.db.set_path_scope(module_def, module_scope);
 
@@ -125,10 +136,16 @@ impl<'tcx> NameCollector<'tcx> {
     /// parent_scope
     /// └─ DefKind::Const C
     /// ```
-    fn collect_const(&mut self, parent_scope: ScopeId, item: &ast::ItemConst<'tcx>) {
+    fn collect_const(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemConst<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::Const
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        self.add_named_def(parent_scope, DefKind::Const, item.ident.inner, visibility);
+        let def = self.add_named_def(parent_scope, DefKind::Const, item.ident.inner, visibility);
+        self.db.set_def_ast_node(def, ast_node);
     }
 
     /// For `enum E<T> { V }`, this creates the following definition and scope hierarchy:
@@ -152,11 +169,17 @@ impl<'tcx> NameCollector<'tcx> {
     /// └─ Item scope
     ///    └─ DefKind::Variant V
     /// ```
-    fn collect_enum(&mut self, parent_scope: ScopeId, item: &ast::ItemEnum<'tcx>) {
+    fn collect_enum(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemEnum<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::Enum
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let enum_def =
             self.add_named_def(parent_scope, DefKind::Enum, item.ident.inner, visibility);
+        self.db.set_def_ast_node(enum_def, ast_node);
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -169,12 +192,13 @@ impl<'tcx> NameCollector<'tcx> {
         let path_scope = self.db.add_scope(ScopeKind::Item, Some(path_parent_scope));
         self.db.set_path_scope(enum_def, path_scope);
         for variant in item.variants {
-            self.add_named_def(
+            let def = self.add_named_def(
                 path_scope,
                 DefKind::Variant,
                 variant.ident.inner,
                 visibility,
             );
+            self.db.set_def_ast_node(def, AstNodeId::from_ref(variant));
         }
     }
 
@@ -204,11 +228,17 @@ impl<'tcx> NameCollector<'tcx> {
     ///    └─ Block scope
     ///       └─ DefKind::Local y
     /// ```
-    fn collect_fn(&mut self, parent_scope: ScopeId, item: &ast::ItemFn<'tcx>) {
+    fn collect_fn(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemFn<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::Fn
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let fn_def =
             self.add_named_def(parent_scope, DefKind::Fn, item.sig.ident.inner, visibility);
+        self.db.set_def_ast_node(fn_def, ast_node);
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -238,10 +268,16 @@ impl<'tcx> NameCollector<'tcx> {
     /// parent_scope
     /// └─ DefKind::Struct S
     /// ```
-    fn collect_struct(&mut self, parent_scope: ScopeId, item: &ast::ItemStruct<'tcx>) {
+    fn collect_struct(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemStruct<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::Struct
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let def = self.add_named_def(parent_scope, DefKind::Struct, item.ident.inner, visibility);
+        self.db.set_def_ast_node(def, ast_node);
 
         // Generic scope
         if let Some(generic_scope) = self.create_generic_scope(parent_scope, &item.generics) {
@@ -268,11 +304,17 @@ impl<'tcx> NameCollector<'tcx> {
     /// ```
     ///
     /// Trait items inside the `Trait` scope are collected by [`Self::collect_trait_item`].
-    fn collect_trait(&mut self, parent_scope: ScopeId, item: &ast::ItemTrait<'tcx>) {
+    fn collect_trait(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemTrait<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // Trait Def
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let trait_def =
             self.add_named_def(parent_scope, DefKind::Trait, item.ident.inner, visibility);
+        self.db.set_def_ast_node(trait_def, ast_node);
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -308,7 +350,8 @@ impl<'tcx> NameCollector<'tcx> {
     ///    └─ Function scope
     ///       └─ Block scope
     /// ```
-    fn collect_trait_item(&mut self, trait_scope: ScopeId, item: &ast::TraitItem<'tcx>) {
+    fn collect_trait_item(&mut self, trait_scope: ScopeId, item: &'tcx ast::TraitItem<'tcx>) {
+        let ast_node = AstNodeId::from_ref(item);
         match item {
             ast::TraitItem::Const(item) => {
                 let def = self.add_named_def(
@@ -317,6 +360,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
                 {
                     self.db.set_generic_scope(def, generic_scope);
@@ -329,6 +373,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.sig.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 let generic_scope = self.create_generic_scope(trait_scope, &item.sig.generics);
                 if let Some(generic_scope) = generic_scope {
                     self.db.set_generic_scope(def, generic_scope);
@@ -347,6 +392,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
                 {
                     self.db.set_generic_scope(def, generic_scope);
@@ -374,7 +420,12 @@ impl<'tcx> NameCollector<'tcx> {
     /// ```
     ///
     /// Impl items inside the `Impl` scope are collected by [`Self::collect_impl_item`].
-    fn collect_impl(&mut self, parent_scope: ScopeId, item: &ast::ItemImpl<'tcx>) {
+    fn collect_impl(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemImpl<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::Impl
         let impl_def = self.db.add_def(
             parent_scope,
@@ -383,6 +434,7 @@ impl<'tcx> NameCollector<'tcx> {
             Visibility::Private,
             Origin::Untracked,
         );
+        self.db.set_def_ast_node(impl_def, ast_node);
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -416,7 +468,8 @@ impl<'tcx> NameCollector<'tcx> {
     ///    └─ Function scope
     ///       └─ Block scope
     /// ```
-    fn collect_impl_item(&mut self, impl_scope: ScopeId, item: &ast::ImplItem<'tcx>) {
+    fn collect_impl_item(&mut self, impl_scope: ScopeId, item: &'tcx ast::ImplItem<'tcx>) {
+        let ast_node = AstNodeId::from_ref(item);
         match item {
             ast::ImplItem::Const(item) => {
                 let def = self.add_named_def(
@@ -425,6 +478,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
                     self.db.set_generic_scope(def, generic_scope);
                 }
@@ -436,6 +490,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.sig.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 let generic_scope = self.create_generic_scope(impl_scope, &item.sig.generics);
                 if let Some(generic_scope) = generic_scope {
                     self.db.set_generic_scope(def, generic_scope);
@@ -452,6 +507,7 @@ impl<'tcx> NameCollector<'tcx> {
                     item.ident.inner,
                     Visibility::Private,
                 );
+                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
                     self.db.set_generic_scope(def, generic_scope);
                 }
@@ -474,7 +530,12 @@ impl<'tcx> NameCollector<'tcx> {
     /// parent_scope
     /// └─ DefKind::TypeAlias Alias
     /// ```
-    fn collect_type(&mut self, parent_scope: ScopeId, item: &ast::ItemType<'tcx>) {
+    fn collect_type(
+        &mut self,
+        parent_scope: ScopeId,
+        item: &'tcx ast::ItemType<'tcx>,
+        ast_node: AstNodeId<'tcx>,
+    ) {
         // DefKind::TypeAlias
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
         let def = self.add_named_def(
@@ -483,6 +544,7 @@ impl<'tcx> NameCollector<'tcx> {
             item.ident.inner,
             visibility,
         );
+        self.db.set_def_ast_node(def, ast_node);
 
         // Generic scope
         if let Some(generic_scope) = self.create_generic_scope(parent_scope, &item.generics) {
@@ -503,7 +565,7 @@ impl<'tcx> NameCollector<'tcx> {
     /// scope
     /// └─ DefKind::Use B -> target DefKind::Struct B
     /// ```
-    fn collect_use(&mut self, scope: ScopeId, item: &ast::ItemUse<'tcx>) {
+    fn collect_use(&mut self, scope: ScopeId, item: &'tcx ast::ItemUse<'tcx>) {
         let visibility = self.visibility_from_ast(scope, &item.vis);
         self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
     }
@@ -522,7 +584,7 @@ impl<'tcx> NameCollector<'tcx> {
         &mut self,
         scope: ScopeId,
         prefix: Vec<Name<'tcx>>,
-        tree: &ast::UseTree<'tcx>,
+        tree: &'tcx ast::UseTree<'tcx>,
         visibility: Visibility,
     ) {
         match tree {
@@ -578,7 +640,7 @@ impl<'tcx> NameCollector<'tcx> {
     ///    ├─ DefKind::Local x
     ///    └─ DefKind::Struct Local
     /// ```
-    fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'tcx>) {
+    fn collect_block(&mut self, parent_scope: ScopeId, block: &'tcx ast::Block<'tcx>) {
         // Block scope
         let block_scope = self.db.add_scope(ScopeKind::Block, Some(parent_scope));
 
@@ -598,7 +660,7 @@ impl<'tcx> NameCollector<'tcx> {
     /// ├─ DefKind::Local a
     /// └─ DefKind::Local b
     /// ```
-    fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'tcx>) {
+    fn collect_pat(&mut self, scope: ScopeId, pat: &'tcx ast::Pat<'tcx>) {
         match pat {
             ast::Pat::Ident(pat) => {
                 self.add_named_def(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
@@ -664,8 +726,8 @@ impl<'tcx> NameCollector<'tcx> {
     fn create_function_body_scope(
         &mut self,
         parent_scope: ScopeId,
-        sig: &ast::Signature<'tcx>,
-        block: &ast::Block<'tcx>,
+        sig: &'tcx ast::Signature<'tcx>,
+        block: &'tcx ast::Block<'tcx>,
     ) -> ScopeId {
         let function_scope = self.db.add_scope(ScopeKind::Function, Some(parent_scope));
 

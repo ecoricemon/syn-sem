@@ -16,6 +16,9 @@ fn resolves_imports_from_physical_module_files() {
     tcx.insert_virtual_file(entry_path, text).unwrap();
 
     let semantics = tcx.analyze(entry_path).unwrap();
+    assert!(!semantics.repr().files().is_empty());
+    assert!(!semantics.repr().items().is_empty());
+
     let db = semantics.names();
     let root = db.root_scope();
 

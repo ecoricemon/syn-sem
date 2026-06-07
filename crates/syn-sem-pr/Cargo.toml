@@ -1,10 +1,10 @@
 [package]
-name = "syn-sem-model"
+name = "syn-sem-pr"
 publish = false
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.66.1"
-description = "Semantic program model for syn-sem"
+description = "Program representation for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 
 [dependencies]

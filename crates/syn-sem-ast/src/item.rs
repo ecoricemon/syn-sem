@@ -3,6 +3,7 @@ use crate::{
     SyntaxCx, Type, Variant, Visibility,
 };
 use std::iter;
+use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A top-level or block-level Rust item supported by the semantic AST.
@@ -28,6 +29,10 @@ pub enum Item<'cx> {
     Type(ItemType<'cx>),
     /// Use item.
     Use(ItemUse<'cx>),
+}
+
+impl AstNode for Item<'_> {
+    const KIND: AstNodeKind = AstNodeKind::Item;
 }
 
 impl<'cx> FromSyn<'cx, syn::Item> for Item<'cx> {
@@ -64,6 +69,10 @@ pub struct ItemConst<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemConst<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemConst;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemConst> for ItemConst<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemConst>) -> Self {
         Self {
@@ -91,6 +100,10 @@ pub struct ItemEnum<'cx> {
     pub variants: &'cx [Variant<'cx>],
     /// Source span of the item.
     pub span: Span<'cx>,
+}
+
+impl AstNode for ItemEnum<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemEnum;
 }
 
 impl<'cx> FromSyn<'cx, syn::ItemEnum> for ItemEnum<'cx> {
@@ -122,6 +135,10 @@ pub struct ItemFn<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemFn<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemFn;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemFn> for ItemFn<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemFn>) -> Self {
         Self {
@@ -151,6 +168,10 @@ pub struct ItemImpl<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemImpl<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemImpl;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemImpl> for ItemImpl<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemImpl>) -> Self {
         Self {
@@ -178,6 +199,10 @@ pub enum ImplItem<'cx> {
     Fn(ImplItemFn<'cx>),
     /// Associated type.
     Type(ImplItemType<'cx>),
+}
+
+impl AstNode for ImplItem<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ImplItem;
 }
 
 impl<'cx> FromSyn<'cx, syn::ImplItem> for ImplItem<'cx> {
@@ -210,6 +235,10 @@ pub struct ImplItemConst<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ImplItemConst<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ImplItemConst;
+}
+
 impl<'cx> FromSyn<'cx, syn::ImplItemConst> for ImplItemConst<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ImplItemConst>) -> Self {
         Self {
@@ -235,6 +264,10 @@ pub struct ImplItemFn<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ImplItemFn<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ImplItemFn;
+}
+
 impl<'cx> FromSyn<'cx, syn::ImplItemFn> for ImplItemFn<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ImplItemFn>) -> Self {
         Self {
@@ -258,6 +291,10 @@ pub struct ImplItemType<'cx> {
     pub ty: &'cx Type<'cx>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
+}
+
+impl AstNode for ImplItemType<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ImplItemType;
 }
 
 impl<'cx> FromSyn<'cx, syn::ImplItemType> for ImplItemType<'cx> {
@@ -287,6 +324,10 @@ pub struct ItemMod<'cx> {
 
     /// Whether the module contains its items inline.
     pub is_inline: bool,
+}
+
+impl AstNode for ItemMod<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemMod;
 }
 
 impl<'cx> FromSyn<'cx, syn::ItemMod> for ItemMod<'cx> {
@@ -322,6 +363,10 @@ pub struct ItemStruct<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemStruct<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemStruct;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemStruct> for ItemStruct<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemStruct>) -> Self {
         Self {
@@ -351,6 +396,10 @@ pub struct ItemType<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemType<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemType;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemType> for ItemType<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemType>) -> Self {
         Self {
@@ -374,6 +423,10 @@ pub struct ItemUse<'cx> {
     pub tree: UseTree<'cx>,
     /// Source span of the item.
     pub span: Span<'cx>,
+}
+
+impl AstNode for ItemUse<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemUse;
 }
 
 impl<'cx> FromSyn<'cx, syn::ItemUse> for ItemUse<'cx> {
@@ -518,6 +571,10 @@ pub struct ItemTrait<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for ItemTrait<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ItemTrait;
+}
+
 impl<'cx> FromSyn<'cx, syn::ItemTrait> for ItemTrait<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemTrait>) -> Self {
         Self {
@@ -541,6 +598,10 @@ pub enum TraitItem<'cx> {
     Fn(TraitItemFn<'cx>),
     /// Associated type declaration.
     Type(TraitItemType<'cx>),
+}
+
+impl AstNode for TraitItem<'_> {
+    const KIND: AstNodeKind = AstNodeKind::TraitItem;
 }
 
 impl<'cx> FromSyn<'cx, syn::TraitItem> for TraitItem<'cx> {
@@ -573,6 +634,10 @@ pub struct TraitItemConst<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for TraitItemConst<'_> {
+    const KIND: AstNodeKind = AstNodeKind::TraitItemConst;
+}
+
 impl<'cx> FromSyn<'cx, syn::TraitItemConst> for TraitItemConst<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TraitItemConst>) -> Self {
         Self {
@@ -602,6 +667,10 @@ pub struct TraitItemFn<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for TraitItemFn<'_> {
+    const KIND: AstNodeKind = AstNodeKind::TraitItemFn;
+}
+
 impl<'cx> FromSyn<'cx, syn::TraitItemFn> for TraitItemFn<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TraitItemFn>) -> Self {
         Self {
@@ -629,6 +698,10 @@ pub struct TraitItemType<'cx> {
     pub default: Option<&'cx Type<'cx>>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
+}
+
+impl AstNode for TraitItemType<'_> {
+    const KIND: AstNodeKind = AstNodeKind::TraitItemType;
 }
 
 impl<'cx> FromSyn<'cx, syn::TraitItemType> for TraitItemType<'cx> {

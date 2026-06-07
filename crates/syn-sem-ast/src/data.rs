@@ -1,4 +1,5 @@
 use crate::{Expr, FromSyn, Ident, InputDesc, Span, SyntaxCx, Type, Visibility};
+use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A struct or union field.
@@ -14,6 +15,10 @@ pub struct Field<'cx> {
     pub ty: Type<'cx>,
     /// Source span of the field.
     pub span: Span<'cx>,
+}
+
+impl AstNode for Field<'_> {
+    const KIND: AstNodeKind = AstNodeKind::Field;
 }
 
 impl<'cx> FromSyn<'cx, syn::Field> for Field<'cx> {
@@ -68,6 +73,10 @@ pub struct Variant<'cx> {
     pub kind: VariantKind<'cx>,
 }
 
+impl AstNode for Variant<'_> {
+    const KIND: AstNodeKind = AstNodeKind::Variant;
+}
+
 impl<'cx> FromSyn<'cx, syn::Variant> for Variant<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Variant>) -> Self {
         let ident = Ident::from_syn(scx, desc.with_input(&desc.input.ident));
@@ -114,6 +123,10 @@ pub struct VariantField<'cx> {
     pub ty: Type<'cx>,
     /// Source span of the field.
     pub span: Span<'cx>,
+}
+
+impl AstNode for VariantField<'_> {
+    const KIND: AstNodeKind = AstNodeKind::VariantField;
 }
 
 impl<'cx> FromSyn<'cx, syn::FieldsNamed> for &'cx [VariantField<'cx>] {
