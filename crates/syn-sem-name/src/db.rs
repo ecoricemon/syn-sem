@@ -808,12 +808,12 @@ mod tests {
 
             let mut db = NameDb::default();
             let root = db.root_scope();
-            let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
+            let generic_scope = db.add_scope(ScopeKind::Generic, Some(root));
             let body = db.add_scope(ScopeKind::Function, Some(generic_scope));
 
             let type_param = db.add_def(
                 generic_scope,
-                DefKind::TypeParam,
+                DefKind::GenericType,
                 Some(t),
                 Visibility::Private,
                 Origin::Untracked,
@@ -881,7 +881,7 @@ mod tests {
             let root = db.root_scope();
             let type_param = db.add_def(
                 root,
-                DefKind::TypeParam,
+                DefKind::GenericType,
                 Some(t),
                 Visibility::Private,
                 Origin::Untracked,
@@ -918,11 +918,11 @@ mod tests {
 
             let mut db = NameDb::default();
             let root = db.root_scope();
-            let generic_scope = db.add_scope(ScopeKind::GenericParams, Some(root));
+            let generic_scope = db.add_scope(ScopeKind::Generic, Some(root));
 
             let const_param = db.add_def(
                 generic_scope,
-                DefKind::ConstParam,
+                DefKind::GenericConst,
                 Some(n),
                 Visibility::Private,
                 Origin::Untracked,

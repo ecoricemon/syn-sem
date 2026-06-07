@@ -40,8 +40,8 @@ pub enum ScopeKind {
     /// Item body or item member scope.
     Item,
 
-    /// Generic parameter scope.
-    GenericParams,
+    /// Scope containing generic type, const, and lifetime parameter bindings.
+    Generic,
 
     /// Function scope containing parameter bindings and enclosing the function block scope.
     Function,

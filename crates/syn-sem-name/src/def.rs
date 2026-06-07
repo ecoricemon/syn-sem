@@ -76,11 +76,20 @@ pub enum DefKind {
     /// A type alias item.
     TypeAlias,
 
-    /// A function or method.
+    /// A function item.
     Fn,
 
-    /// A constant item or associated constant.
+    /// A constant item.
     Const,
+
+    /// An associated type item.
+    AssocType,
+
+    /// An associated function item.
+    AssocFn,
+
+    /// An associated constant item.
+    AssocConst,
 
     /// A static item.
     Static,
@@ -91,14 +100,14 @@ pub enum DefKind {
     /// A local variable or pattern binding.
     Local,
 
-    /// A type generic parameter.
-    TypeParam,
+    /// A generic type parameter.
+    GenericType,
 
-    /// A const generic parameter.
-    ConstParam,
+    /// A generic const parameter.
+    GenericConst,
 
-    /// A lifetime generic parameter.
-    LifetimeParam,
+    /// A generic lifetime parameter.
+    GenericLifetime,
 
     /// A `use` item or imported binding.
     Use,
@@ -120,18 +129,23 @@ impl DefKind {
             | Self::Enum
             | Self::Trait
             | Self::TypeAlias
-            | Self::TypeParam => &[Namespace::Type],
+            | Self::AssocType
+            | Self::GenericType => &[Namespace::Type],
 
             // Type & Value namespaces
             Self::Variant => &[Namespace::Type, Namespace::Value],
 
             // Value namespace
-            Self::Fn | Self::Const | Self::Static | Self::Local | Self::ConstParam => {
-                &[Namespace::Value]
-            }
+            Self::Fn
+            | Self::Const
+            | Self::AssocFn
+            | Self::AssocConst
+            | Self::Static
+            | Self::Local
+            | Self::GenericConst => &[Namespace::Value],
 
             // Lifetime namespace
-            Self::LifetimeParam => &[Namespace::Lifetime],
+            Self::GenericLifetime => &[Namespace::Lifetime],
 
             // Macro namespace
             Self::Macro => &[Namespace::Macro],

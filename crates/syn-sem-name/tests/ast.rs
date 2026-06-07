@@ -61,9 +61,7 @@ impl<'cx> AstNameCollector<'cx> {
     fn collect_fn(&mut self, parent_scope: ScopeId, item: &ast::ItemFn<'cx>) {
         self.add_named(parent_scope, DefKind::Fn, item.sig.ident.inner);
 
-        let generic_scope = self
-            .db
-            .add_scope(ScopeKind::GenericParams, Some(parent_scope));
+        let generic_scope = self.db.add_scope(ScopeKind::Generic, Some(parent_scope));
         self.collect_generics_into(generic_scope, &item.generics);
 
         let body_scope = self.db.add_scope(ScopeKind::Function, Some(generic_scope));
@@ -88,9 +86,7 @@ impl<'cx> AstNameCollector<'cx> {
     }
 
     fn collect_generics(&mut self, parent_scope: ScopeId, generics: &ast::Generics<'cx>) {
-        let generic_scope = self
-            .db
-            .add_scope(ScopeKind::GenericParams, Some(parent_scope));
+        let generic_scope = self.db.add_scope(ScopeKind::Generic, Some(parent_scope));
         self.collect_generics_into(generic_scope, generics);
     }
 
@@ -98,10 +94,10 @@ impl<'cx> AstNameCollector<'cx> {
         for param in generics.params {
             match param {
                 ast::GenericParam::Type(param) => {
-                    self.add_named(scope, DefKind::TypeParam, param.ident.inner);
+                    self.add_named(scope, DefKind::GenericType, param.ident.inner);
                 }
                 ast::GenericParam::Const(param) => {
-                    self.add_named(scope, DefKind::ConstParam, param.ident.inner);
+                    self.add_named(scope, DefKind::GenericConst, param.ident.inner);
                 }
                 ast::GenericParam::Unsupported(_) => {}
             }
@@ -216,7 +212,7 @@ fn resolves_function_generics_params_and_locals_from_ast() {
     );
     let db = collect_names(&scx, text);
 
-    let generic_scope = scope(&db, ScopeKind::GenericParams, 0);
+    let generic_scope = scope(&db, ScopeKind::Generic, 0);
     let block_scope = scope(&db, ScopeKind::Block, 0);
 
     expect_def(
@@ -224,14 +220,14 @@ fn resolves_function_generics_params_and_locals_from_ast() {
         block_scope,
         Namespace::Type,
         scx.common.intern("T"),
-        DefKind::TypeParam,
+        DefKind::GenericType,
     );
     expect_def(
         &db,
         block_scope,
         Namespace::Value,
         scx.common.intern("N"),
-        DefKind::ConstParam,
+        DefKind::GenericConst,
     );
     expect_def(
         &db,
@@ -252,7 +248,7 @@ fn resolves_function_generics_params_and_locals_from_ast() {
         generic_scope,
         Namespace::Type,
         scx.common.intern("T"),
-        DefKind::TypeParam,
+        DefKind::GenericType,
     );
 }
 
@@ -287,7 +283,7 @@ fn resolves_local_item_declared_inside_function_from_ast() {
         block_scope,
         Namespace::Type,
         scx.common.intern("T"),
-        DefKind::TypeParam,
+        DefKind::GenericType,
     );
     expect_def(
         &db,
@@ -325,7 +321,7 @@ fn keeps_type_and_value_namespaces_separate_from_ast() {
         block_scope,
         Namespace::Type,
         scx.common.intern("T"),
-        DefKind::TypeParam,
+        DefKind::GenericType,
     );
     expect_def(
         &db,
