@@ -964,7 +964,7 @@ mod tests {
     ) -> &'a Import<'tcx> {
         let source_path: Vec<_> = source_path
             .iter()
-            .map(|segment| tcx.common.intern(*segment))
+            .map(|segment| tcx.common.intern(segment))
             .collect();
         let mut imports = db
             .imports()
