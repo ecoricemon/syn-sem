@@ -40,6 +40,15 @@
 - Respect crate-local boundary rules before adding dependencies or moving public items.
 - Expose lower-phase owned facts through focused query APIs.
 - Make higher phases ask owning crates for definition, source, scope, and resolution facts.
+- Treat `syn-sem-ast` as the syntax/source construction layer; upper semantic
+  phases should not depend on it directly.
+- Treat `syn-sem-pr` as the upper-phase-facing Rust program representation:
+  source program shape plus ids that connect to name facts.
+- Treat `syn-sem-name` as the owner of definition, scope, import, resolution,
+  and semantic visibility facts.
+- Let upper semantic phases depend on both `syn-sem-pr` and `syn-sem-name`:
+  traverse program shape through `ProgramRepr`, then query name facts through
+  focused `NameDb` APIs using ids stored in the representation.
 - Extract reusable infrastructure before wiring it deeply into `syn-sem`.
 - Let `PathTree` remain temporarily, but move new name-resolution work toward `syn-sem-name`.
 

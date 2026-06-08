@@ -8,7 +8,8 @@
 ## Role
 
 - Wire extracted crates together.
-- Own top-level orchestration for the migration surface.
+- Own top-level orchestration for parsing, name collection, and program
+  representation construction.
 
 ## Boundaries
 
@@ -20,9 +21,9 @@
 
 - Prefer simple top-level orchestration.
 - Prefer incremental migration.
+- Keep `Semantics` as the aggregate that exposes `NameDb` and `ProgramRepr`.
 
 ## Primary Public Items
 
 - `TopCx`: top-level root context for shared infrastructure and phase contexts.
 - `Semantics`: durable semantic-analysis output for IR, diagnostics, and queries.
-- `IrProgram`: generated semantic IR independent from backend representations.

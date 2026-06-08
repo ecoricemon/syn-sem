@@ -45,6 +45,7 @@ impl<'cx> SyntaxCx<'cx> {
         self.parse_file(file_path, text, SourceKind::Virtual)
     }
 
+    /// Returns whether `file_path` has already been parsed and stored.
     pub fn has_source(&self, file_path: FilePath<'cx>) -> bool {
         self.files.get(&file_path).is_some()
     }
