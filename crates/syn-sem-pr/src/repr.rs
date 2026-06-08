@@ -1,4 +1,4 @@
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
 use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
@@ -47,61 +47,33 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
 
     fn collect_item(&mut self, item: &'cx ast::Item<'cx>, parent_scope: Option<ScopeId>) -> ItemId {
         let id = self.repr.next_item_id();
-        let def = self.item_def(item, parent_scope);
-        let name = item_name(item);
-        let visibility = item_visibility(item);
-        if let ast::Item::Mod(item) = item {
-            let scope = self.def_path_scope(def);
-            let item_id = self.repr.add_item(Item {
-                id,
-                name,
-                visibility,
-                def,
-                parent_scope,
-                kind: ItemKind::Mod {
-                    is_inline: item.is_inline,
-                    scope,
-                    items: Vec::new(),
-                },
-            });
-            let items = item
-                .items
-                .map(|items| self.collect_items(items, scope))
-                .unwrap_or_default();
-            if let ItemKind::Mod {
-                items: module_items,
-                ..
-            } = &mut self.repr.items[item_id.index()].kind
-            {
-                *module_items = items;
-            }
-            return item_id;
-        }
-
+        let def = self.def_for_item(item);
+        let name = item.ident().map(|ident| ident.inner);
+        let source_visibility = item_source_visibility(item);
+        let mut module_children = None;
         let kind = match item {
             ast::Item::Const(item) => {
                 let ty = self.collect_type(item.ty, TypeSource::ConstType);
-                let body = self.body(
+                let body = self.collect_body(
                     BodyOwner::Item(id),
-                    self.def_body_scope(def),
+                    def.and_then(|def| self.names.def_body_scope(def)),
                     BodyKind::Expr,
                 );
                 ItemKind::Const { ty, body }
             }
             ast::Item::Enum(item) => {
-                let scope = self.def_path_scope(def).or(parent_scope);
                 let variants = item
                     .variants
                     .iter()
-                    .map(|variant| self.collect_variant(variant, scope))
+                    .map(|variant| self.collect_variant(variant))
                     .collect();
                 ItemKind::Enum { variants }
             }
             ast::Item::Fn(item) => {
-                let signature = self.signature(SignatureSource::ItemFn, &item.sig);
-                let body = self.body(
+                let signature = self.collect_signature(SignatureSource::ItemFn, &item.sig);
+                let body = self.collect_body(
                     BodyOwner::Item(id),
-                    self.def_body_scope(def),
+                    def.and_then(|def| self.names.def_body_scope(def)),
                     BodyKind::Block,
                 );
                 ItemKind::Fn { signature, body }
@@ -111,7 +83,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 let items = item
                     .items
                     .iter()
-                    .map(|item| self.collect_impl_item(item, None))
+                    .map(|item| self.collect_impl_item(item))
                     .collect();
                 ItemKind::Impl {
                     trait_: item.trait_.as_ref().map(Path::from_ast),
@@ -119,8 +91,14 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     items,
                 }
             }
-            ast::Item::Mod(_) => {
-                unreachable!("module items are handled before item payload construction")
+            ast::Item::Mod(item) => {
+                let scope = def.and_then(|def| self.names.def_path_scope(def));
+                module_children = item.items.map(|items| (items, scope));
+                ItemKind::Mod {
+                    is_inline: item.is_inline,
+                    scope,
+                    items: Vec::new(),
+                }
             }
             ast::Item::Struct(item) => {
                 let fields = item
@@ -134,7 +112,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 let items = item
                     .items
                     .iter()
-                    .map(|item| self.collect_trait_item(item, None))
+                    .map(|item| self.collect_trait_item(item))
                     .collect();
                 ItemKind::Trait { items }
             }
@@ -148,11 +126,24 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         self.repr.add_item(Item {
             id,
             name,
-            visibility,
+            source_visibility,
             def,
             parent_scope,
             kind,
-        })
+        });
+
+        if let Some((children, scope)) = module_children {
+            let items = self.collect_items(children, scope);
+            if let ItemKind::Mod {
+                items: module_items,
+                ..
+            } = &mut self.repr[id].kind
+            {
+                *module_items = items;
+            }
+        }
+
+        id
     }
 
     fn collect_struct_field(&mut self, field: &'cx ast::Field<'cx>) -> FieldId {
@@ -161,19 +152,16 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
-            visibility: Visibility::from_ast(&field.vis),
+            source_visibility: SourceVisibility::from_ast(&field.vis),
             ty,
             source: FieldSource::Struct,
-        })
+        });
+        id
     }
 
-    fn collect_variant(
-        &mut self,
-        variant: &'cx ast::Variant<'cx>,
-        _parent_scope: Option<ScopeId>,
-    ) -> VariantId {
+    fn collect_variant(&mut self, variant: &'cx ast::Variant<'cx>) -> VariantId {
         let id = self.repr.next_variant_id();
-        let def = self.variant_def(variant);
+        let def = self.def_for_variant(variant);
         let (fields, discriminant) = match &variant.kind {
             ast::VariantKind::Fields(fields) => (
                 fields
@@ -184,7 +172,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             ),
             ast::VariantKind::Discriminant(_) => (
                 Vec::new(),
-                Some(self.body(BodyOwner::Variant(id), None, BodyKind::Expr)),
+                Some(self.collect_body(BodyOwner::Variant(id), None, BodyKind::Expr)),
             ),
             ast::VariantKind::Unit => (Vec::new(), None),
         };
@@ -194,7 +182,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             name: variant.ident.inner,
             fields,
             discriminant,
-        })
+        });
+        id
     }
 
     fn collect_variant_field(&mut self, field: &'cx ast::VariantField<'cx>) -> FieldId {
@@ -203,34 +192,31 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
-            visibility: Visibility::Private,
+            source_visibility: SourceVisibility::Private,
             ty,
             source: FieldSource::Variant,
-        })
+        });
+        id
     }
 
-    fn collect_impl_item(
-        &mut self,
-        item: &'cx ast::ImplItem<'cx>,
-        parent_scope: Option<ScopeId>,
-    ) -> AssocItemId {
+    fn collect_impl_item(&mut self, item: &'cx ast::ImplItem<'cx>) -> AssocItemId {
         let id = self.repr.next_assoc_item_id();
-        let def = self.impl_item_def(item, parent_scope);
+        let def = self.def_for_impl_item(item);
         let kind = match item {
             ast::ImplItem::Const(item) => {
                 let ty = self.collect_type(item.ty, TypeSource::AssocConstType);
-                let body = self.body(
+                let body = self.collect_body(
                     BodyOwner::AssocItem(id),
-                    self.def_body_scope(def),
+                    def.and_then(|def| self.names.def_body_scope(def)),
                     BodyKind::Expr,
                 );
                 AssocItemKind::ImplConst { ty, body }
             }
             ast::ImplItem::Fn(item) => {
-                let signature = self.signature(SignatureSource::ImplFn, &item.sig);
-                let body = self.body(
+                let signature = self.collect_signature(SignatureSource::ImplFn, &item.sig);
+                let body = self.collect_body(
                     BodyOwner::AssocItem(id),
-                    self.def_body_scope(def),
+                    def.and_then(|def| self.names.def_body_scope(def)),
                     BodyKind::Block,
                 );
                 AssocItemKind::ImplFn { signature, body }
@@ -242,37 +228,34 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         };
         self.repr.add_assoc_item(AssocItem {
             id,
-            name: impl_item_name(item),
+            name: item.ident().inner,
             def,
             kind,
-        })
+        });
+        id
     }
 
-    fn collect_trait_item(
-        &mut self,
-        item: &'cx ast::TraitItem<'cx>,
-        parent_scope: Option<ScopeId>,
-    ) -> AssocItemId {
+    fn collect_trait_item(&mut self, item: &'cx ast::TraitItem<'cx>) -> AssocItemId {
         let id = self.repr.next_assoc_item_id();
-        let def = self.trait_item_def(item, parent_scope);
+        let def = self.def_for_trait_item(item);
         let kind = match item {
             ast::TraitItem::Const(item) => {
                 let ty = self.collect_type(item.ty, TypeSource::AssocConstType);
                 let default = item.default.map(|_| {
-                    self.body(
+                    self.collect_body(
                         BodyOwner::AssocItem(id),
-                        self.def_body_scope(def),
+                        def.and_then(|def| self.names.def_body_scope(def)),
                         BodyKind::Expr,
                     )
                 });
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
-                let signature = self.signature(SignatureSource::TraitFn, &item.sig);
+                let signature = self.collect_signature(SignatureSource::TraitFn, &item.sig);
                 let default = item.default.as_ref().map(|_| {
-                    self.body(
+                    self.collect_body(
                         BodyOwner::AssocItem(id),
-                        self.def_body_scope(def),
+                        def.and_then(|def| self.names.def_body_scope(def)),
                         BodyKind::Block,
                     )
                 });
@@ -287,13 +270,14 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         };
         self.repr.add_assoc_item(AssocItem {
             id,
-            name: trait_item_name(item),
+            name: item.ident().inner,
             def,
             kind,
-        })
+        });
+        id
     }
 
-    fn signature(
+    fn collect_signature(
         &mut self,
         source: SignatureSource,
         signature: &'cx ast::Signature<'cx>,
@@ -306,64 +290,49 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 self.collect_type(&param.pat.ty, TypeSource::SignatureParam { index })
             })
             .collect();
-        self.repr.add_signature(Signature {
-            id: self.repr.next_signature_id(),
-            source,
-            types,
-        })
+        let id = self.repr.next_signature_id();
+        self.repr.add_signature(Signature { id, source, types });
+        id
     }
 
     fn collect_type(&mut self, ty: &'cx ast::Type<'cx>, source: TypeSource) -> TypeId {
-        self.repr.add_type(Type {
-            id: self.repr.next_type_id(),
-            ty,
-            source,
-        })
+        let id = self.repr.next_type_id();
+        self.repr.add_type(Type { id, ty, source });
+        id
     }
 
-    fn body(&mut self, owner: BodyOwner, scope: Option<ScopeId>, kind: BodyKind) -> BodyId {
+    fn collect_body(&mut self, owner: BodyOwner, scope: Option<ScopeId>, kind: BodyKind) -> BodyId {
         let id = self.repr.next_body_id();
         self.repr.add_body(Body {
             id,
             owner,
             scope,
             kind,
-        })
+        });
+        id
     }
 
-    fn item_def(&self, item: &'cx ast::Item<'cx>, _parent_scope: Option<ScopeId>) -> Option<DefId> {
+    fn def_for_item(&self, item: &'cx ast::Item<'cx>) -> Option<DefId> {
+        let def = self.names.def_for_ast_node(AstNodeId::from_ref(item));
         if matches!(item, ast::Item::Use(_)) {
-            return None;
+            assert!(
+                def.is_none(),
+                "use items must not be linked as item definitions"
+            );
         }
-        self.names.def_for_ast_node(AstNodeId::from_ref(item))
+        def
     }
 
-    fn variant_def(&self, variant: &'cx ast::Variant<'cx>) -> Option<DefId> {
+    fn def_for_variant(&self, variant: &'cx ast::Variant<'cx>) -> Option<DefId> {
         self.names.def_for_ast_node(AstNodeId::from_ref(variant))
     }
 
-    fn impl_item_def(
-        &self,
-        item: &'cx ast::ImplItem<'cx>,
-        _parent_scope: Option<ScopeId>,
-    ) -> Option<DefId> {
+    fn def_for_impl_item(&self, item: &'cx ast::ImplItem<'cx>) -> Option<DefId> {
         self.names.def_for_ast_node(AstNodeId::from_ref(item))
     }
 
-    fn trait_item_def(
-        &self,
-        item: &'cx ast::TraitItem<'cx>,
-        _parent_scope: Option<ScopeId>,
-    ) -> Option<DefId> {
+    fn def_for_trait_item(&self, item: &'cx ast::TraitItem<'cx>) -> Option<DefId> {
         self.names.def_for_ast_node(AstNodeId::from_ref(item))
-    }
-
-    fn def_path_scope(&self, def: Option<DefId>) -> Option<ScopeId> {
-        self.names.def_path_scope(def?)
-    }
-
-    fn def_body_scope(&self, def: Option<DefId>) -> Option<ScopeId> {
-        self.names.def_body_scope(def?)
     }
 }
 
@@ -425,88 +394,80 @@ impl<'cx> ProgramRepr<'cx> {
         FileId::new(self.files.len())
     }
 
-    fn add_file(&mut self, file: File<'cx>) -> FileId {
+    fn add_file(&mut self, file: File<'cx>) {
         let id = file.id;
         assert_eq!(id, self.next_file_id());
         self.files.push(file);
-        id
     }
 
     fn next_item_id(&self) -> ItemId {
         ItemId::new(self.items.len())
     }
 
-    fn add_item(&mut self, item: Item<'cx>) -> ItemId {
+    fn add_item(&mut self, item: Item<'cx>) {
         let id = item.id;
         assert_eq!(id, self.next_item_id());
         self.items.push(item);
-        id
     }
 
     fn next_signature_id(&self) -> SignatureId {
         SignatureId::new(self.signatures.len())
     }
 
-    fn add_signature(&mut self, signature: Signature) -> SignatureId {
+    fn add_signature(&mut self, signature: Signature) {
         let id = signature.id;
         assert_eq!(id, self.next_signature_id());
         self.signatures.push(signature);
-        id
     }
 
     fn next_field_id(&self) -> FieldId {
         FieldId::new(self.fields.len())
     }
 
-    fn add_field(&mut self, field: Field<'cx>) -> FieldId {
+    fn add_field(&mut self, field: Field<'cx>) {
         let id = field.id;
         assert_eq!(id, self.next_field_id());
         self.fields.push(field);
-        id
     }
 
     fn next_variant_id(&self) -> VariantId {
         VariantId::new(self.variants.len())
     }
 
-    fn add_variant(&mut self, variant: Variant<'cx>) -> VariantId {
+    fn add_variant(&mut self, variant: Variant<'cx>) {
         let id = variant.id;
         assert_eq!(id, self.next_variant_id());
         self.variants.push(variant);
-        id
     }
 
     fn next_assoc_item_id(&self) -> AssocItemId {
         AssocItemId::new(self.assoc_items.len())
     }
 
-    fn add_assoc_item(&mut self, item: AssocItem<'cx>) -> AssocItemId {
+    fn add_assoc_item(&mut self, item: AssocItem<'cx>) {
         let id = item.id;
         assert_eq!(id, self.next_assoc_item_id());
         self.assoc_items.push(item);
-        id
     }
 
     fn next_body_id(&self) -> BodyId {
         BodyId::new(self.bodies.len())
     }
 
-    fn add_body(&mut self, body: Body) -> BodyId {
+    fn add_body(&mut self, body: Body) {
         let id = body.id;
         assert_eq!(id, self.next_body_id());
         self.bodies.push(body);
-        id
     }
 
     fn next_type_id(&self) -> TypeId {
         TypeId::new(self.types.len())
     }
 
-    fn add_type(&mut self, ty: Type<'cx>) -> TypeId {
+    fn add_type(&mut self, ty: Type<'cx>) {
         let id = ty.id;
         assert_eq!(id, self.next_type_id());
         self.types.push(ty);
-        id
     }
 }
 
@@ -523,6 +484,12 @@ impl<'cx> Index<ItemId> for ProgramRepr<'cx> {
 
     fn index(&self, id: ItemId) -> &Self::Output {
         &self.items[id.index()]
+    }
+}
+
+impl IndexMut<ItemId> for ProgramRepr<'_> {
+    fn index_mut(&mut self, id: ItemId) -> &mut Self::Output {
+        &mut self.items[id.index()]
     }
 }
 
@@ -593,7 +560,7 @@ pub struct Item<'cx> {
     /// Item name, when the item has one source-level name.
     pub name: Option<Name<'cx>>,
     /// Source item visibility.
-    pub visibility: Visibility<'cx>,
+    pub source_visibility: SourceVisibility<'cx>,
     /// Definition linked from the current name-resolution data, if available.
     pub def: Option<DefId>,
     /// Scope containing this item.
@@ -690,8 +657,8 @@ pub struct Field<'cx> {
     pub id: FieldId,
     /// Field name.
     pub name: Name<'cx>,
-    /// Field visibility.
-    pub visibility: Visibility<'cx>,
+    /// Source field visibility.
+    pub source_visibility: SourceVisibility<'cx>,
     /// Field type.
     pub ty: TypeId,
     /// Source field kind.
@@ -780,7 +747,7 @@ pub enum AssocItemKind {
 
 /// Source-level visibility for represented declarations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Visibility<'cx> {
+pub enum SourceVisibility<'cx> {
     /// Public visibility.
     Public,
     /// Restricted visibility path, such as `crate` or `foo::bar`.
@@ -808,7 +775,7 @@ impl<'cx> Path<'cx> {
     }
 }
 
-impl<'cx> Visibility<'cx> {
+impl<'cx> SourceVisibility<'cx> {
     fn from_ast(visibility: &ast::Visibility<'cx>) -> Self {
         match visibility {
             ast::Visibility::Public(_) => Self::Public,
@@ -818,47 +785,17 @@ impl<'cx> Visibility<'cx> {
     }
 }
 
-fn item_name<'cx>(item: &'cx ast::Item<'cx>) -> Option<Name<'cx>> {
+fn item_source_visibility<'cx>(item: &'cx ast::Item<'cx>) -> SourceVisibility<'cx> {
     match item {
-        ast::Item::Const(item) => Some(item.ident.inner),
-        ast::Item::Enum(item) => Some(item.ident.inner),
-        ast::Item::Fn(item) => Some(item.sig.ident.inner),
-        ast::Item::Impl(_) => None,
-        ast::Item::Mod(item) => Some(item.ident.inner),
-        ast::Item::Struct(item) => Some(item.ident.inner),
-        ast::Item::Trait(item) => Some(item.ident.inner),
-        ast::Item::Type(item) => Some(item.ident.inner),
-        ast::Item::Use(_) => None,
-    }
-}
-
-fn item_visibility<'cx>(item: &'cx ast::Item<'cx>) -> Visibility<'cx> {
-    match item {
-        ast::Item::Const(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Enum(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Fn(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Impl(_) => Visibility::Private,
-        ast::Item::Mod(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Struct(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Trait(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Type(item) => Visibility::from_ast(&item.vis),
-        ast::Item::Use(item) => Visibility::from_ast(&item.vis),
-    }
-}
-
-fn impl_item_name<'cx>(item: &'cx ast::ImplItem<'cx>) -> Name<'cx> {
-    match item {
-        ast::ImplItem::Const(item) => item.ident.inner,
-        ast::ImplItem::Fn(item) => item.sig.ident.inner,
-        ast::ImplItem::Type(item) => item.ident.inner,
-    }
-}
-
-fn trait_item_name<'cx>(item: &'cx ast::TraitItem<'cx>) -> Name<'cx> {
-    match item {
-        ast::TraitItem::Const(item) => item.ident.inner,
-        ast::TraitItem::Fn(item) => item.sig.ident.inner,
-        ast::TraitItem::Type(item) => item.ident.inner,
+        ast::Item::Const(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Enum(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Fn(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Impl(_) => SourceVisibility::Private,
+        ast::Item::Mod(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Struct(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Trait(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Type(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Use(item) => SourceVisibility::from_ast(&item.vis),
     }
 }
 
@@ -1160,14 +1097,17 @@ mod tests {
         );
 
         let module = named_item(&model, "m");
-        let Visibility::Restricted(path) = &module.visibility else {
-            panic!("expected restricted module visibility");
+        let SourceVisibility::Restricted(path) = &module.source_visibility else {
+            panic!("expected restricted module source visibility");
         };
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].as_ref(), "crate");
 
         let struct_item = named_item(&model, "S");
-        assert!(matches!(struct_item.visibility, Visibility::Public));
+        assert!(matches!(
+            struct_item.source_visibility,
+            SourceVisibility::Public
+        ));
 
         let impl_item = model
             .items()
@@ -1175,7 +1115,10 @@ mod tests {
             .find(|item| matches!(item.kind, ItemKind::Impl { .. }))
             .expect("expected impl item");
         assert!(impl_item.name.is_none());
-        assert!(matches!(impl_item.visibility, Visibility::Private));
+        assert!(matches!(
+            impl_item.source_visibility,
+            SourceVisibility::Private
+        ));
         let ItemKind::Impl { trait_, .. } = &impl_item.kind else {
             panic!("expected impl item");
         };
@@ -1188,14 +1131,20 @@ mod tests {
             .iter()
             .find(|field| field.name.as_ref() == "field")
             .expect("expected public field");
-        assert!(matches!(public_field.visibility, Visibility::Public));
+        assert!(matches!(
+            public_field.source_visibility,
+            SourceVisibility::Public
+        ));
 
         let private_field = model
             .fields()
             .iter()
             .find(|field| field.name.as_ref() == "private")
             .expect("expected private field");
-        assert!(matches!(private_field.visibility, Visibility::Private));
+        assert!(matches!(
+            private_field.source_visibility,
+            SourceVisibility::Private
+        ));
 
         let assoc_names: Vec<_> = model
             .assoc_items()

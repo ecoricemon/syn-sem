@@ -19,15 +19,15 @@ phases need repr-native data.
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| `Item::Const` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Const { ty, body }` | None at item layer | Initializer is a `BodyId` with `BodyKind::Expr`. |
-| `Item::Enum` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Enum { variants }` | None at item layer | Variants are separately indexed. Generic data is not repr-native yet. |
-| `Item::Fn` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Fn { signature, body }` | None at item layer | Body is a `BodyId` with `BodyKind::Block`. |
-| `Item::Impl` | Indexed | `Item { name: None, visibility, def, parent_scope }`, `ItemKind::Impl { trait_, self_ty, items }` | None at item layer | `trait_` is a repr-native path. Associated item def links are currently mostly absent because impl scope is not exposed through `DefScopes`. |
-| `Item::Mod` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Mod { is_inline, scope, items }` | None at item layer | Inline module children are indexed. File-backed module children are not represented by `ProgramReprBuilder::build` today. |
-| `Item::Struct` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Struct { fields }` | None at item layer | Fields are separately indexed. Generic data is not repr-native yet. |
-| `Item::Trait` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Trait { items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
-| `Item::Type` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Type { ty }` | None at item layer | Alias target gets a `TypeId`. |
-| `Item::Use` | Partial | `Item { visibility, parent_scope }`, `ItemKind::Use` | None at item layer | Import declarations are not linked to `ImportId` or `DefKind::Use` aliases yet. |
+| `Item::Const` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Const { ty, body }` | None at item layer | Initializer is a `BodyId` with `BodyKind::Expr`. |
+| `Item::Enum` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Enum { variants }` | None at item layer | Variants are separately indexed. Generic data is not repr-native yet. |
+| `Item::Fn` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Fn { signature, body }` | None at item layer | Body is a `BodyId` with `BodyKind::Block`. |
+| `Item::Impl` | Indexed | `Item { name: None, source_visibility, def, parent_scope }`, `ItemKind::Impl { trait_, self_ty, items }` | None at item layer | `trait_` is a repr-native path. Associated item def links are currently mostly absent because impl scope is not exposed through `DefScopes`. |
+| `Item::Mod` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Mod { is_inline, scope, items }` | None at item layer | Inline module children are indexed. File-backed module children are not represented by `ProgramReprBuilder::build` today. |
+| `Item::Struct` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Struct { fields }` | None at item layer | Fields are separately indexed. Generic data is not repr-native yet. |
+| `Item::Trait` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Trait { items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
+| `Item::Type` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Type { ty }` | None at item layer | Alias target gets a `TypeId`. |
+| `Item::Use` | Partial | `Item { source_visibility, parent_scope }`, `ItemKind::Use` | None at item layer | Import declarations are not linked to `ImportId` or `DefKind::Use` aliases yet. |
 
 ## Associated Items
 
@@ -45,10 +45,10 @@ phases need repr-native data.
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
 | `Signature` | Indexed | `Signature { source, types }` | None at signature layer | Return type and parameter types each get `TypeId`; parameter names/patterns/generics are not repr-native yet. |
-| `Field` | Indexed | `Field { name, visibility, ty, source }` | None at field layer | Struct field visibility is repr-native; variant fields use private visibility. |
+| `Field` | Indexed | `Field { name, source_visibility, ty, source }` | None at field layer | Struct field source visibility is repr-native; variant fields use private source visibility. |
 | `Variant` | Indexed | `Variant { name, def, fields, discriminant }` | None at variant layer | Variant payload fields are indexed; explicit discriminant becomes a `BodyId`. |
 | `Generics` | Missing | None | Via owning AST refs only | Generic params and where clauses are not repr-native yet. |
-| `Visibility` | Partial | `Visibility::{Public, Restricted, Private}` on items and fields | Restricted paths are repr-native segment lists | Generic visibility interactions still belong to name-resolution data. |
+| `SourceVisibility` | Partial | `SourceVisibility::{Public, Restricted, Private}` on items and fields | Restricted paths are repr-native segment lists | Semantic visibility interactions belong to name-resolution data. |
 
 ## Types
 

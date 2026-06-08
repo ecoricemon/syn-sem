@@ -31,6 +31,25 @@ pub enum Item<'cx> {
     Use(ItemUse<'cx>),
 }
 
+impl<'cx> Item<'cx> {
+    /// Returns the single source identifier for this item, if it has one.
+    pub fn ident(&self) -> Option<&Ident<'cx>> {
+        match self {
+            Self::Const(item) => Some(&item.ident),
+            Self::Enum(item) => Some(&item.ident),
+            Self::Fn(item) => Some(&item.sig.ident),
+            // Impl blocks have no item-level identifier.
+            Self::Impl(_) => None,
+            Self::Mod(item) => Some(&item.ident),
+            Self::Struct(item) => Some(&item.ident),
+            Self::Trait(item) => Some(&item.ident),
+            Self::Type(item) => Some(&item.ident),
+            // A use item can introduce zero, one, or many local bindings.
+            Self::Use(_) => None,
+        }
+    }
+}
+
 impl AstNode for Item<'_> {
     const KIND: AstNodeKind = AstNodeKind::Item;
 }
@@ -199,6 +218,17 @@ pub enum ImplItem<'cx> {
     Fn(ImplItemFn<'cx>),
     /// Associated type.
     Type(ImplItemType<'cx>),
+}
+
+impl<'cx> ImplItem<'cx> {
+    /// Returns the source identifier for this associated item.
+    pub fn ident(&self) -> &Ident<'cx> {
+        match self {
+            Self::Const(item) => &item.ident,
+            Self::Fn(item) => &item.sig.ident,
+            Self::Type(item) => &item.ident,
+        }
+    }
 }
 
 impl AstNode for ImplItem<'_> {
@@ -598,6 +628,17 @@ pub enum TraitItem<'cx> {
     Fn(TraitItemFn<'cx>),
     /// Associated type declaration.
     Type(TraitItemType<'cx>),
+}
+
+impl<'cx> TraitItem<'cx> {
+    /// Returns the source identifier for this associated item.
+    pub fn ident(&self) -> &Ident<'cx> {
+        match self {
+            Self::Const(item) => &item.ident,
+            Self::Fn(item) => &item.sig.ident,
+            Self::Type(item) => &item.ident,
+        }
+    }
 }
 
 impl AstNode for TraitItem<'_> {

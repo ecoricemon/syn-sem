@@ -1,6 +1,7 @@
 use std::fs;
 
 use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
+use syn_sem_pr::{BodyKind, ItemKind};
 use syn_sem_top::TopCx;
 
 /// Verifies physical module files are loaded from the filesystem and `use` declarations across
@@ -151,5 +152,70 @@ fn resolve_lexical(
             return ResolveResult::NotFound;
         };
         scope = parent;
+    }
+}
+
+mod upper_phase_integration {
+    use super::*;
+
+    // Validates the intended upper-phase consumption pattern:
+    // traverse source program shape through syn-sem-pr and query definition/scope facts through
+    // syn-sem-name, without depending on syn-sem-ast directly.
+    #[test]
+    fn consumes_program_repr_and_name_facts_together() {
+        let tcx = TopCx::default();
+        let entry_path = tcx.common.intern("upper_phase.rs");
+        let text = tcx.common.intern(
+            r#"
+            pub(crate) mod inner {
+                pub fn helper() {}
+            }
+
+            pub fn entry(x: usize) -> usize {
+                x
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let names = semantics.names();
+
+        let entry = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "entry"))
+            .expect("entry function should be represented");
+        let ItemKind::Fn { body, .. } = entry.kind else {
+            panic!("entry should be represented as a function item");
+        };
+        let entry_def = entry
+            .def
+            .expect("function item should link to a definition");
+
+        assert_eq!(names[entry_def].kind, DefKind::Fn);
+        assert_eq!(repr[body].kind, BodyKind::Block);
+        assert_eq!(repr[body].scope, names[entry_def].scopes.body);
+
+        let inner = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "inner"))
+            .expect("inner module should be represented");
+        let ItemKind::Mod {
+            scope,
+            items: inner_items,
+            ..
+        } = &inner.kind
+        else {
+            panic!("inner should be represented as a module item");
+        };
+        let inner_def = inner.def.expect("module item should link to a definition");
+
+        assert_eq!(names[inner_def].kind, DefKind::Module);
+        assert_eq!(*scope, names[inner_def].scopes.path);
+        assert_eq!(inner_items.len(), 1);
+        assert!(matches!(repr[inner_items[0]].kind, ItemKind::Fn { .. }));
     }
 }

@@ -4,11 +4,13 @@
 
 - Own the lifetime-bearing semantic AST wrapper over `syn` syntax trees.
 - Parse and store source files through `SyntaxCx`.
-- Convert raw `syn` nodes into AST nodes for sibling crates.
+- Convert raw `syn` nodes into construction-layer AST nodes for `syn-sem-top`
+  and extracted representation builders.
 
 ## Boundaries
 
 - Keep this crate focused on syntax-shaped AST data and source mapping.
+- Do not make upper semantic phases depend on this crate directly.
 - Do not add name resolution, type inference, evaluation, monomorphization, or
   backend lowering here.
 - Keep phase logic in sibling phase crates or top-level orchestration.
