@@ -201,7 +201,7 @@ fn resolve_lexical(
 
 #[test]
 fn resolves_function_generics_params_and_locals_from_ast() {
-    let ccx = CommonCx::new();
+    let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
     let text = ccx.intern(
         r#"
@@ -254,7 +254,7 @@ fn resolves_function_generics_params_and_locals_from_ast() {
 
 #[test]
 fn resolves_local_item_declared_inside_function_from_ast() {
-    let ccx = CommonCx::new();
+    let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
     let text = ccx.intern(
         r#"
@@ -303,7 +303,7 @@ fn resolves_local_item_declared_inside_function_from_ast() {
 
 #[test]
 fn keeps_type_and_value_namespaces_separate_from_ast() {
-    let ccx = CommonCx::new();
+    let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
     let text = ccx.intern(
         r#"

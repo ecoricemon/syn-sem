@@ -59,7 +59,7 @@ impl<'tcx> TopCx<'tcx> {
 impl<'tcx> Default for TopCx<'tcx> {
     /// Creates a top-level context with owned shared common infrastructure.
     fn default() -> Self {
-        let common = Box::new(CommonCx::new());
+        let common = Box::new(CommonCx::default());
         // Safety: `SyntaxCx` borrows the boxed common context. The allocation remains stable when
         // `TopCx` moves.
         let ccx_ref = unsafe { std::mem::transmute::<&CommonCx, &'tcx CommonCx>(common.as_ref()) };

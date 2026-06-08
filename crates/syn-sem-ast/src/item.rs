@@ -827,7 +827,7 @@ mod tests {
         // Proves structs preserve visibility, name, fields, tuple field names, and generics.
         type T = syn::ItemStruct;
         type U<'a> = ItemStruct<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         // Empty struct
@@ -876,7 +876,7 @@ mod tests {
         // Proves enums preserve name, variants, and generic params.
         type T = syn::ItemEnum;
         type U<'a> = ItemEnum<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_enum = parse::<T, U>(&scx, "enum E<T> { A(T) }");
@@ -893,7 +893,7 @@ mod tests {
         // Proves free functions preserve signature generics and parameters.
         type T = syn::ItemFn;
         type U<'a> = ItemFn<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_fn = parse::<T, U>(&scx, "fn f<T>(value: T) -> T { value }");
@@ -911,7 +911,7 @@ mod tests {
         // Proves modules distinguish inline modules from file-backed declarations.
         type T = syn::ItemMod;
         type U<'a> = ItemMod<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_mod = parse::<T, U>(&scx, "mod a;");
@@ -933,7 +933,7 @@ mod tests {
         // Proves type aliases preserve visibility, name, target type, and generics.
         type T = syn::ItemType;
         type U<'a> = ItemType<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_type = parse::<T, U>(&scx, "pub type Alias = Target;");
@@ -959,7 +959,7 @@ mod tests {
         // Proves use items preserve all supported use tree forms.
         type T = syn::ItemUse;
         type U<'a> = ItemUse<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_use = parse::<T, U>(&scx, "pub use a;");
@@ -1004,7 +1004,7 @@ mod tests {
         // Proves impl blocks preserve generics, trait target, self type, and associated items.
         type T = syn::ItemImpl;
         type U<'a> = ItemImpl<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_impl = parse::<T, U>(&scx, "impl S { const N: usize = 1; fn f(&self) {} }");
@@ -1055,7 +1055,7 @@ mod tests {
         // Proves traits preserve generics and supported associated item defaults.
         type T = syn::ItemTrait;
         type U<'a> = ItemTrait<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item_trait = parse::<T, U>(

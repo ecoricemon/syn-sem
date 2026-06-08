@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn ident() {
         // Proves `Ident` preserves the parsed identifier text.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         // Non-empty ident

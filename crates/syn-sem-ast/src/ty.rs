@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn type_reference() {
         // Proves reference types preserve whether the reference is mutable.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let ty = parse::<syn::TypeReference, TypeReference>(&scx, "&T");
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn type_path() {
         // Proves type paths preserve generic arguments on the owning path segment.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let ty = parse::<syn::TypePath, TypePath>(&scx, "Vec<T>");

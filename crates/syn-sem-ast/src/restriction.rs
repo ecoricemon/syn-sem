@@ -36,7 +36,7 @@ mod tests {
         // Proves public, inherited, and restricted visibilities are distinguished.
         type T = syn::Visibility;
         type U<'a> = Visibility<'a>;
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         // Public visibility

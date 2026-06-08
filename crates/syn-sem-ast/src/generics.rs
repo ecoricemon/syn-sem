@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn generics() {
         // Proves empty generics preserve no params and no where clause.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S;");
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn generic_param() {
         // Proves type and const generic params preserve names, defaults, and types.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T, U = i32>;");
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn type_param_bound() {
         // Proves trait bounds preserve their path, including path generic arguments.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T: Clone>;");
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn where_clause() {
         // Proves type where-predicates preserve bounded type and bounds.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<T> where T: Clone;");
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn unsupported() {
         // Proves unsupported generic forms recover as `Unsupported` instead of panicking.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let item = parse::<syn::ItemStruct, crate::ItemStruct>(&scx, "struct S<'a>;");

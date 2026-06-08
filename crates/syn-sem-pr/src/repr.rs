@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn builds_items_signatures_and_body_handles() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1078,7 +1078,7 @@ mod tests {
 
     #[test]
     fn builds_struct_enum_trait_impl_type_and_use_shapes() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[test]
     fn covers_all_supported_item_kinds() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1146,7 +1146,7 @@ mod tests {
 
     #[test]
     fn covers_repr_native_names_visibility_and_paths() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn covers_all_supported_associated_item_kinds() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1284,7 +1284,7 @@ mod tests {
 
     #[test]
     fn covers_type_sources_for_declaration_roles() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[test]
     fn covers_body_owners_and_kinds() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1380,7 +1380,7 @@ mod tests {
 
     #[test]
     fn covers_module_field_and_variant_shapes() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
             &ccx,
@@ -1445,7 +1445,7 @@ mod tests {
 
     #[test]
     fn links_items_to_current_name_definitions_when_available() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern("struct S;");
@@ -1472,7 +1472,7 @@ mod tests {
 
     #[test]
     fn ast_node_ids_distinguish_wrapper_and_payload_nodes() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern("struct S;");
@@ -1489,7 +1489,7 @@ mod tests {
 
     #[test]
     fn links_unnamed_impls_and_assoc_items_by_source() {
-        let ccx = CommonCx::new();
+        let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern("struct S; impl S { fn a() {} } impl S { fn b() {} }");

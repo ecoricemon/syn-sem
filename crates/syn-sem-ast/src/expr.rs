@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn expr_call() {
         // Proves call expressions preserve the callee and argument list.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let expr = parse::<syn::ExprCall, ExprCall>(&scx, "invoke(a, b)");
         let Expr::Path(path) = expr.func else {
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn expr_lit() {
         // Proves expression literals wrap the parsed literal value.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let expr = parse::<syn::ExprLit, ExprLit>(&scx, "1");
         let Lit::Int(v) = &expr.lit else { panic!() };
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn expr_const() {
         // Proves const expressions preserve their block body.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprConst, ExprConst>(&scx, "const { 1 }");
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn expr_repeat() {
         // Proves repeat expressions preserve both the repeated value and length.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let expr = parse::<syn::ExprRepeat, ExprRepeat>(&scx, "[value; len]");
         assert!(matches!(expr.expr, Expr::Path(_)));
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn expr_reference() {
         // Proves reference expressions preserve mutability and referenced expression.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprReference, ExprReference>(&scx, "&value");
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn expr_return() {
         // Proves return expressions preserve optional return values.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprReturn, ExprReturn>(&scx, "return");
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn expr_struct() {
         // Proves struct expressions preserve path, fields, rest, and path arguments.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprStruct, ExprStruct>(&scx, "S { a, b: c }");
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn expr_path() {
         // Proves expression paths preserve generic arguments on path segments.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprPath, ExprPath>(&scx, "make::<T>");
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn expr_tuple() {
         // Proves tuple expressions preserve empty and multi-element tuples.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprTuple, ExprTuple>(&scx, "()");
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn expr_unary() {
         // Proves unary expressions classify deref, not, and negation operators.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprUnary, ExprUnary>(&scx, "*value");

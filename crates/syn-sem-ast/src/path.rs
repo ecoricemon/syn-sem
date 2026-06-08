@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn path() {
         // Proves paths preserve segments and expose helper accessors.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let path = parse::<syn::Path, Path>(&scx, "A");
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn path_arguments() {
         // Proves path arguments preserve single and multiple type arguments.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let path = parse::<syn::Path, Path>(&scx, "A<T>");
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn generic_argument() {
         // Proves generic arguments preserve const, associated type, associated const, and constraints.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let path = parse::<syn::Path, Path>(&scx, "Array<3>");
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn unsupported() {
         // Proves unsupported path argument forms recover as `Unsupported` instead of panicking.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let bound = parse::<syn::TypeParamBound, crate::TypeParamBound>(&scx, "Fn(A)");

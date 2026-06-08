@@ -16,11 +16,6 @@ pub struct CommonCx {
 }
 
 impl CommonCx {
-    /// Creates an empty common context.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns the string interner owned by this context.
     pub fn interner(&self) -> &StringInterner {
         &self.interner
@@ -56,11 +51,6 @@ pub struct StringInterner {
 }
 
 impl StringInterner {
-    /// Creates an empty string interner.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Interns `text` and returns a lifetime-bearing interned string.
     pub fn intern(&self, text: &str) -> InternedStr<'_> {
         self.intern_display(text, text.len()).unwrap()
@@ -147,11 +137,6 @@ pub struct AbstractFiles<'ccx> {
 }
 
 impl<'ccx> AbstractFiles<'ccx> {
-    /// Creates an empty abstract file table.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns whether `file_path` has source in this table.
     pub fn contains(&self, file_path: FilePath<'ccx>) -> bool {
         self.files.contains_key(&file_path)
@@ -300,7 +285,7 @@ mod tests {
 
     #[test]
     fn interner_deduplicates_strings() {
-        let interner = StringInterner::new();
+        let interner = StringInterner::default();
 
         let a = interner.intern("hello");
         let b = interner.intern("hello");
@@ -314,8 +299,8 @@ mod tests {
 
     #[test]
     fn abstract_files_stores_virtual_file_code() {
-        let ccx = CommonCx::new();
-        let mut files = AbstractFiles::new();
+        let ccx = CommonCx::default();
+        let mut files = AbstractFiles::default();
 
         let file_path = files
             .insert_virtual_file(ccx.interner(), "/virtual/main.rs", "fn main() {}")
@@ -328,8 +313,8 @@ mod tests {
 
     #[test]
     fn abstract_files_stores_physical_file_code_without_reading_disk() {
-        let ccx = CommonCx::new();
-        let mut files = AbstractFiles::new();
+        let ccx = CommonCx::default();
+        let mut files = AbstractFiles::default();
 
         let file_path = files
             .insert_physical_file(ccx.interner(), "/virtual/main.rs", "fn main() {}")
@@ -342,8 +327,8 @@ mod tests {
 
     #[test]
     fn physical_file_path_must_be_absolute() {
-        let ccx = CommonCx::new();
-        let mut files = AbstractFiles::new();
+        let ccx = CommonCx::default();
+        let mut files = AbstractFiles::default();
 
         let err = files
             .insert_physical_file(ccx.interner(), "relative.rs", "")
@@ -357,8 +342,8 @@ mod tests {
 
     #[test]
     fn known_libraries_point_to_file_paths() {
-        let ccx = CommonCx::new();
-        let mut files = AbstractFiles::new();
+        let ccx = CommonCx::default();
+        let mut files = AbstractFiles::default();
         let file_path = files
             .insert_virtual_file(ccx.interner(), "/virtual/core.rs", "mod marker {}")
             .unwrap();

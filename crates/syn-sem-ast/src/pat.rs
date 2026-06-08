@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn pat_rest() {
         // Proves rest patterns are preserved inside slice patterns.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let [head, .., tail] = value;");
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn pat_ident() {
         // Proves identifier patterns preserve `ref` and `mut` modifiers.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let ref mut value = input;");
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn pat_reference() {
         // Proves reference patterns preserve whether the pattern reference is mutable.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let &value = input;");
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn pat_struct() {
         // Proves struct patterns preserve path, fields, rest, and path arguments.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let stmt = parse::<syn::Stmt, crate::Stmt>(&scx, "let S { a, b: c, .. } = value;");
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn pat_type_receiver() {
         // Proves method receivers synthesize the expected typed `self` pattern.
-        let ccx = syn_sem_common::CommonCx::new();
+        let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let receiver = parse::<syn::Receiver, PatType>(&scx, "&self");

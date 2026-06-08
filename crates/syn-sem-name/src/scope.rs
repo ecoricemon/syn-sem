@@ -23,7 +23,7 @@ impl<'cx> Scope<'cx> {
             id,
             parent,
             kind,
-            bindings: Bindings::new(),
+            bindings: Bindings::default(),
         }
     }
 }
@@ -79,11 +79,6 @@ impl<'cx> Bindings<'cx> {
             Namespace::Macro => &self.macros,
             Namespace::Lifetime => &self.lifetimes,
         }
-    }
-
-    /// Creates empty bindings.
-    pub(crate) fn new() -> Self {
-        Self::default()
     }
 
     /// Inserts a definition under `name` in `namespace`.

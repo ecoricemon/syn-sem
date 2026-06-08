@@ -788,7 +788,7 @@ mod tests {
         // Lookup from the function body finds the inner `x`; lookup from root finds the outer `x`.
         #[test]
         fn lexical_resolution_prefers_inner_scope() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let x = ccx.intern("x");
 
             let mut db = NameDb::default();
@@ -829,7 +829,7 @@ mod tests {
         // The function body can see names declared in the generic-parameter scope.
         #[test]
         fn generic_scope_is_visible_from_function_body() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
@@ -863,7 +863,7 @@ mod tests {
         // The block-local item is visible from the same block in the type namespace.
         #[test]
         fn local_item_can_be_resolved_in_type_namespace() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let local = ccx.intern("Local");
 
             let mut db = NameDb::default();
@@ -900,7 +900,7 @@ mod tests {
         // The same spelling can resolve to different definitions in different namespaces.
         #[test]
         fn namespaces_are_independent() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
@@ -939,7 +939,7 @@ mod tests {
         // The const parameter `N` lives in the value namespace, not the type namespace.
         #[test]
         fn const_generic_lives_in_value_namespace() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let n = ccx.intern("N");
 
             let mut db = NameDb::default();
@@ -1014,7 +1014,7 @@ mod tests {
         // The first three introduce local bindings to the resolved target; `_` does not.
         #[test]
         fn resolves_single_rename_self_and_underscore_imports() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
@@ -1098,7 +1098,7 @@ mod tests {
         // The first import preserves the ambiguous parent-path failure; the second is not found.
         #[test]
         fn self_import_preserves_parent_path_failure() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
@@ -1157,7 +1157,7 @@ mod tests {
         // Chained re-exports resolve to the original target, and globs skip private children.
         #[test]
         fn resolves_chained_reexports_and_globs_with_visibility() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
@@ -1246,7 +1246,7 @@ mod tests {
         // The two globs make `X` ambiguous in `c`; `Missing` reports not found.
         #[test]
         fn import_resolution_reports_ambiguity_and_not_found() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
@@ -1320,7 +1320,7 @@ mod tests {
         #[test]
         #[should_panic(expected = "import binding candidates must resolve to one final target")]
         fn single_import_panics_when_namespace_candidates_resolve_to_distinct_targets() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
@@ -1370,7 +1370,7 @@ mod tests {
         // one final variant definition.
         #[test]
         fn imported_enum_variant_keeps_type_and_value_namespaces() {
-            let ccx = CommonCx::new();
+            let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
             let a = ccx.intern("a");
