@@ -1,23 +1,20 @@
-# AGENTS.md
+# Instructions
 
-## Crate Focus
+## Role
 
-`syn-sem-macros` provides procedural macros used by extracted `syn-sem` crates.
+- Own procedural macros used by extracted `syn-sem` crates.
 
 ## Boundaries
 
-Keep this crate limited to small compile-time helpers. Do not put runtime
-semantic-analysis logic, shared data models, or phase-specific behavior here.
+- Keep this crate limited to small compile-time helpers.
+- Do not add runtime semantic-analysis logic here.
+- Do not add shared data models or phase-specific behavior here.
+- Generate straightforward code with inspectable expansion behavior.
 
-Macros should generate straightforward code and keep their expansion behavior
-easy to inspect.
+## Model
 
-## Model Rules
-
-Prefer explicit compile-time checks over generated runtime behavior when adding
-macros for crate invariants.
+- Prefer explicit compile-time checks over generated runtime behavior for crate invariants.
 
 ## Primary Public Items
 
-- `CheckDropless`: derive macro that emits a compile-time assertion that the
-  target type does not need drop.
+- `CheckDropless`: derive macro asserting that the target type does not need drop.

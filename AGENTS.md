@@ -1,113 +1,58 @@
-# AGENTS.md
+# Instructions
 
-## Project Direction
+## Project
 
-We are refactoring `crates/syn-sem` by extracting focused sub-crates.
+- Extract focused sub-crates from `crates/syn-sem` incrementally.
+- Keep `syn-sem` as the facade/orchestrator while internals migrate.
+- Implement new migration work in `syn-sem-top` instead of reshaping `syn-sem`.
+- Treat current crate boundaries, phase ordering, and ownership choices as
+  migration guidance unless this file or the active user task makes them durable.
+- Prefer the nearest crate-local `AGENTS.md` for crate-specific rules.
 
-`syn-sem` remains the facade/orchestrator while internals are migrated.
+## Instruction Files
 
-We are implementing `syn-sem-top` instead of modifying `syn-sem` in the middle
-of migration.
+- Keep `AGENTS.md` files short, stable, and action-oriented.
+- Do not use `AGENTS.md` as a design log.
+- Follow the user's latest explicit task instruction over stale guidance here.
+- Update `AGENTS.md` only for decisions expected to last across many tasks.
 
-Current crate boundaries, phase ordering, and ownership choices are migration
-guidance, not fixed architecture. Do not treat assistant-proposed architecture
-from earlier tasks as durable unless the user explicitly confirms it for the
-active task or it is recorded here as a lasting project direction.
+## Contexts
 
-Each extracted crate may have its own `AGENTS.md` with crate-local role,
-boundary, model, and public-item guidance. Prefer the nearest crate-local file
-for details specific to that crate.
+- Use a flattened context hierarchy.
+- Keep `CommonCx` as bottom/shared infrastructure.
+- Keep phase contexts as top-level siblings that borrow the contexts they need.
+- Put self-referential ownership and lifetime wiring only in the top-level root.
+- Do not make lower-level contexts own parent contexts or build deep context chains.
+- Treat `TopCx` as the self-referential root like the old `GlobalCx`.
 
-## Instruction Maintenance
+## Names
 
-Keep `AGENTS.md` files stable and lightweight. Do not treat them as detailed
-design records.
+- Bind `CommonCx` as `ccx`.
+- Bind `SyntaxCx` as `scx`.
+- Bind `TopCx` as `tcx`.
+- Write the top-level root as `TopCx<'tcx>`.
+- Write non-top-level context types with `'cx`, for example `FooCx<'cx>`.
+- Use referent-specific lifetimes elsewhere, for example `&'ccx CommonCx`.
 
-When API direction changes, prefer following the user's latest explicit
-instruction in the active task rather than updating these files for every design
-choice.
+## Crate Boundaries
 
-Only update an `AGENTS.md` file when a decision is expected to remain durable
-across many future tasks.
+- Keep extracted crates focused.
+- Respect crate-local boundary rules before adding dependencies or moving public items.
+- Expose lower-phase owned facts through focused query APIs.
+- Make higher phases ask owning crates for definition, source, scope, and resolution facts.
+- Extract reusable infrastructure before wiring it deeply into `syn-sem`.
+- Let `PathTree` remain temporarily, but move new name-resolution work toward `syn-sem-name`.
 
-## Context Model
+## Tests
 
-Use a flattened context hierarchy.
+- Run `cargo fmt` before finalizing changes.
+- Check all sub-crates with `cargo check`, `cargo clippy`, and `cargo test`.
+- For extracted crates, prefer `cargo rustdoc -p <crate> -- -D missing_docs`.
+- Add rustdoc comments for new public items in extracted crates.
 
-`CommonCx` is the bottom/shared infrastructure context. It owns common
-facilities such as string interning and shared file/source identifiers, but it
-is not the only context we expect to have.
+## Style
 
-Future phase contexts should be siblings at the top-level session/root layer,
-not deeply nested inside one another. For example, name, AST, semantic,
-inference, and evaluation contexts may all exist at the same session level and
-borrow the contexts they need.
-
-Self-referential ownership and lifetime wiring should be handled only at the
-top-level session/root layer. Lower-level contexts should not try to own parent
-contexts or construct deep context chains. `TopCx` is expected to be the
-self-referential root like the old `GlobalCx`.
-
-## Naming Conventions
-
-Context binding names should use conventional names, with no exceptions:
-
-- `CommonCx` binds as `ccx`
-- `SyntaxCx` binds as `scx`
-- `TopCx` binds as `tcx`
-
-Context lifetime names depend on where they appear:
-
-- `TopCx` is the self-referential top-level exception; write it as
-  `TopCx<'tcx>`.
-- Other non-top-level context types use `'cx`; for example, write
-  `FooCx<'cx>`.
-- Other places use conventional lifetime names that match the referent; for
-  example, write `&'ccx CommonCx` or `&'tcx TopCx`.
-
-## Cross-Crate Boundaries
-
-Keep extracted crates focused.
-
-Respect each crate's local boundary rules before adding dependencies or moving
-public items.
-
-Lower phases should expose owned information through focused query APIs instead
-of making higher phases reconstruct searches from raw storage. Higher phases
-should ask the owning crate for facts such as definition/source mappings,
-scopes, and resolution links, so they can stay focused on their own
-representation or analysis work.
-
-New reusable infrastructure should usually be extracted before being wired
-deeply into `syn-sem`.
-
-`PathTree` may remain temporarily during migration, but new name-resolution work
-should move toward `syn-sem-name`.
-
-## Testing Expectations
-
-Check all sub-crates.
-
-```sh
-cargo check
-cargo clippy
-cargo test
-```
-
-For each extracted crate, prefer focused doc check:
-
-```sh
-cargo rustdoc -p <crate> -- -D missing_docs
-```
-
-Run `cargo fmt` before finalizing changes.
-When adding public items to extracted crates, add rustdoc comments.
-
-## Style Notes
-
-Keep `lib.rs` clean.
-
-Prefer incremental refactors. Each step should compile and pass focused tests
-before moving to the next step.
-
-Avoid broad rewrites unless they directly support the current extraction step.
+- Keep `lib.rs` clean.
+- Prefer incremental refactors.
+- Make each step compile and pass focused tests before continuing.
+- Avoid broad rewrites unless they directly support the current extraction step.

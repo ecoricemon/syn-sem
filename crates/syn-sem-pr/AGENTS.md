@@ -1,41 +1,29 @@
-# AGENTS.md
+# Instructions
 
-## Crate Focus
+## Role
 
-`syn-sem-pr` owns the Rust source program representation for `syn-sem`.
-`pr` means Program Representation. This crate should describe items,
-signatures, fields, bodies, and type occurrences in a form other phases can
-consume.
+- Own the Rust source program representation.
+- Treat `pr` as Program Representation.
+- Represent items, signatures, fields, bodies, and type occurrences for other phases.
 
 ## Boundaries
 
-Keep this crate focused on the program representation layer during the current
-extraction step.
+- Keep this crate focused on the current program representation layer.
+- Refer to definitions, scopes, and imports through `syn-sem-name` ids/data when needed.
+- Do not treat current name-resolution ownership as fixed architecture.
+- Do not bake in permanent phase ordering around inference, evaluation,
+  monomorphization, or backend lowering.
 
-Current integrations may refer to definitions, scopes, and imports through
-`syn-sem-name` ids and data, but name-resolution ownership is not fixed
-architecture.
+## Model
 
-Type inference, constant evaluation, monomorphization, and backend-specific
-lowering responsibilities are not fixed as before or after this crate. Keep the
-current implementation incremental and avoid baking in permanent phase ordering.
-
-## Representation Rules
-
-Prefer Rust-shaped semantic data over backend-oriented or fully lowered
-representations.
-
-Represent source-level declarations and bodies explicitly enough that later
-phases do not need to recover structure from raw AST nodes.
-
-Leave room for future block/body desugaring IR. That IR may be added here or
-split into a sibling crate when the design becomes concrete.
-
-Keep ownership and lifetimes tied to the shared top-level context; avoid making
-this crate construct deep context chains.
+- Prefer Rust-shaped semantic data over backend-oriented or fully lowered forms.
+- Represent source declarations and bodies explicitly.
+- Do not make later phases recover source structure from raw AST nodes.
+- Leave room for future block/body desugaring IR.
+- Keep ownership and lifetimes tied to the shared top-level context.
+- Do not construct deep context chains here.
 
 ## Primary Public Items
 
 - `ProgramRepr`: program representation produced from AST and name-resolution data.
-- `Item`, `Signature`, `Body`, `Field`, `Variant`, `AssocItem`, and `Type`:
-  current source-level program representation components.
+- `Item`, `Signature`, `Body`, `Field`, `Variant`, `AssocItem`, `Type`: source-level components.

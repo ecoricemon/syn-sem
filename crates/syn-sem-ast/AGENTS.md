@@ -1,40 +1,32 @@
-# AGENTS.md
+# Instructions
 
-## Crate Focus
+## Role
 
-`syn-sem-ast` provides a lifetime-bearing semantic AST wrapper over `syn`
-syntax trees. It parses and stores source files through `SyntaxCx`, then
-converts raw `syn` nodes into AST nodes that other extracted crates can inspect
-without depending directly on `syn`.
+- Own the lifetime-bearing semantic AST wrapper over `syn` syntax trees.
+- Parse and store source files through `SyntaxCx`.
+- Convert raw `syn` nodes into AST nodes for sibling crates.
 
 ## Boundaries
 
-Keep this crate focused on syntax-shaped AST data and source mapping.
+- Keep this crate focused on syntax-shaped AST data and source mapping.
+- Do not add name resolution, type inference, evaluation, monomorphization, or
+  backend lowering here.
+- Keep phase logic in sibling phase crates or top-level orchestration.
 
-Do not add name resolution, type inference, evaluation, monomorphization, or
-backend lowering responsibilities here. Those belong in sibling phase crates or
-top-level orchestration.
+## Model
 
-## Model Rules
-
-AST nodes should be dropless and allocated from `SyntaxCx` when they need
-context-owned storage.
-
-Interned strings, file paths, and source text should come through
-`syn-sem-common` aliases and the shared `CommonCx` borrowed by `SyntaxCx`.
-
-Prefer semantic wrappers over exposing raw `syn` nodes through production APIs.
-Raw `syn` should mainly appear at conversion boundaries.
+- Keep AST nodes dropless.
+- Allocate AST nodes from `SyntaxCx` when they need context-owned storage.
+- Get interned strings, file paths, and source text through `syn-sem-common`.
+- Borrow the shared `CommonCx` through `SyntaxCx`.
+- Prefer semantic wrappers over raw `syn` nodes in production APIs.
+- Keep raw `syn` mainly at conversion boundaries.
 
 ## Primary Public Items
 
-- `SyntaxCx`: allocation, interning, parsing, and source-storage context for the
-  semantic AST.
-- `FromSyn`: conversion trait from raw `syn` nodes into semantic AST nodes.
-- `InputDesc`: source-file and input-node descriptor passed during conversion.
-- `Source` and `SourceKind`: parsed source metadata and physical/virtual source
-  classification.
-- `File`, `Item`, `Expr`, `Type`, `Pat`, `Path`, `Generics`, and related node
-  families: semantic AST views over Rust syntax.
-- `Ident` and `Span`: source-aware identifiers and locations used throughout
-  AST nodes.
+- `SyntaxCx`: allocation, interning, parsing, and source-storage context.
+- `FromSyn`: conversion trait from raw `syn` nodes.
+- `InputDesc`: source-file and input-node descriptor for conversion.
+- `Source`, `SourceKind`: parsed source metadata and source classification.
+- `File`, `Item`, `Expr`, `Type`, `Pat`, `Path`, `Generics`: semantic AST node families.
+- `Ident`, `Span`: source-aware identifiers and locations.
