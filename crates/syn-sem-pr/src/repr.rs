@@ -50,78 +50,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
         let source_visibility = item_source_visibility(item);
-        let mut module_children = None;
-        let kind = match item {
-            ast::Item::Const(item) => {
-                let ty = self.collect_type(item.ty, TypeSource::ConstType);
-                let body = self.collect_body(
-                    BodyOwner::Item(id),
-                    def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Expr,
-                );
-                ItemKind::Const { ty, body }
-            }
-            ast::Item::Enum(item) => {
-                let variants = item
-                    .variants
-                    .iter()
-                    .map(|variant| self.collect_variant(variant))
-                    .collect();
-                ItemKind::Enum { variants }
-            }
-            ast::Item::Fn(item) => {
-                let signature = self.collect_signature(SignatureSource::ItemFn, &item.sig);
-                let body = self.collect_body(
-                    BodyOwner::Item(id),
-                    def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Block,
-                );
-                ItemKind::Fn { signature, body }
-            }
-            ast::Item::Impl(item) => {
-                let self_ty = self.collect_type(item.self_ty, TypeSource::ImplSelf);
-                let items = item
-                    .items
-                    .iter()
-                    .map(|item| self.collect_impl_item(item))
-                    .collect();
-                ItemKind::Impl {
-                    trait_: item.trait_.as_ref().map(Path::from_ast),
-                    self_ty,
-                    items,
-                }
-            }
-            ast::Item::Mod(item) => {
-                let scope = def.and_then(|def| self.names.def_path_scope(def));
-                module_children = item.items.map(|items| (items, scope));
-                ItemKind::Mod {
-                    is_inline: item.is_inline,
-                    scope,
-                    items: Vec::new(),
-                }
-            }
-            ast::Item::Struct(item) => {
-                let fields = item
-                    .fields
-                    .iter()
-                    .map(|field| self.collect_struct_field(field))
-                    .collect();
-                ItemKind::Struct { fields }
-            }
-            ast::Item::Trait(item) => {
-                let items = item
-                    .items
-                    .iter()
-                    .map(|item| self.collect_trait_item(item))
-                    .collect();
-                ItemKind::Trait { items }
-            }
-            ast::Item::Type(item) => {
-                let ty = self.collect_type(item.ty, TypeSource::TypeAlias);
-                ItemKind::Type { ty }
-            }
-            ast::Item::Use(_) => ItemKind::Use,
-        };
+        let kind = self.collect_item_kind(id, item, parent_scope, def);
 
         self.repr.add_item(Item {
             id,
@@ -132,7 +61,11 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             kind,
         });
 
-        if let Some((children, scope)) = module_children {
+        if let ast::Item::Mod(item) = item {
+            let scope = def.and_then(|def| self.names.def_path_scope(def));
+            let Some(children) = item.items else {
+                return id;
+            };
             let items = self.collect_items(children, scope);
             if let ItemKind::Mod {
                 items: module_items,
@@ -146,9 +79,94 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_struct_field(&mut self, field: &'cx ast::Field<'cx>) -> FieldId {
+    fn collect_item_kind(
+        &mut self,
+        id: ItemId,
+        item: &'cx ast::Item<'cx>,
+        parent_scope: Option<ScopeId>,
+        def: Option<DefId>,
+    ) -> ItemKind<'cx> {
+        let type_scope = self.type_scope_for_def(def, parent_scope);
+        match item {
+            ast::Item::Const(item) => {
+                let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
+                let body = self.collect_body(
+                    BodyOwner::Item(id),
+                    def.and_then(|def| self.names.def_body_scope(def)),
+                    BodyKind::Expr,
+                );
+                ItemKind::Const { ty, body }
+            }
+            ast::Item::Enum(item) => {
+                let variants = item
+                    .variants
+                    .iter()
+                    .map(|variant| self.collect_variant(variant, type_scope))
+                    .collect();
+                ItemKind::Enum { variants }
+            }
+            ast::Item::Fn(item) => {
+                let signature =
+                    self.collect_signature(SignatureSource::ItemFn, &item.sig, type_scope);
+                let body = self.collect_body(
+                    BodyOwner::Item(id),
+                    def.and_then(|def| self.names.def_body_scope(def)),
+                    BodyKind::Block,
+                );
+                ItemKind::Fn { signature, body }
+            }
+            ast::Item::Impl(item) => {
+                let self_ty = self.collect_type(item.self_ty, type_scope, TypeSource::ImplSelf);
+                let items = item
+                    .items
+                    .iter()
+                    .map(|item| self.collect_impl_item(item, type_scope))
+                    .collect();
+                ItemKind::Impl {
+                    trait_: item.trait_.as_ref().map(Path::from_ast),
+                    self_ty,
+                    items,
+                }
+            }
+            ast::Item::Mod(item) => {
+                let scope = def.and_then(|def| self.names.def_path_scope(def));
+                ItemKind::Mod {
+                    is_inline: item.is_inline,
+                    scope,
+                    items: Vec::new(),
+                }
+            }
+            ast::Item::Struct(item) => {
+                let fields = item
+                    .fields
+                    .iter()
+                    .map(|field| self.collect_struct_field(field, type_scope))
+                    .collect();
+                ItemKind::Struct { fields }
+            }
+            ast::Item::Trait(item) => {
+                let items = item
+                    .items
+                    .iter()
+                    .map(|item| self.collect_trait_item(item, type_scope))
+                    .collect();
+                ItemKind::Trait { items }
+            }
+            ast::Item::Type(item) => {
+                let ty = self.collect_type(item.ty, type_scope, TypeSource::TypeAlias);
+                ItemKind::Type { ty }
+            }
+            ast::Item::Use(_) => ItemKind::Use,
+        }
+    }
+
+    fn collect_struct_field(
+        &mut self,
+        field: &'cx ast::Field<'cx>,
+        scope: Option<ScopeId>,
+    ) -> FieldId {
         let id = self.repr.next_field_id();
-        let ty = self.collect_type(&field.ty, TypeSource::StructField);
+        let ty = self.collect_type(&field.ty, scope, TypeSource::StructField);
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
@@ -159,14 +177,18 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_variant(&mut self, variant: &'cx ast::Variant<'cx>) -> VariantId {
+    fn collect_variant(
+        &mut self,
+        variant: &'cx ast::Variant<'cx>,
+        scope: Option<ScopeId>,
+    ) -> VariantId {
         let id = self.repr.next_variant_id();
         let def = self.def_for_variant(variant);
         let (fields, discriminant) = match &variant.kind {
             ast::VariantKind::Fields(fields) => (
                 fields
                     .iter()
-                    .map(|field| self.collect_variant_field(field))
+                    .map(|field| self.collect_variant_field(field, scope))
                     .collect(),
                 None,
             ),
@@ -186,9 +208,13 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_variant_field(&mut self, field: &'cx ast::VariantField<'cx>) -> FieldId {
+    fn collect_variant_field(
+        &mut self,
+        field: &'cx ast::VariantField<'cx>,
+        scope: Option<ScopeId>,
+    ) -> FieldId {
         let id = self.repr.next_field_id();
-        let ty = self.collect_type(&field.ty, TypeSource::VariantField);
+        let ty = self.collect_type(&field.ty, scope, TypeSource::VariantField);
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
@@ -199,12 +225,17 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_impl_item(&mut self, item: &'cx ast::ImplItem<'cx>) -> AssocItemId {
+    fn collect_impl_item(
+        &mut self,
+        item: &'cx ast::ImplItem<'cx>,
+        parent_scope: Option<ScopeId>,
+    ) -> AssocItemId {
         let id = self.repr.next_assoc_item_id();
         let def = self.def_for_impl_item(item);
+        let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::ImplItem::Const(item) => {
-                let ty = self.collect_type(item.ty, TypeSource::AssocConstType);
+                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
                 let body = self.collect_body(
                     BodyOwner::AssocItem(id),
                     def.and_then(|def| self.names.def_body_scope(def)),
@@ -213,7 +244,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 AssocItemKind::ImplConst { ty, body }
             }
             ast::ImplItem::Fn(item) => {
-                let signature = self.collect_signature(SignatureSource::ImplFn, &item.sig);
+                let signature =
+                    self.collect_signature(SignatureSource::ImplFn, &item.sig, type_scope);
                 let body = self.collect_body(
                     BodyOwner::AssocItem(id),
                     def.and_then(|def| self.names.def_body_scope(def)),
@@ -222,7 +254,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 AssocItemKind::ImplFn { signature, body }
             }
             ast::ImplItem::Type(item) => {
-                let ty = self.collect_type(item.ty, TypeSource::AssocTypeValue);
+                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocTypeValue);
                 AssocItemKind::ImplType { ty }
             }
         };
@@ -235,12 +267,17 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_trait_item(&mut self, item: &'cx ast::TraitItem<'cx>) -> AssocItemId {
+    fn collect_trait_item(
+        &mut self,
+        item: &'cx ast::TraitItem<'cx>,
+        parent_scope: Option<ScopeId>,
+    ) -> AssocItemId {
         let id = self.repr.next_assoc_item_id();
         let def = self.def_for_trait_item(item);
+        let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::TraitItem::Const(item) => {
-                let ty = self.collect_type(item.ty, TypeSource::AssocConstType);
+                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
                 let default = item.default.map(|_| {
                     self.collect_body(
                         BodyOwner::AssocItem(id),
@@ -251,7 +288,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
-                let signature = self.collect_signature(SignatureSource::TraitFn, &item.sig);
+                let signature =
+                    self.collect_signature(SignatureSource::TraitFn, &item.sig, type_scope);
                 let default = item.default.as_ref().map(|_| {
                     self.collect_body(
                         BodyOwner::AssocItem(id),
@@ -264,7 +302,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             ast::TraitItem::Type(item) => {
                 let default = item
                     .default
-                    .map(|ty| self.collect_type(ty, TypeSource::AssocTypeValue));
+                    .map(|ty| self.collect_type(ty, type_scope, TypeSource::AssocTypeValue));
                 AssocItemKind::TraitType { default }
             }
         };
@@ -281,13 +319,14 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         &mut self,
         source: SignatureSource,
         signature: &'cx ast::Signature<'cx>,
+        scope: Option<ScopeId>,
     ) -> SignatureId {
         let types = signature
             .params
             .iter()
             .enumerate()
             .map(|(index, param)| {
-                self.collect_type(&param.pat.ty, TypeSource::SignatureParam { index })
+                self.collect_type(&param.pat.ty, scope, TypeSource::SignatureParam { index })
             })
             .collect();
         let id = self.repr.next_signature_id();
@@ -295,10 +334,120 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
-    fn collect_type(&mut self, ty: &'cx ast::Type<'cx>, source: TypeSource) -> TypeId {
+    fn collect_type(
+        &mut self,
+        ty: &'cx ast::Type<'cx>,
+        scope: Option<ScopeId>,
+        source: TypeSource,
+    ) -> TypeId {
+        let kind = self.collect_type_kind(ty, scope);
         let id = self.repr.next_type_id();
-        self.repr.add_type(Type { id, ty, source });
+        self.repr.add_type(Type {
+            id,
+            ty,
+            kind,
+            scope,
+            source,
+        });
         id
+    }
+
+    fn collect_type_kind(
+        &mut self,
+        ty: &'cx ast::Type<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypeKind<'cx> {
+        match ty {
+            ast::Type::Array(ty) => TypeKind::Array {
+                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+                len: ArrayLen::SourceExpr,
+            },
+            ast::Type::Infer(_) => TypeKind::Infer,
+            ast::Type::Path(ty) => TypeKind::Path(TypePath {
+                path: self.collect_type_path(&ty.path, scope),
+            }),
+            ast::Type::Reference(ty) => TypeKind::Reference {
+                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+                is_mut: ty.is_mut,
+            },
+            ast::Type::Slice(ty) => TypeKind::Slice {
+                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+            },
+            ast::Type::Tuple(ty) => TypeKind::Tuple {
+                elems: ty
+                    .elems
+                    .iter()
+                    .map(|elem| self.collect_type(elem, scope, TypeSource::Nested))
+                    .collect(),
+            },
+        }
+    }
+
+    fn collect_type_path(
+        &mut self,
+        path: &'cx ast::Path<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypePathValue<'cx> {
+        TypePathValue {
+            segments: path
+                .segments
+                .iter()
+                .map(|segment| self.collect_type_path_segment(segment, scope))
+                .collect(),
+        }
+    }
+
+    fn collect_type_path_segment(
+        &mut self,
+        segment: &'cx ast::PathSegment<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypePathSegment<'cx> {
+        TypePathSegment {
+            name: segment.ident.inner,
+            args: self.collect_generic_args(&segment.args, scope),
+        }
+    }
+
+    fn collect_generic_args(
+        &mut self,
+        args: &'cx ast::PathArguments<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Vec<GenericArgument<'cx>> {
+        args.args()
+            .iter()
+            .map(|arg| self.collect_generic_arg(arg, scope))
+            .collect()
+    }
+
+    fn collect_generic_arg(
+        &mut self,
+        arg: &'cx ast::GenericArgument<'cx>,
+        scope: Option<ScopeId>,
+    ) -> GenericArgument<'cx> {
+        match arg {
+            ast::GenericArgument::Type(ty) => {
+                GenericArgument::Type(self.collect_type(ty, scope, TypeSource::Nested))
+            }
+            ast::GenericArgument::Const(_) => GenericArgument::Const(SourceConstArg),
+            ast::GenericArgument::AssocType(arg) => GenericArgument::AssocType {
+                name: arg.ident.inner,
+                ty: self.collect_type(&arg.ty, scope, TypeSource::Nested),
+            },
+            ast::GenericArgument::AssocConst(arg) => GenericArgument::AssocConst {
+                name: arg.ident.inner,
+                value: SourceConstArg,
+            },
+            ast::GenericArgument::Constraint(arg) => GenericArgument::Constraint {
+                name: arg.ident.inner,
+                bounds: SourceTypeBounds,
+            },
+            ast::GenericArgument::Unsupported(_) => GenericArgument::Unsupported,
+        }
+    }
+
+    fn type_scope_for_def(&self, def: Option<DefId>, fallback: Option<ScopeId>) -> Option<ScopeId> {
+        def.and_then(|def| self.names.def_generic_scope(def))
+            .or(fallback)
     }
 
     fn collect_body(&mut self, owner: BodyOwner, scope: Option<ScopeId>, kind: BodyKind) -> BodyId {
@@ -839,9 +988,116 @@ pub struct Type<'cx> {
     pub id: TypeId,
     /// Original semantic AST type.
     pub ty: &'cx ast::Type<'cx>,
+    /// Representation-native source type shape.
+    pub kind: TypeKind<'cx>,
+    /// Scope used to resolve paths inside this type occurrence.
+    pub scope: Option<ScopeId>,
     /// Source role for this type occurrence.
     pub source: TypeSource,
 }
+
+/// Representation-native source type shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeKind<'cx> {
+    /// Fixed-length array type.
+    Array {
+        /// Element type.
+        elem: TypeId,
+        /// Array length expression shape.
+        len: ArrayLen,
+    },
+    /// Inferred type placeholder.
+    Infer,
+    /// Path type.
+    Path(TypePath<'cx>),
+    /// Borrowed reference type.
+    Reference {
+        /// Referenced type.
+        elem: TypeId,
+        /// Whether the reference is mutable.
+        is_mut: bool,
+    },
+    /// Dynamically sized slice type.
+    Slice {
+        /// Element type.
+        elem: TypeId,
+    },
+    /// Tuple type.
+    Tuple {
+        /// Tuple element types.
+        elems: Vec<TypeId>,
+    },
+}
+
+/// Representation-native path type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypePath<'cx> {
+    /// Path naming the type.
+    pub path: TypePathValue<'cx>,
+}
+
+/// Representation-native type path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypePathValue<'cx> {
+    /// Path segments in source order.
+    pub segments: Vec<TypePathSegment<'cx>>,
+}
+
+/// One representation-native type path segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypePathSegment<'cx> {
+    /// Segment name.
+    pub name: Name<'cx>,
+    /// Generic arguments on this segment.
+    pub args: Vec<GenericArgument<'cx>>,
+}
+
+/// Representation-native generic argument shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenericArgument<'cx> {
+    /// Type argument.
+    Type(TypeId),
+    /// Const expression argument.
+    Const(SourceConstArg),
+    /// Associated type equality.
+    AssocType {
+        /// Associated type name.
+        name: Name<'cx>,
+        /// Assigned type.
+        ty: TypeId,
+    },
+    /// Associated const equality.
+    AssocConst {
+        /// Associated const name.
+        name: Name<'cx>,
+        /// Assigned const value.
+        value: SourceConstArg,
+    },
+    /// Associated type constraint.
+    Constraint {
+        /// Associated type name.
+        name: Name<'cx>,
+        /// Source bounds.
+        bounds: SourceTypeBounds,
+    },
+    /// Unsupported argument form.
+    Unsupported,
+}
+
+/// Array length represented without owning expression lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayLen {
+    /// Length is still a source expression; expression lowering is a future representation slice.
+    SourceExpr,
+}
+
+/// Const argument represented without owning expression lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceConstArg;
+
+/// Type bounds represented without owning bound lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTypeBounds;
 
 /// Source role for a represented type occurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -865,6 +1121,8 @@ pub enum TypeSource {
     AssocConstType,
     /// Associated type value.
     AssocTypeValue,
+    /// Nested type inside another represented type occurrence.
+    Nested,
 }
 
 macro_rules! id_type {
@@ -1269,23 +1527,69 @@ mod tests {
         assert!(model
             .types()
             .iter()
-            .any(|ty| matches!(ty.ty, ast::Type::Array(_))));
+            .any(|ty| matches!(ty.kind, TypeKind::Array { .. })));
         assert!(model
             .types()
             .iter()
-            .any(|ty| matches!(ty.ty, ast::Type::Reference(_))));
+            .any(|ty| matches!(ty.kind, TypeKind::Reference { .. })));
         assert!(model
             .types()
             .iter()
-            .any(|ty| matches!(ty.ty, ast::Type::Slice(_))));
+            .any(|ty| matches!(ty.kind, TypeKind::Slice { .. })));
         assert!(model
             .types()
             .iter()
-            .any(|ty| matches!(ty.ty, ast::Type::Tuple(_))));
+            .any(|ty| matches!(ty.kind, TypeKind::Tuple { .. })));
         assert!(model
             .types()
             .iter()
-            .any(|ty| matches!(ty.ty, ast::Type::Path(_))));
+            .any(|ty| matches!(ty.kind, TypeKind::Path(_))));
+        assert!(sources.contains(&TypeSource::Nested));
+    }
+
+    #[test]
+    fn represents_type_paths_and_nested_generic_arguments() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            struct S {
+                field: std::collections::HashMap<K, Iterator<Item = V>>,
+            }
+            "#,
+        );
+
+        let field_type = model
+            .types()
+            .iter()
+            .find(|ty| ty.source == TypeSource::StructField)
+            .expect("expected struct field type");
+
+        let TypeKind::Path(path) = &field_type.kind else {
+            panic!("expected path type");
+        };
+        assert_eq!(path.path.segments.len(), 3);
+        assert_eq!(path.path.segments[0].name.as_ref(), "std");
+        assert_eq!(path.path.segments[1].name.as_ref(), "collections");
+
+        let last = &path.path.segments[2];
+        assert_eq!(last.name.as_ref(), "HashMap");
+        assert_eq!(last.args.len(), 2);
+        assert!(matches!(last.args[0], GenericArgument::Type(_)));
+
+        let GenericArgument::Type(iter_ty) = last.args[1] else {
+            panic!("expected type argument");
+        };
+        let TypeKind::Path(iter_path) = &model[iter_ty].kind else {
+            panic!("expected nested iterator path type");
+        };
+        assert_eq!(iter_path.path.segments[0].name.as_ref(), "Iterator");
+        assert!(matches!(
+            iter_path.path.segments[0].args[0],
+            GenericArgument::AssocType { .. }
+        ));
     }
 
     #[test]

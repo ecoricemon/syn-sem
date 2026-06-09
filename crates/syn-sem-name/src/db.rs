@@ -58,6 +58,11 @@ impl<'cx> NameDb<'cx> {
         self[def].scopes.body
     }
 
+    /// Returns the generic scope attached to `def`, if any.
+    pub fn def_generic_scope(&self, def: DefId) -> Option<ScopeId> {
+        self[def].scopes.generic
+    }
+
     /// Returns the binding for `name` directly declared in `scope` and `namespace`.
     pub fn binding(
         &self,
@@ -209,6 +214,47 @@ impl<'cx> NameDb<'cx> {
             if import.status == ImportStatus::Unresolved {
                 import.status = ImportStatus::NotFound;
             }
+        }
+    }
+
+    /// Resolves a type path from `scope`.
+    ///
+    /// Single-segment paths use lexical type-namespace lookup so generic type parameters and local
+    /// items can resolve from their use site.
+    ///
+    /// This follows the same local-crate path traversal rules as import resolution, then narrows
+    /// the terminal candidates to the type namespace and follows import aliases.
+    pub fn resolve_type_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> ResolveResult {
+        if let [name] = path {
+            return match self.resolve_lexical(scope, Namespace::Type, *name) {
+                ResolveResult::Found(def) => ResolveResult::Found(self.follow_aliases(def)),
+                ResolveResult::Ambiguous(defs) => ResolveResult::Ambiguous(
+                    defs.into_iter()
+                        .map(|def| self.follow_aliases(def))
+                        .collect(),
+                ),
+                ResolveResult::NotFound => ResolveResult::NotFound,
+            };
+        }
+
+        let candidates = match self.resolve_import_path(scope, path) {
+            CandidateResolution::Found(candidates) => candidates,
+            CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
+            CandidateResolution::NotFound => return ResolveResult::NotFound,
+        };
+
+        let mut defs = candidates
+            .into_iter()
+            .filter(|(namespace, _)| *namespace == Namespace::Type)
+            .map(|(_, def)| self.follow_aliases(def))
+            .collect::<Vec<_>>();
+        defs.sort_by_key(|def| def.index());
+        defs.dedup();
+
+        match defs.as_slice() {
+            [] => ResolveResult::NotFound,
+            [def] => ResolveResult::Found(*def),
+            _ => ResolveResult::Ambiguous(defs),
         }
     }
 
@@ -849,6 +895,10 @@ mod tests {
                 db.resolve_lexical(body, Namespace::Type, t),
                 ResolveResult::Found(type_param)
             );
+            assert_eq!(
+                db.resolve_type_path(body, &[t]),
+                ResolveResult::Found(type_param)
+            );
         }
 
         // Covers lexical lookup from this code shape:
@@ -881,6 +931,10 @@ mod tests {
 
             assert_eq!(
                 db.resolve_lexical(block, Namespace::Type, local),
+                ResolveResult::Found(local_struct)
+            );
+            assert_eq!(
+                db.resolve_type_path(block, &[local]),
                 ResolveResult::Found(local_struct)
             );
         }

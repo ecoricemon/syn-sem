@@ -157,6 +157,7 @@ fn resolve_lexical(
 
 mod upper_phase_integration {
     use super::*;
+    use syn_sem_infer::{InferDb, PathTypeResolution, PrimitiveType, Type};
 
     // Validates the intended upper-phase consumption pattern:
     // traverse source program shape through syn-sem-pr and query definition/scope facts through
@@ -171,7 +172,13 @@ mod upper_phase_integration {
                 pub fn helper() {}
             }
 
-            pub fn entry(x: usize) -> usize {
+            struct Local;
+
+            pub fn entry(x: Local, y: usize) -> Local {
+                x
+            }
+
+            pub fn generic<T>(x: T) -> T {
                 x
             }
             "#,
@@ -181,13 +188,17 @@ mod upper_phase_integration {
         let semantics = tcx.analyze(entry_path).unwrap();
         let repr = semantics.repr();
         let names = semantics.names();
+        let infer = InferDb::analyze(repr, names);
 
         let entry = repr
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "entry"))
             .expect("entry function should be represented");
-        let ItemKind::Fn { body, .. } = entry.kind else {
+        let ItemKind::Fn {
+            signature, body, ..
+        } = entry.kind
+        else {
             panic!("entry should be represented as a function item");
         };
         let entry_def = entry
@@ -197,6 +208,10 @@ mod upper_phase_integration {
         assert_eq!(names[entry_def].kind, DefKind::Fn);
         assert_eq!(repr[body].kind, BodyKind::Block);
         assert_eq!(repr[body].scope, names[entry_def].scopes.body);
+        assert!(repr[signature]
+            .types
+            .iter()
+            .all(|ty| infer.type_for_repr_type(*ty).is_some()));
 
         let inner = repr
             .items()
@@ -217,5 +232,64 @@ mod upper_phase_integration {
         assert_eq!(*scope, names[inner_def].scopes.path);
         assert_eq!(inner_items.len(), 1);
         assert!(matches!(repr[inner_items[0]].kind, ItemKind::Fn { .. }));
+
+        let local_def = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Local"))
+            .and_then(|item| item.def)
+            .expect("Local struct should link to a definition");
+
+        let local_ty = repr[signature].types[0];
+        let infer_local_ty = infer
+            .type_for_repr_type(local_ty)
+            .expect("signature return type should be lowered");
+        let Type::Path(path) = &infer[infer_local_ty] else {
+            panic!("signature return type should lower to path type");
+        };
+        assert_eq!(path.resolution, PathTypeResolution::Nominal(local_def));
+
+        let usize_ty = repr[signature].types[2];
+        let infer_usize_ty = infer
+            .type_for_repr_type(usize_ty)
+            .expect("signature parameter type should be lowered");
+        let Type::Primitive(primitive) = infer[infer_usize_ty] else {
+            panic!("usize signature parameter should lower to primitive type");
+        };
+        assert_eq!(primitive, PrimitiveType::Usize);
+
+        let generic = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "generic"))
+            .expect("generic function should be represented");
+        let ItemKind::Fn {
+            signature: generic_signature,
+            ..
+        } = generic.kind
+        else {
+            panic!("generic should be represented as a function item");
+        };
+        let generic_def = generic
+            .def
+            .expect("generic function should link to a definition");
+        let generic_scope = names[generic_def]
+            .scopes
+            .generic
+            .expect("generic function should have a generic scope");
+        let t_name = tcx.common.intern("T");
+        let t_def = names
+            .binding(generic_scope, Namespace::Type, t_name)
+            .and_then(|binding| binding.single())
+            .expect("T should bind to one generic type parameter");
+
+        let t_return_ty = repr[generic_signature].types[0];
+        let infer_t_return_ty = infer
+            .type_for_repr_type(t_return_ty)
+            .expect("generic return type should be lowered");
+        let Type::Path(path) = &infer[infer_t_return_ty] else {
+            panic!("generic return type should lower to path type");
+        };
+        assert_eq!(path.resolution, PathTypeResolution::GenericParam(t_def));
     }
 }
