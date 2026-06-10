@@ -1649,7 +1649,7 @@ mod tests {
             &scx,
             r#"
             struct S {
-                field: <T as Trait>::Item,
+                field: <T as a::b::Trait>::Item,
             }
             "#,
         );
@@ -1673,11 +1673,15 @@ mod tests {
             .expect("expected qself trait path");
 
         assert_eq!(self_ty.path.segments[0].name.as_ref(), "T");
-        assert_eq!(trait_path.segments.len(), 1);
-        assert_eq!(trait_path.segments[0].name.as_ref(), "Trait");
-        assert_eq!(path.path.segments.len(), 2);
-        assert_eq!(path.path.segments[0].name.as_ref(), "Trait");
-        assert_eq!(path.path.segments[1].name.as_ref(), "Item");
+        assert_eq!(trait_path.segments.len(), 3);
+        assert_eq!(trait_path.segments[0].name.as_ref(), "a");
+        assert_eq!(trait_path.segments[1].name.as_ref(), "b");
+        assert_eq!(trait_path.segments[2].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments.len(), 4);
+        assert_eq!(path.path.segments[0].name.as_ref(), "a");
+        assert_eq!(path.path.segments[1].name.as_ref(), "b");
+        assert_eq!(path.path.segments[2].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments[3].name.as_ref(), "Item");
     }
 
     #[test]

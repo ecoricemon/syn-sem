@@ -666,6 +666,8 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
+        let a = ccx.intern("a");
+        let b = ccx.intern("b");
         let trait_name = ccx.intern("Trait");
         let item = ccx.intern("Item");
         let mut names = NameDb::default();
@@ -677,24 +679,46 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let trait_def = names.add_def(
+        let a_def = names.add_def(
             root,
-            DefKind::Trait,
-            Some(trait_name),
-            Visibility::Private,
+            DefKind::Module,
+            Some(a),
+            Visibility::Public,
             Origin::Untracked,
         );
-        let trait_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(root));
+        let a_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(root));
+        names.set_path_scope(a_def, a_scope);
+        let b_def = names.add_def(
+            a_scope,
+            DefKind::Module,
+            Some(b),
+            Visibility::Public,
+            Origin::Untracked,
+        );
+        let b_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(a_scope));
+        names.set_path_scope(b_def, b_scope);
+        let trait_def = names.add_def(
+            b_scope,
+            DefKind::Trait,
+            Some(trait_name),
+            Visibility::Public,
+            Origin::Untracked,
+        );
+        let trait_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(b_scope));
         names.set_path_scope(trait_def, trait_scope);
         let item_def = names.add_def(
             trait_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            Visibility::Public,
             Origin::Untracked,
         );
-        let (repr, infer) =
-            infer_types_with_names(&ccx, &scx, "struct S { field: <T as Trait>::Item }", &names);
+        let (repr, infer) = infer_types_with_names(
+            &ccx,
+            &scx,
+            "struct S { field: <T as a::b::Trait>::Item }",
+            &names,
+        );
 
         let path = struct_field_path_type(&repr, &infer);
         let qself = path.qself.expect("qualified path should lower qself");
@@ -702,9 +726,11 @@ mod tests {
             .trait_ty
             .expect("qualified path should lower trait path");
 
-        assert_eq!(path.path.segments.len(), 2);
-        assert_eq!(path.path.segments[0].name.as_ref(), "Trait");
-        assert_eq!(path.path.segments[1].name.as_ref(), "Item");
+        assert_eq!(path.path.segments.len(), 4);
+        assert_eq!(path.path.segments[0].name.as_ref(), "a");
+        assert_eq!(path.path.segments[1].name.as_ref(), "b");
+        assert_eq!(path.path.segments[2].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments[3].name.as_ref(), "Item");
         assert!(matches!(
             infer[qself.self_ty],
             Type::Path(PathType {
@@ -712,6 +738,13 @@ mod tests {
                 ..
             }) if def == t_def
         ));
+        let Type::Path(lowered_trait_path) = &infer[trait_ty] else {
+            panic!("qself trait type should lower to path type");
+        };
+        assert_eq!(lowered_trait_path.path.segments.len(), 3);
+        assert_eq!(lowered_trait_path.path.segments[0].name.as_ref(), "a");
+        assert_eq!(lowered_trait_path.path.segments[1].name.as_ref(), "b");
+        assert_eq!(lowered_trait_path.path.segments[2].name.as_ref(), "Trait");
         assert!(matches!(
             infer[trait_ty],
             Type::Path(PathType {
