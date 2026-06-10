@@ -30,7 +30,7 @@
 - May model generics in representation-native data.
 - May expose function parameters and pattern names in a more upper-phase-friendly form.
 - May give `Body` statement, expression, or pattern entry points.
-- May refine path and type occurrence representation for upper semantic phases.
+- May further refine path and type occurrence representation for upper semantic phases.
 - May link `use` items to import or alias information without owning name resolution.
 - May add traversal helpers when they encode real program-shape relationships.
 

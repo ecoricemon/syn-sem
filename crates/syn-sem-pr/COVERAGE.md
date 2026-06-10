@@ -4,9 +4,10 @@ This document tracks how the current Rust source program representation covers
 the semantic AST surface supported by `syn-sem-ast`.
 
 `syn-sem-pr` is still a V1 program representation. Many rows are intentionally
-"indexed with AST source" rather than fully repr-native. The next goal is to
-use this matrix to drive tests and then reduce public AST exposure where later
-phases need repr-native data.
+"indexed with AST source" rather than fully repr-native. Type occurrences now
+also carry representation-native shape through `TypeKind`; the retained AST
+source reference is a construction/source anchor, not the data later phases
+should inspect.
 
 ## Status Legend
 
@@ -54,16 +55,16 @@ phases need repr-native data.
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| `Type::Array` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | Nested element type and length expression are not separately indexed. |
-| `Type::Infer` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | No repr-native inferred placeholder payload. |
-| `Type::Path` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | Path and generic arguments remain AST-only. |
-| `Type::Reference` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | Referenced type and mutability remain AST-only. |
-| `Type::Slice` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | Element type is not separately indexed. |
-| `Type::Tuple` | Partial | `Type { source }` when used from a represented declaration role | `&ast::Type` | Element types are not separately indexed. |
+| `Type::Array` | Indexed | `Type { kind: TypeKind::Array { elem, len }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`; length remains a source-expression placeholder until expression representation exists. |
+| `Type::Infer` | Indexed | `Type { kind: TypeKind::Infer, scope }` | Retained source anchor only | Represents `_` without requiring later phases to inspect AST. |
+| `Type::Path` | Indexed | `Type { kind: TypeKind::Path, scope }` with optional qualified self type, segments, and generic argument shape | Retained source anchor only | Qualified self types link to nested `TypeId`s; type and associated-type generic arguments also link to nested `TypeId`s; const args, associated consts, and constraints remain placeholders until expression/bound representation exists. |
+| `Type::Reference` | Indexed | `Type { kind: TypeKind::Reference { elem, is_mut }, scope }` | Retained source anchor only | Referenced type is indexed as `TypeSource::Nested`. |
+| `Type::Slice` | Indexed | `Type { kind: TypeKind::Slice { elem }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`. |
+| `Type::Tuple` | Indexed | `Type { kind: TypeKind::Tuple { elems }, scope }` | Retained source anchor only | Tuple element types are indexed as `TypeSource::Nested`. |
 
 Current `TypeSource` roles are `ConstType`, `SignatureParam`, `ImplSelf`,
 `StructField`, `VariantField`, `TypeAlias`, `AssocConstType`, and
-`AssocTypeValue`.
+`AssocTypeValue`; nested type entries use `Nested`.
 
 ## Bodies, Statements, Expressions, and Patterns
 
