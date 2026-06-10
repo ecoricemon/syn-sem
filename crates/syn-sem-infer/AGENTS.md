@@ -24,4 +24,8 @@
 
 ## Primary Public Items
 
-- None yet; this crate is a skeleton.
+- `InferDb`: entry point for lowering represented type occurrences.
+- `Type`, `TypeId`: inference type shapes and stable ids.
+- `PathType`, `QSelf`, `PathTypeResolution`: source-shaped path types plus
+  current solver-friendly resolution classification.
+- `PrimitiveType`: primitive Rust type classification stored as `Type::Primitive`.

@@ -63,5 +63,7 @@
 
 - Keep `lib.rs` clean.
 - Prefer incremental refactors.
+- Prefer iterator-family inputs over slices when callers can avoid building
+  temporary `Vec`s.
 - Make each step compile and pass focused tests before continuing.
 - Avoid broad rewrites unless they directly support the current extraction step.

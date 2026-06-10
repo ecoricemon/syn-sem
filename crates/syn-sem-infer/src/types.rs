@@ -1,6 +1,6 @@
 use std::ops::Index;
 use syn_sem_common::Map;
-use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult};
+use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult, ScopeId};
 use syn_sem_pr as pr;
 
 /// Type information collected for upper semantic inference.
@@ -95,45 +95,73 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     }
 
     fn lower_path_type(&mut self, repr_type: pr::TypeId, path: &pr::TypePath<'cx>) -> Type<'cx> {
-        if let Some(primitive) = PrimitiveType::from_repr_path(path) {
-            return Type::Primitive(primitive);
+        if path.qself.is_none() {
+            if let Some(primitive) = PrimitiveType::from_repr_path(&path.path) {
+                return Type::Primitive(primitive);
+            }
         }
 
+        let scope = self.repr[repr_type].scope;
+        let qself = self.lower_qself(path.qself.as_ref(), scope);
+        let resolution = self.resolve_path_value(scope, &path.path, qself.as_ref());
+
         Type::Path(PathType {
-            path: Path {
-                segments: path
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| self.lower_path_segment(segment))
-                    .collect(),
-            },
-            resolution: self.resolve_path_type(repr_type, path),
+            qself,
+            path: self.lower_path_value(&path.path),
+            resolution,
         })
     }
 
-    fn resolve_path_type(
+    fn lower_qself(
+        &mut self,
+        qself: Option<&pr::QSelf<'cx>>,
+        scope: Option<ScopeId>,
+    ) -> Option<QSelf> {
+        let qself = qself?;
+        Some(QSelf {
+            self_ty: self.lower_repr_type(qself.self_ty),
+            trait_ty: qself
+                .trait_path
+                .as_ref()
+                .map(|path| self.lower_path_value_as_type(path, scope)),
+        })
+    }
+
+    fn lower_path_value_as_type(
+        &mut self,
+        path: &pr::TypePathValue<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypeId {
+        let ty = Type::Path(PathType {
+            qself: None,
+            path: self.lower_path_value(path),
+            resolution: self.resolve_path_value(scope, path, None),
+        });
+        let id = self.next_type_id();
+        self.db.types.push(ty);
+        id
+    }
+
+    fn resolve_path_value(
         &self,
-        repr_type: pr::TypeId,
-        path: &pr::TypePath<'cx>,
+        scope: Option<ScopeId>,
+        path: &pr::TypePathValue<'cx>,
+        qself: Option<&QSelf>,
     ) -> PathTypeResolution {
-        let Some(scope) = self.repr[repr_type].scope else {
+        let Some(scope) = scope else {
             return PathTypeResolution::Unresolved;
         };
-        let segments = path
-            .path
-            .segments
-            .iter()
-            .map(|segment| segment.name)
-            .collect::<Vec<_>>();
-        match self.names.resolve_type_path(scope, &segments) {
-            ResolveResult::Found(def) => self.classify_path_target(def),
+        match self
+            .names
+            .resolve_type_path(scope, path.segments.iter().map(|segment| segment.name))
+        {
+            ResolveResult::Found(def) => self.classify_path_target(def, qself),
             ResolveResult::Ambiguous(defs) => PathTypeResolution::Ambiguous(defs),
             ResolveResult::NotFound => PathTypeResolution::Unresolved,
         }
     }
 
-    fn classify_path_target(&self, def: DefId) -> PathTypeResolution {
+    fn classify_path_target(&self, def: DefId, qself: Option<&QSelf>) -> PathTypeResolution {
         match self.names[def].kind {
             DefKind::Struct
             | DefKind::Enum
@@ -143,10 +171,20 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
             DefKind::GenericType => PathTypeResolution::GenericParam(def),
             DefKind::AssocType => PathTypeResolution::Projection(ProjectionType {
                 assoc_type: def,
-                self_ty: None,
-                trait_ty: None,
+                self_ty: qself.map(|qself| qself.self_ty),
+                trait_ty: qself.and_then(|qself| qself.trait_ty),
             }),
             _ => PathTypeResolution::Unresolved,
+        }
+    }
+
+    fn lower_path_value(&mut self, path: &pr::TypePathValue<'cx>) -> Path<'cx> {
+        Path {
+            segments: path
+                .segments
+                .iter()
+                .map(|segment| self.lower_path_segment(segment))
+                .collect(),
         }
     }
 
@@ -285,8 +323,8 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    fn from_repr_path(path: &pr::TypePath<'_>) -> Option<Self> {
-        let [segment] = path.path.segments.as_slice() else {
+    fn from_repr_path(path: &pr::TypePathValue<'_>) -> Option<Self> {
+        let [segment] = path.segments.as_slice() else {
             return None;
         };
         if !segment.args.is_empty() {
@@ -322,13 +360,24 @@ impl PrimitiveType {
 /// Path type used by inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathType<'cx> {
+    /// Qualified self type, when the source used qualified path syntax.
+    pub qself: Option<QSelf>,
     /// Path naming the type.
     pub path: Path<'cx>,
     /// Current resolution state for this type path.
     pub resolution: PathTypeResolution,
 }
 
-/// Resolution state for a path type.
+/// Qualified self type for an inference path type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QSelf {
+    /// Self type written inside `<...>`.
+    pub self_ty: TypeId,
+    /// Trait path in `<Self as Trait>`, when present.
+    pub trait_ty: Option<TypeId>,
+}
+
+/// Resolution state for a non-primitive path type.
 ///
 /// This records the best current classification without pretending that name lookup is full Rust
 /// type resolution. Solver-backed generic substitution, qualified paths, and projection
@@ -341,8 +390,6 @@ pub enum PathTypeResolution {
     GenericParam(DefId),
     /// Path denotes an associated type projection.
     Projection(ProjectionType),
-    /// Path names a Rust primitive type.
-    Primitive(PrimitiveType),
     /// Multiple candidates matched the path.
     Ambiguous(Vec<DefId>),
     /// No target is known for the path yet.
@@ -441,7 +488,7 @@ mod tests {
     use super::*;
     use syn_sem_ast::SyntaxCx;
     use syn_sem_common::CommonCx;
-    use syn_sem_name::NameDb;
+    use syn_sem_name::{DefKind, NameDb, Origin, Visibility};
 
     fn infer_types<'cx>(
         ccx: &'cx CommonCx,
@@ -456,6 +503,44 @@ mod tests {
         let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(&repr, &names);
         (repr, infer)
+    }
+
+    fn infer_types_with_names<'cx>(
+        ccx: &'cx CommonCx,
+        scx: &'cx SyntaxCx<'cx>,
+        code: &str,
+        names: &NameDb<'cx>,
+    ) -> (pr::ProgramRepr<'cx>, InferDb<'cx>) {
+        let file_path = ccx.intern("test.rs");
+        let text = ccx.intern(code);
+        scx.parse_virtual_file(file_path, text).unwrap();
+        let file = scx.lookup_source(file_path).unwrap().ast();
+        let repr = pr::ProgramReprBuilder::new(names).build(file_path, file);
+        let infer = InferDb::analyze(&repr, names);
+        (repr, infer)
+    }
+
+    fn struct_field_path_type<'a, 'cx>(
+        repr: &'a pr::ProgramRepr<'cx>,
+        infer: &'a InferDb<'cx>,
+    ) -> &'a PathType<'cx> {
+        let repr_type = repr
+            .types()
+            .iter()
+            .find(|source| matches!(source.source, pr::TypeSource::StructField))
+            .unwrap();
+        let id = infer.type_for_repr_type(repr_type.id).unwrap();
+        let Type::Path(path) = &infer[id] else {
+            panic!("struct field type should lower to path type");
+        };
+        path
+    }
+
+    fn struct_field_path_resolution<'cx>(
+        repr: &pr::ProgramRepr<'cx>,
+        infer: &InferDb<'cx>,
+    ) -> PathTypeResolution {
+        struct_field_path_type(repr, infer).resolution.clone()
     }
 
     #[test]
@@ -506,5 +591,176 @@ mod tests {
         assert_eq!(path.path.segments.len(), 2);
         assert_eq!(path.path.segments[0].name.as_ref(), "crate");
         assert_eq!(path.path.segments[1].name.as_ref(), "usize");
+        assert_eq!(path.resolution, PathTypeResolution::Unresolved);
+    }
+
+    #[test]
+    fn classifies_nominal_path_targets() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let local = ccx.intern("Local");
+        let mut names = NameDb::default();
+        let local_def = names.add_def(
+            names.root_scope(),
+            DefKind::Struct,
+            Some(local),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Local }", &names);
+
+        assert_eq!(
+            struct_field_path_resolution(&repr, &infer),
+            PathTypeResolution::Nominal(local_def)
+        );
+    }
+
+    #[test]
+    fn classifies_generic_type_parameters_separately_from_nominal_types() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let t = ccx.intern("T");
+        let mut names = NameDb::default();
+        let t_def = names.add_def(
+            names.root_scope(),
+            DefKind::GenericType,
+            Some(t),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: T }", &names);
+
+        assert_eq!(
+            struct_field_path_resolution(&repr, &infer),
+            PathTypeResolution::GenericParam(t_def)
+        );
+    }
+
+    #[test]
+    fn classifies_associated_type_targets_as_projection_candidates() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let item = ccx.intern("Item");
+        let mut names = NameDb::default();
+        let item_def = names.add_def(
+            names.root_scope(),
+            DefKind::AssocType,
+            Some(item),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Item }", &names);
+
+        assert_eq!(
+            struct_field_path_resolution(&repr, &infer),
+            PathTypeResolution::Projection(ProjectionType {
+                assoc_type: item_def,
+                self_ty: None,
+                trait_ty: None,
+            })
+        );
+    }
+
+    #[test]
+    fn lowers_qualified_associated_type_paths_for_projection_solving() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let t = ccx.intern("T");
+        let trait_name = ccx.intern("Trait");
+        let item = ccx.intern("Item");
+        let mut names = NameDb::default();
+        let root = names.root_scope();
+        let t_def = names.add_def(
+            root,
+            DefKind::GenericType,
+            Some(t),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let trait_def = names.add_def(
+            root,
+            DefKind::Trait,
+            Some(trait_name),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let trait_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(root));
+        names.set_path_scope(trait_def, trait_scope);
+        let item_def = names.add_def(
+            trait_scope,
+            DefKind::AssocType,
+            Some(item),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) =
+            infer_types_with_names(&ccx, &scx, "struct S { field: <T as Trait>::Item }", &names);
+
+        let path = struct_field_path_type(&repr, &infer);
+        let qself = path.qself.expect("qualified path should lower qself");
+        let trait_ty = qself
+            .trait_ty
+            .expect("qualified path should lower trait path");
+
+        assert_eq!(path.path.segments.len(), 2);
+        assert_eq!(path.path.segments[0].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments[1].name.as_ref(), "Item");
+        assert!(matches!(
+            infer[qself.self_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::GenericParam(def),
+                ..
+            }) if def == t_def
+        ));
+        assert!(matches!(
+            infer[trait_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::Nominal(def),
+                ..
+            }) if def == trait_def
+        ));
+        assert_eq!(
+            path.resolution,
+            PathTypeResolution::Projection(ProjectionType {
+                assoc_type: item_def,
+                self_ty: Some(qself.self_ty),
+                trait_ty: Some(trait_ty),
+            })
+        );
+    }
+
+    #[test]
+    fn preserves_ambiguous_and_unresolved_path_states() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let maybe = ccx.intern("Maybe");
+        let mut names = NameDb::default();
+        let first = names.add_def(
+            names.root_scope(),
+            DefKind::Struct,
+            Some(maybe),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let second = names.add_def(
+            names.root_scope(),
+            DefKind::Enum,
+            Some(maybe),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Maybe }", &names);
+
+        assert_eq!(
+            struct_field_path_resolution(&repr, &infer),
+            PathTypeResolution::Ambiguous(vec![first, second])
+        );
+
+        let (repr, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");
+
+        assert_eq!(
+            struct_field_path_resolution(&repr, &infer),
+            PathTypeResolution::Unresolved
+        );
     }
 }

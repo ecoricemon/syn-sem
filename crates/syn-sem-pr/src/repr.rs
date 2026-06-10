@@ -364,6 +364,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             },
             ast::Type::Infer(_) => TypeKind::Infer,
             ast::Type::Path(ty) => TypeKind::Path(TypePath {
+                qself: self.collect_type_qself(ty.qself.as_ref(), &ty.path, scope),
                 path: self.collect_type_path(&ty.path, scope),
             }),
             ast::Type::Reference(ty) => TypeKind::Reference {
@@ -381,6 +382,38 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .collect(),
             },
         }
+    }
+
+    fn collect_type_qself(
+        &mut self,
+        qself: Option<&ast::QSelf<'cx>>,
+        path: &'cx ast::Path<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Option<QSelf<'cx>> {
+        let qself = qself?;
+        Some(QSelf {
+            self_ty: self.collect_type(qself.ty, scope, TypeSource::Nested),
+            trait_path: self.collect_qself_trait_path(qself.position, path, scope),
+        })
+    }
+
+    fn collect_qself_trait_path(
+        &mut self,
+        position: usize,
+        path: &'cx ast::Path<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Option<TypePathValue<'cx>> {
+        if position == 0 {
+            return None;
+        }
+        Some(TypePathValue {
+            segments: path
+                .segments
+                .iter()
+                .take(position)
+                .map(|segment| self.collect_type_path_segment(segment, scope))
+                .collect(),
+        })
     }
 
     fn collect_type_path(
@@ -1032,8 +1065,23 @@ pub enum TypeKind<'cx> {
 /// Representation-native path type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypePath<'cx> {
+    /// Qualified self type, when the source type used qualified path syntax.
+    pub qself: Option<QSelf<'cx>>,
     /// Path naming the type.
+    ///
+    /// For qualified paths, this remains the full source path after `as`; for example,
+    /// `<T as a::b::Trait>::Assoc` stores `a::b::Trait::Assoc` here, while `qself.trait_path`
+    /// stores only `a::b::Trait`.
     pub path: TypePathValue<'cx>,
+}
+
+/// Representation-native qualified self type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QSelf<'cx> {
+    /// Self type: `T` in `<T as a::b::Trait>::Assoc`.
+    pub self_ty: TypeId,
+    /// Optional trait path: `a::b::Trait` in `<T as a::b::Trait>::Assoc`.
+    pub trait_path: Option<TypePathValue<'cx>>,
 }
 
 /// Representation-native type path.
@@ -1102,26 +1150,26 @@ pub struct SourceTypeBounds;
 /// Source role for a represented type occurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeSource {
-    /// Constant item type.
+    /// Constant item type, for example `T` in `const C: T = value;`.
     ConstType,
-    /// Function signature parameter or return type.
+    /// Function signature parameter or return type, for example `R` and `T` in `fn f(x: T) -> R`.
     SignatureParam {
         /// Parameter index in the source signature, with return type at index `0`.
         index: usize,
     },
-    /// Impl self type.
+    /// Impl self type, for example `T` in `impl T {}`.
     ImplSelf,
-    /// Struct field type.
+    /// Struct field type, for example `T` in `struct S { field: T }`.
     StructField,
-    /// Enum variant field type.
+    /// Enum variant field type, for example `T` in `enum E { V(T) }`.
     VariantField,
-    /// Type alias target.
+    /// Type alias target, for example `T` in `type Alias = T;`.
     TypeAlias,
-    /// Associated const type.
+    /// Associated const type, for example `T` in `const C: T = value;` inside a trait or impl.
     AssocConstType,
-    /// Associated type value.
+    /// Associated type value, for example `T` in `type Item = T;` inside a trait or impl.
     AssocTypeValue,
-    /// Nested type inside another represented type occurrence.
+    /// Nested type inside another represented type occurrence, for example `T` in `Vec<T>`.
     Nested,
 }
 
@@ -1590,6 +1638,46 @@ mod tests {
             iter_path.path.segments[0].args[0],
             GenericArgument::AssocType { .. }
         ));
+    }
+
+    #[test]
+    fn represents_qualified_type_paths() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            struct S {
+                field: <T as Trait>::Item,
+            }
+            "#,
+        );
+
+        let field_type = model
+            .types()
+            .iter()
+            .find(|ty| ty.source == TypeSource::StructField)
+            .expect("expected struct field type");
+
+        let TypeKind::Path(path) = &field_type.kind else {
+            panic!("expected path type");
+        };
+        let qself = path.qself.as_ref().expect("expected qualified self type");
+        let TypeKind::Path(self_ty) = &model[qself.self_ty].kind else {
+            panic!("expected qself self type to be a path");
+        };
+        let trait_path = qself
+            .trait_path
+            .as_ref()
+            .expect("expected qself trait path");
+
+        assert_eq!(self_ty.path.segments[0].name.as_ref(), "T");
+        assert_eq!(trait_path.segments.len(), 1);
+        assert_eq!(trait_path.segments[0].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments.len(), 2);
+        assert_eq!(path.path.segments[0].name.as_ref(), "Trait");
+        assert_eq!(path.path.segments[1].name.as_ref(), "Item");
     }
 
     #[test]

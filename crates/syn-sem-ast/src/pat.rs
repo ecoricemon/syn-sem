@@ -268,6 +268,7 @@ impl<'cx> FromSyn<'cx, syn::Receiver> for PatType<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Receiver>) -> Self {
         let span = desc.span(desc.input);
         let self_ty = Type::Path(TypePath {
+            qself: None,
             path: Path::from_str(scx, "Self", span),
             span,
         });

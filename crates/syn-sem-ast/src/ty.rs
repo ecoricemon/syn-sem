@@ -68,9 +68,11 @@ impl<'cx> FromSyn<'cx, syn::TypeArray> for TypeArray<'cx> {
 
 /// A path type.
 ///
-/// Examples include `Vec<T>`, `crate::module::Type`, and `Self::Assoc`.
+/// Examples include `Vec<T>`, `crate::module::Type`, `Self::Assoc`, and `<T as Trait>::Assoc`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct TypePath<'cx> {
+    /// Qualified self type, when the path is written as a qualified path.
+    pub qself: Option<QSelf<'cx>>,
     /// Path naming the type.
     pub path: Path<'cx>,
     /// Source span of the path type.
@@ -80,7 +82,36 @@ pub struct TypePath<'cx> {
 impl<'cx> FromSyn<'cx, syn::TypePath> for TypePath<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypePath>) -> Self {
         Self {
+            qself: desc
+                .input
+                .qself
+                .as_ref()
+                .map(|qself| QSelf::from_syn(scx, desc.with_input(qself))),
             path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
+            span: desc.span(desc.input),
+        }
+    }
+}
+
+/// Qualified self type for a path type.
+///
+/// For `<T as Trait>::Assoc`, `ty` is `T` and `position` is the number of path segments before
+/// `Assoc` that belong to the optional trait path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct QSelf<'cx> {
+    /// Self type written inside `<...>`.
+    pub ty: &'cx Type<'cx>,
+    /// Split point in the path before the associated item segment.
+    pub position: usize,
+    /// Source span of the qualified self type.
+    pub span: Span<'cx>,
+}
+
+impl<'cx> FromSyn<'cx, syn::QSelf> for QSelf<'cx> {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::QSelf>) -> Self {
+        Self {
+            ty: scx.alloc(Type::from_syn(scx, desc.with_input(&desc.input.ty))),
+            position: desc.input.position,
             span: desc.span(desc.input),
         }
     }
@@ -181,6 +212,7 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
 
         let ty = parse::<syn::TypePath, TypePath>(&scx, "Vec<T>");
+        assert!(ty.qself.is_none());
         assert_eq!(&*ty.path.segments[0].ident, "Vec");
         assert!(ty.path.segments[0].has_args());
 
@@ -189,5 +221,26 @@ mod tests {
         assert!(!ty.path.segments[0].has_args());
         assert!(!ty.path.segments[1].has_args());
         assert!(ty.path.segments[2].has_args());
+    }
+
+    #[test]
+    fn qualified_type_path() {
+        // Proves qualified paths preserve their self type and path split point.
+        let ccx = syn_sem_common::CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+
+        let ty = parse::<syn::TypePath, TypePath>(&scx, "<T as a::b::Trait>::Item");
+        let qself = ty
+            .qself
+            .as_ref()
+            .expect("qualified path should preserve qself");
+
+        assert!(matches!(qself.ty, Type::Path(_)));
+        assert_eq!(qself.position, 3);
+        assert_eq!(ty.path.segments.len(), 4);
+        assert_eq!(&*ty.path.segments[0].ident, "a");
+        assert_eq!(&*ty.path.segments[1].ident, "b");
+        assert_eq!(&*ty.path.segments[2].ident, "Trait");
+        assert_eq!(&*ty.path.segments[3].ident, "Item");
     }
 }

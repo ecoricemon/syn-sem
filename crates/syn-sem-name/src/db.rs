@@ -93,7 +93,7 @@ impl<'cx> NameDb<'cx> {
             parent_scope,
             kind,
             name,
-            kind.namespaces(),
+            kind.namespaces().iter().copied(),
             visibility,
             origin,
         )
@@ -105,7 +105,7 @@ impl<'cx> NameDb<'cx> {
         parent_scope: ScopeId,
         kind: DefKind,
         name: Option<Name<'cx>>,
-        namespaces: &[Namespace],
+        namespaces: impl Iterator<Item = Namespace>,
         visibility: Visibility,
         origin: Origin,
     ) -> DefId {
@@ -122,7 +122,7 @@ impl<'cx> NameDb<'cx> {
         });
 
         if let Some(name) = name {
-            for &namespace in namespaces {
+            for namespace in namespaces {
                 self[parent_scope].bindings.insert(namespace, name, id);
             }
         }
@@ -224,9 +224,14 @@ impl<'cx> NameDb<'cx> {
     ///
     /// This follows the same local-crate path traversal rules as import resolution, then narrows
     /// the terminal candidates to the type namespace and follows import aliases.
-    pub fn resolve_type_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> ResolveResult {
-        if let [name] = path {
-            return match self.resolve_lexical(scope, Namespace::Type, *name) {
+    pub fn resolve_type_path(
+        &self,
+        scope: ScopeId,
+        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+    ) -> ResolveResult {
+        if path.len() == 1 {
+            let name = path.next().unwrap();
+            return match self.resolve_lexical(scope, Namespace::Type, name) {
                 ResolveResult::Found(def) => ResolveResult::Found(self.follow_aliases(def)),
                 ResolveResult::Ambiguous(defs) => ResolveResult::Ambiguous(
                     defs.into_iter()
@@ -390,9 +395,10 @@ impl<'cx> NameDb<'cx> {
                 let local_name = match self.import_local_name(import_data) {
                     ImportLocalName::Name(name) => name,
                     ImportLocalName::NoBinding => {
-                        return match self
-                            .resolve_import_path(import_data.scope, &import_data.source_path)
-                        {
+                        return match self.resolve_import_path(
+                            import_data.scope,
+                            import_data.source_path.iter().copied(),
+                        ) {
                             CandidateResolution::Found(_) => ImportResolve::Resolved,
                             CandidateResolution::Ambiguous => ImportResolve::Ambiguous,
                             CandidateResolution::NotFound => ImportResolve::Pending,
@@ -402,12 +408,13 @@ impl<'cx> NameDb<'cx> {
                     ImportLocalName::Pending => return ImportResolve::Pending,
                 };
 
-                let candidates =
-                    match self.resolve_import_path(import_data.scope, &import_data.source_path) {
-                        CandidateResolution::Found(candidates) => candidates,
-                        CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
-                        CandidateResolution::NotFound => return ImportResolve::Pending,
-                    };
+                let candidates = match self
+                    .resolve_import_path(import_data.scope, import_data.source_path.iter().copied())
+                {
+                    CandidateResolution::Found(candidates) => candidates,
+                    CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
+                    CandidateResolution::NotFound => return ImportResolve::Pending,
+                };
 
                 let import_binding = self.validate_import_binding_candidates(&candidates);
 
@@ -427,12 +434,13 @@ impl<'cx> NameDb<'cx> {
                 ImportResolve::Resolved
             }
             ImportKind::Glob => {
-                let candidates =
-                    match self.resolve_import_path(import_data.scope, &import_data.source_path) {
-                        CandidateResolution::Found(candidates) => candidates,
-                        CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
-                        CandidateResolution::NotFound => return ImportResolve::Pending,
-                    };
+                let candidates = match self
+                    .resolve_import_path(import_data.scope, import_data.source_path.iter().copied())
+                {
+                    CandidateResolution::Found(candidates) => candidates,
+                    CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
+                    CandidateResolution::NotFound => return ImportResolve::Pending,
+                };
 
                 let [(_, glob_candidate)] = candidates.as_slice() else {
                     return ImportResolve::Ambiguous;
@@ -493,11 +501,12 @@ impl<'cx> NameDb<'cx> {
                 if terminal.as_ref() == "self" {
                     let parent = &import.source_path[..import.source_path.len().saturating_sub(1)];
 
-                    let candidates = match self.resolve_import_path(import.scope, parent) {
-                        CandidateResolution::Found(candidates) => candidates,
-                        CandidateResolution::Ambiguous => return ImportLocalName::Ambiguous,
-                        CandidateResolution::NotFound => return ImportLocalName::Pending,
-                    };
+                    let candidates =
+                        match self.resolve_import_path(import.scope, parent.iter().copied()) {
+                            CandidateResolution::Found(candidates) => candidates,
+                            CandidateResolution::Ambiguous => return ImportLocalName::Ambiguous,
+                            CandidateResolution::NotFound => return ImportLocalName::Pending,
+                        };
 
                     let import_binding = self.validate_import_binding_candidates(&candidates);
 
@@ -527,8 +536,12 @@ impl<'cx> NameDb<'cx> {
     /// `a`'s child scope, then resolves `C` in that child scope. If the terminal name exists in
     /// multiple namespaces with the same target, such as an enum variant, the result contains each
     /// namespace-target pair.
-    fn resolve_import_path(&self, scope: ScopeId, path: &[Name<'cx>]) -> CandidateResolution {
-        if path.is_empty() {
+    fn resolve_import_path(
+        &self,
+        scope: ScopeId,
+        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+    ) -> CandidateResolution {
+        if path.len() == 0 {
             return CandidateResolution::NotFound;
         }
 
@@ -537,9 +550,8 @@ impl<'cx> NameDb<'cx> {
         let mut current_def = None;
         let mut index = 0;
 
-        while index < path.len() {
-            let segment = path[index];
-            let is_last = index + 1 == path.len();
+        while let Some(segment) = path.next() {
+            let is_last = path.len() == 0;
 
             match segment.as_ref() {
                 "crate" if index == 0 => {
@@ -896,7 +908,7 @@ mod tests {
                 ResolveResult::Found(type_param)
             );
             assert_eq!(
-                db.resolve_type_path(body, &[t]),
+                db.resolve_type_path(body, [t].into_iter()),
                 ResolveResult::Found(type_param)
             );
         }
@@ -934,7 +946,7 @@ mod tests {
                 ResolveResult::Found(local_struct)
             );
             assert_eq!(
-                db.resolve_type_path(block, &[local]),
+                db.resolve_type_path(block, [local].into_iter()),
                 ResolveResult::Found(local_struct)
             );
         }
