@@ -11,6 +11,7 @@ repository = "https://github.com/ecoricemon/syn-sem"
 syn-sem-common = { workspace = true }
 syn-sem-name = { workspace = true }
 syn-sem-pr = { workspace = true }
+smallvec = { workspace = true }
 
 [dev-dependencies]
 syn-sem-ast = { workspace = true }

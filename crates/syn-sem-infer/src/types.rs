@@ -1,3 +1,4 @@
+use smallvec::{smallvec, SmallVec};
 use std::ops::Index;
 use syn_sem_common::Map;
 use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult, ScopeId};
@@ -8,6 +9,9 @@ use syn_sem_pr as pr;
 pub struct InferDb<'cx> {
     types: Vec<Type<'cx>>,
     repr_types: Map<pr::TypeId, TypeId>,
+    projection_obligations: Vec<ProjectionObligation>,
+    trait_bound_facts: Vec<TraitBoundFact>,
+    projection_candidates: Vec<ProjectionCandidate>,
 }
 
 impl<'cx> InferDb<'cx> {
@@ -30,6 +34,21 @@ impl<'cx> InferDb<'cx> {
     pub fn repr_types(&self) -> &Map<pr::TypeId, TypeId> {
         &self.repr_types
     }
+
+    /// Returns associated type projections that still need solver work.
+    pub fn projection_obligations(&self) -> &[ProjectionObligation] {
+        &self.projection_obligations
+    }
+
+    /// Returns trait bounds collected as solver input facts.
+    pub fn trait_bound_facts(&self) -> &[TraitBoundFact] {
+        &self.trait_bound_facts
+    }
+
+    /// Returns projection candidates derived from obligations and known trait bounds.
+    pub fn projection_candidates(&self) -> &[ProjectionCandidate] {
+        &self.projection_candidates
+    }
 }
 
 struct InferCx<'a, 'cx> {
@@ -48,13 +67,81 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     }
 
     fn lower(mut self) -> InferDb<'cx> {
+        self.lower_trait_bound_facts();
         self.lower_repr_types();
+        self.lower_projection_candidates();
         self.db
+    }
+
+    fn lower_trait_bound_facts(&mut self) {
+        for item in self.repr.items() {
+            let generics = match &item.kind {
+                pr::ItemKind::Enum { generics, .. }
+                | pr::ItemKind::Fn { generics, .. }
+                | pr::ItemKind::Impl { generics, .. }
+                | pr::ItemKind::Struct { generics, .. }
+                | pr::ItemKind::Trait { generics, .. }
+                | pr::ItemKind::Type { generics, .. } => Some(generics.clone()),
+                pr::ItemKind::Const { .. } | pr::ItemKind::Mod { .. } | pr::ItemKind::Use => None,
+            };
+            let Some(generics) = generics else {
+                continue;
+            };
+            self.lower_generics(&generics);
+        }
+    }
+
+    fn lower_generics(&mut self, generics: &pr::Generics<'cx>) {
+        for param in &generics.params {
+            let pr::GenericParam::Type(param) = param else {
+                continue;
+            };
+            let subject = self.lower_name_as_type(param.name, generics.scope);
+            for bound in &param.bounds {
+                let pr::TypeParamBound::Trait(bound) = bound else {
+                    continue;
+                };
+                let trait_ty = self.lower_path_value_as_type(&bound.path, generics.scope);
+                self.db
+                    .trait_bound_facts
+                    .push(TraitBoundFact { subject, trait_ty });
+            }
+        }
     }
 
     fn lower_repr_types(&mut self) {
         for ty in self.repr.types() {
             self.lower_repr_type(ty.id);
+        }
+    }
+
+    fn lower_projection_candidates(&mut self) {
+        let obligations = self.db.projection_obligations.clone();
+        let bounds = self.db.trait_bound_facts.clone();
+        for obligation in obligations {
+            let Some(self_ty) = obligation.self_ty else {
+                continue;
+            };
+            if let Some(trait_ty) = obligation.trait_ty {
+                self.db.projection_candidates.push(ProjectionCandidate {
+                    projection: obligation.projection,
+                    self_ty,
+                    assoc_type: obligation.assoc_type,
+                    trait_ty,
+                });
+                continue;
+            }
+            for bound in &bounds {
+                if !self.same_type(self_ty, bound.subject) {
+                    continue;
+                }
+                self.db.projection_candidates.push(ProjectionCandidate {
+                    projection: obligation.projection,
+                    self_ty,
+                    assoc_type: obligation.assoc_type,
+                    trait_ty: bound.trait_ty,
+                });
+            }
         }
     }
 
@@ -64,8 +151,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
 
         let ty = self.lower_type(repr_type, &self.repr[repr_type].kind);
-        let id = self.next_type_id();
-        self.db.types.push(ty);
+        let id = self.push_type(ty);
         self.db.repr_types.insert(repr_type, id);
         id
     }
@@ -137,9 +223,21 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
             path: self.lower_path_value(path),
             resolution: self.resolve_path_value(scope, path, None),
         });
-        let id = self.next_type_id();
-        self.db.types.push(ty);
-        id
+        self.push_type(ty)
+    }
+
+    fn lower_name_as_type(
+        &mut self,
+        name: syn_sem_name::Name<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypeId {
+        let path = pr::TypePathValue {
+            segments: smallvec![pr::TypePathSegment {
+                name,
+                args: SmallVec::new(),
+            }],
+        };
+        self.lower_path_value_as_type(&path, scope)
     }
 
     fn resolve_path_value(
@@ -222,6 +320,32 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn next_type_id(&self) -> TypeId {
         TypeId::new(self.db.types.len())
     }
+
+    fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
+        let id = self.next_type_id();
+        self.collect_projection_obligation(id, &ty);
+        self.db.types.push(ty);
+        id
+    }
+
+    fn collect_projection_obligation(&mut self, id: TypeId, ty: &Type<'cx>) {
+        let Type::Path(path) = ty else {
+            return;
+        };
+        let PathTypeResolution::Projection(projection) = &path.resolution else {
+            return;
+        };
+        self.db.projection_obligations.push(ProjectionObligation {
+            projection: id,
+            assoc_type: projection.assoc_type,
+            self_ty: projection.self_ty,
+            trait_ty: projection.trait_ty,
+        });
+    }
+
+    fn same_type(&self, left: TypeId, right: TypeId) -> bool {
+        left == right || self.db.types[left.index()] == self.db.types[right.index()]
+    }
 }
 
 impl<'cx> Index<TypeId> for InferDb<'cx> {
@@ -249,6 +373,10 @@ impl TypeId {
 }
 
 /// Type shape used by inference.
+//
+// Allowing `large_enum_variant`: Path types are the common semantic payload here. Boxing `PathType`
+// would shrink scalar variants but add one heap allocation for each normal path type.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type<'cx> {
     /// Fixed-length array type.
@@ -391,7 +519,7 @@ pub enum PathTypeResolution {
     /// Path denotes an associated type projection.
     Projection(ProjectionType),
     /// Multiple candidates matched the path.
-    Ambiguous(Vec<DefId>),
+    Ambiguous(SmallVec<[DefId; 2]>),
     /// No target is known for the path yet.
     Unresolved,
 }
@@ -407,11 +535,46 @@ pub struct ProjectionType {
     pub trait_ty: Option<TypeId>,
 }
 
+/// Associated type projection that needs solver work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectionObligation {
+    /// Type occurrence whose value is the projection result.
+    pub projection: TypeId,
+    /// Associated type definition selected by name lookup.
+    pub assoc_type: DefId,
+    /// Self type for the projection, when represented.
+    pub self_ty: Option<TypeId>,
+    /// Trait type for the projection, when represented.
+    pub trait_ty: Option<TypeId>,
+}
+
+/// Trait bound fact collected as solver input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraitBoundFact {
+    /// Type constrained by the trait bound.
+    pub subject: TypeId,
+    /// Trait type required by the bound.
+    pub trait_ty: TypeId,
+}
+
+/// Candidate trait selected for an associated type projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectionCandidate {
+    /// Type occurrence whose value is the projection result.
+    pub projection: TypeId,
+    /// Self type for the projection.
+    pub self_ty: TypeId,
+    /// Associated type definition selected by name lookup.
+    pub assoc_type: DefId,
+    /// Candidate trait type that may provide the associated type.
+    pub trait_ty: TypeId,
+}
+
 /// Type path used by inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path<'cx> {
     /// Path segments in source order.
-    pub segments: Vec<PathSegment<'cx>>,
+    pub segments: SmallVec<[PathSegment<'cx>; 3]>,
 }
 
 /// One type path segment.
@@ -420,7 +583,7 @@ pub struct PathSegment<'cx> {
     /// Segment name.
     pub name: syn_sem_name::Name<'cx>,
     /// Generic arguments on this segment.
-    pub args: Vec<GenericArgument<'cx>>,
+    pub args: SmallVec<[GenericArgument<'cx>; 2]>,
 }
 
 /// Generic argument shape used by inference.
@@ -486,6 +649,7 @@ pub struct SourceTypeBounds;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smallvec::smallvec;
     use syn_sem_ast::SyntaxCx;
     use syn_sem_common::CommonCx;
     use syn_sem_name::{DefKind, NameDb, Origin, Visibility};
@@ -524,16 +688,20 @@ mod tests {
         repr: &'a pr::ProgramRepr<'cx>,
         infer: &'a InferDb<'cx>,
     ) -> &'a PathType<'cx> {
+        let id = struct_field_type_id(repr, infer);
+        let Type::Path(path) = &infer[id] else {
+            panic!("struct field type should lower to path type");
+        };
+        path
+    }
+
+    fn struct_field_type_id<'cx>(repr: &pr::ProgramRepr<'cx>, infer: &InferDb<'cx>) -> TypeId {
         let repr_type = repr
             .types()
             .iter()
             .find(|source| matches!(source.source, pr::TypeSource::StructField))
             .unwrap();
-        let id = infer.type_for_repr_type(repr_type.id).unwrap();
-        let Type::Path(path) = &infer[id] else {
-            panic!("struct field type should lower to path type");
-        };
-        path
+        infer.type_for_repr_type(repr_type.id).unwrap()
     }
 
     fn struct_field_path_resolution<'cx>(
@@ -721,6 +889,7 @@ mod tests {
         );
 
         let path = struct_field_path_type(&repr, &infer);
+        let projection = struct_field_type_id(&repr, &infer);
         let qself = path.qself.expect("qualified path should lower qself");
         let trait_ty = qself
             .trait_ty
@@ -760,6 +929,113 @@ mod tests {
                 trait_ty: Some(trait_ty),
             })
         );
+        assert_eq!(
+            infer.projection_candidates(),
+            &[ProjectionCandidate {
+                projection,
+                self_ty: qself.self_ty,
+                assoc_type: item_def,
+                trait_ty,
+            }]
+        );
+    }
+
+    #[test]
+    fn lowers_traitless_qualified_associated_type_paths_as_projection_candidates() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let t = ccx.intern("T");
+        let iterator = ccx.intern("Iterator");
+        let item = ccx.intern("Item");
+        let mut names = NameDb::default();
+        let root = names.root_scope();
+        let t_def = names.add_def(
+            root,
+            DefKind::GenericType,
+            Some(t),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let iterator_def = names.add_def(
+            root,
+            DefKind::Trait,
+            Some(iterator),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let item_def = names.add_def(
+            root,
+            DefKind::AssocType,
+            Some(item),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let (repr, infer) = infer_types_with_names(
+            &ccx,
+            &scx,
+            "struct S<T: Iterator> { field: <T>::Item }",
+            &names,
+        );
+
+        let path = struct_field_path_type(&repr, &infer);
+        let projection = struct_field_type_id(&repr, &infer);
+        let qself = path
+            .qself
+            .expect("traitless qualified path should lower qself");
+
+        assert_eq!(path.path.segments.len(), 1);
+        assert_eq!(path.path.segments[0].name.as_ref(), "Item");
+        assert_eq!(qself.trait_ty, None);
+        assert!(matches!(
+            infer[qself.self_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::GenericParam(def),
+                ..
+            }) if def == t_def
+        ));
+        assert_eq!(
+            path.resolution,
+            PathTypeResolution::Projection(ProjectionType {
+                assoc_type: item_def,
+                self_ty: Some(qself.self_ty),
+                trait_ty: None,
+            })
+        );
+        assert_eq!(
+            infer.projection_obligations(),
+            &[ProjectionObligation {
+                projection,
+                assoc_type: item_def,
+                self_ty: Some(qself.self_ty),
+                trait_ty: None,
+            }]
+        );
+        let [bound] = infer.trait_bound_facts() else {
+            panic!("expected one trait bound fact");
+        };
+        assert!(matches!(
+            infer[bound.subject],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::GenericParam(def),
+                ..
+            }) if def == t_def
+        ));
+        assert!(matches!(
+            infer[bound.trait_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::Nominal(def),
+                ..
+            }) if def == iterator_def
+        ));
+        assert_eq!(
+            infer.projection_candidates(),
+            &[ProjectionCandidate {
+                projection,
+                self_ty: qself.self_ty,
+                assoc_type: item_def,
+                trait_ty: bound.trait_ty,
+            }]
+        );
     }
 
     #[test]
@@ -786,7 +1062,7 @@ mod tests {
 
         assert_eq!(
             struct_field_path_resolution(&repr, &infer),
-            PathTypeResolution::Ambiguous(vec![first, second])
+            PathTypeResolution::Ambiguous(smallvec![first, second])
         );
 
         let (repr, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");

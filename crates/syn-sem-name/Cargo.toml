@@ -9,6 +9,7 @@ repository = "https://github.com/ecoricemon/syn-sem"
 
 [dependencies]
 syn-sem-common = { workspace = true }
+smallvec = { workspace = true }
 
 [dev-dependencies]
 syn-sem-ast = { workspace = true }

@@ -2,6 +2,7 @@ use crate::{
     AstNodeId, Binding, Def, DefId, DefKind, Import, ImportId, ImportKind, ImportStatus, Map, Name,
     Namespace, Origin, Scope, ScopeId, ScopeKind, Visibility,
 };
+use smallvec::{smallvec, SmallVec};
 use std::ops::{Index, IndexMut};
 
 /// Name-resolution database.
@@ -73,6 +74,33 @@ impl<'cx> NameDb<'cx> {
         self[scope].bindings.get(namespace, name)
     }
 
+    /// Resolves a direct member from the path scope attached to `owner`.
+    ///
+    /// For example, `member(owner = Iterator, namespace = Type, name = Item)` checks the
+    /// path-reachable members of `Iterator` for an associated type named `Item`.
+    pub fn member(&self, owner: DefId, namespace: Namespace, name: Name<'cx>) -> ResolveResult {
+        let owner = self.follow_aliases(owner);
+        let Some(path_scope) = self[owner].scopes.path else {
+            return ResolveResult::NotFound;
+        };
+        let Some(binding) = self.binding(path_scope, namespace, name) else {
+            return ResolveResult::NotFound;
+        };
+
+        let mut defs = binding
+            .iter()
+            .map(|def| self.follow_aliases(def))
+            .collect::<SmallVec<[_; 2]>>();
+        defs.sort_by_key(|def| def.index());
+        defs.dedup();
+
+        match defs.as_slice() {
+            [] => ResolveResult::NotFound,
+            [def] => ResolveResult::Found(*def),
+            _ => ResolveResult::Ambiguous(defs),
+        }
+    }
+
     /// Adds a scope under `parent`.
     pub fn add_scope(&mut self, kind: ScopeKind, parent: Option<ScopeId>) -> ScopeId {
         let id = ScopeId::new(self.scopes.len());
@@ -134,7 +162,7 @@ impl<'cx> NameDb<'cx> {
     pub fn add_import(
         &mut self,
         scope: ScopeId,
-        source_path: Vec<Name<'cx>>,
+        source_path: SmallVec<[Name<'cx>; 4]>,
         kind: ImportKind<'cx>,
         visibility: Visibility,
         origin: Origin,
@@ -244,7 +272,7 @@ impl<'cx> NameDb<'cx> {
 
         let candidates = match self.resolve_import_path(scope, path) {
             CandidateResolution::Found(candidates) => candidates,
-            CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
+            CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(SmallVec::new()),
             CandidateResolution::NotFound => return ResolveResult::NotFound,
         };
 
@@ -252,7 +280,7 @@ impl<'cx> NameDb<'cx> {
             .into_iter()
             .filter(|(namespace, _)| *namespace == Namespace::Type)
             .map(|(_, def)| self.follow_aliases(def))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 2]>>();
         defs.sort_by_key(|def| def.index());
         defs.dedup();
 
@@ -323,7 +351,7 @@ impl<'cx> NameDb<'cx> {
             .first()
             .expect("import binding validation requires at least one resolved binding");
         let target = self.follow_aliases(first);
-        let mut namespaces = Vec::with_capacity(candidates.len());
+        let mut namespaces = SmallVec::with_capacity(candidates.len());
 
         for &(namespace, def) in candidates {
             assert_eq!(
@@ -563,7 +591,9 @@ impl<'cx> NameDb<'cx> {
                 "self" => {
                     if is_last {
                         return current_def
-                            .map(|def| CandidateResolution::Found(vec![(Namespace::Type, def)]))
+                            .map(|def| {
+                                CandidateResolution::Found(smallvec![(Namespace::Type, def)])
+                            })
                             .unwrap_or(CandidateResolution::NotFound);
                     }
                     index += 1;
@@ -595,7 +625,7 @@ impl<'cx> NameDb<'cx> {
             let visible = candidates
                 .into_iter()
                 .filter(|(_, def)| self.is_visible_from(*def, use_scope))
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 2]>>();
 
             if visible.is_empty() {
                 return CandidateResolution::NotFound;
@@ -632,7 +662,7 @@ impl<'cx> NameDb<'cx> {
         name: Name<'cx>,
         is_lexical: bool,
     ) -> CandidateResolution {
-        let mut defs = Vec::new();
+        let mut defs = SmallVec::new();
         for namespace in Namespace::all() {
             match self.resolve_name_in_namespace(scope, namespace, name, is_lexical) {
                 CandidateResolution::Found(found) => defs.extend(found),
@@ -644,7 +674,7 @@ impl<'cx> NameDb<'cx> {
         if defs.is_empty() {
             CandidateResolution::NotFound
         } else {
-            defs.sort_by_key(|(_, def)| def.index());
+            defs.sort_by_key(|(_, def)| *def);
             defs.dedup();
             CandidateResolution::Found(defs)
         }
@@ -665,7 +695,9 @@ impl<'cx> NameDb<'cx> {
     ) -> CandidateResolution {
         if is_lexical {
             match self.resolve_lexical(scope, namespace, name) {
-                ResolveResult::Found(def) => CandidateResolution::Found(vec![(namespace, def)]),
+                ResolveResult::Found(def) => {
+                    CandidateResolution::Found(smallvec![(namespace, def)])
+                }
                 ResolveResult::Ambiguous(_) => CandidateResolution::Ambiguous,
                 ResolveResult::NotFound => CandidateResolution::NotFound,
             }
@@ -677,7 +709,9 @@ impl<'cx> NameDb<'cx> {
                     let mut defs = binding.iter();
                     match defs.len() {
                         0 => CandidateResolution::NotFound,
-                        1 => CandidateResolution::Found(vec![(namespace, defs.next().unwrap())]),
+                        1 => {
+                            CandidateResolution::Found(smallvec![(namespace, defs.next().unwrap())])
+                        }
                         _ => CandidateResolution::Ambiguous,
                     }
                 })
@@ -743,7 +777,7 @@ pub enum ResolveResult {
     Found(DefId),
 
     /// Name resolved to multiple candidate definitions.
-    Ambiguous(Vec<DefId>),
+    Ambiguous(SmallVec<[DefId; 2]>),
 
     /// Name was not found.
     NotFound,
@@ -778,7 +812,7 @@ enum ImportLocalName<'cx> {
 /// and value namespaces.
 struct ValidatedImportBinding {
     target: DefId,
-    namespaces: Vec<Namespace>,
+    namespaces: SmallVec<[Namespace; 2]>,
 }
 
 /// Result of resolving namespace-tagged definition candidates.
@@ -787,7 +821,7 @@ struct ValidatedImportBinding {
 /// and value namespaces, producing `Found([(Type, V), (Value, V)])`.
 enum CandidateResolution {
     /// Lookup found one or more namespace-tagged candidates.
-    Found(Vec<(Namespace, DefId)>),
+    Found(SmallVec<[(Namespace, DefId); 2]>),
 
     /// Lookup found multiple candidates where a single candidate was required.
     Ambiguous,
@@ -1031,6 +1065,74 @@ mod tests {
         }
     }
 
+    mod members {
+        use super::*;
+
+        // Covers direct member lookup from this code shape:
+        //
+        // trait Iterator {
+        //     type Item;
+        // }
+        //
+        // Upper phases can ask the trait owner for a type-namespace member without inspecting
+        // `DefScopes::path` or raw scope bindings directly.
+        #[test]
+        fn resolves_direct_members_from_definition_path_scope() {
+            let ccx = CommonCx::default();
+            let iterator = ccx.intern("Iterator");
+            let item = ccx.intern("Item");
+
+            let mut db = NameDb::default();
+            let root = db.root_scope();
+            let iterator_def = db.add_def(
+                root,
+                DefKind::Trait,
+                Some(iterator),
+                Visibility::Private,
+                Origin::Untracked,
+            );
+            let iterator_scope = db.add_scope(ScopeKind::Trait, Some(root));
+            db.set_path_scope(iterator_def, iterator_scope);
+            let item_def = db.add_def(
+                iterator_scope,
+                DefKind::AssocType,
+                Some(item),
+                Visibility::Private,
+                Origin::Untracked,
+            );
+
+            assert_eq!(
+                db.member(iterator_def, Namespace::Type, item),
+                ResolveResult::Found(item_def)
+            );
+            assert_eq!(
+                db.member(iterator_def, Namespace::Value, item),
+                ResolveResult::NotFound
+            );
+        }
+
+        #[test]
+        fn member_lookup_without_path_scope_is_not_found() {
+            let ccx = CommonCx::default();
+            let unit = ccx.intern("Unit");
+            let item = ccx.intern("Item");
+
+            let mut db = NameDb::default();
+            let unit_def = db.add_def(
+                db.root_scope(),
+                DefKind::Struct,
+                Some(unit),
+                Visibility::Private,
+                Origin::Untracked,
+            );
+
+            assert_eq!(
+                db.member(unit_def, Namespace::Type, item),
+                ResolveResult::NotFound
+            );
+        }
+    }
+
     fn module<'cx>(
         db: &mut NameDb<'cx>,
         parent: ScopeId,
@@ -1049,11 +1151,11 @@ mod tests {
         (def, scope)
     }
 
-    fn target_kind(
-        db: &NameDb<'_>,
+    fn target_kind<'cx>(
+        db: &NameDb<'cx>,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'_>,
+        name: Name<'cx>,
     ) -> DefKind {
         let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
             panic!("expected {name:?} to resolve in {namespace:?}");
@@ -1100,28 +1202,28 @@ mod tests {
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, s],
+                smallvec![ccx.intern("super"), a, s],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, s],
+                smallvec![ccx.intern("super"), a, s],
                 ImportKind::Rename(t),
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, ccx.intern("self")],
+                smallvec![ccx.intern("super"), a, ccx.intern("self")],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, s],
+                smallvec![ccx.intern("super"), a, s],
                 ImportKind::Rename(hidden),
                 Visibility::Private,
                 Origin::Untracked,
@@ -1178,14 +1280,14 @@ mod tests {
 
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, self_name],
+                smallvec![ccx.intern("super"), a, self_name],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), missing, self_name],
+                smallvec![ccx.intern("super"), missing, self_name],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
@@ -1253,21 +1355,21 @@ mod tests {
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, public],
+                smallvec![ccx.intern("super"), a, public],
                 ImportKind::Single,
                 Visibility::Public,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
-                vec![ccx.intern("super"), b, public],
+                smallvec![ccx.intern("super"), b, public],
                 ImportKind::Single,
                 Visibility::Public,
                 Origin::Untracked,
             );
             db.add_import(
                 d_scope,
-                vec![ccx.intern("super"), a],
+                smallvec![ccx.intern("super"), a],
                 ImportKind::Glob,
                 Visibility::Private,
                 Origin::Untracked,
@@ -1340,21 +1442,21 @@ mod tests {
             );
             db.add_import(
                 c_scope,
-                vec![ccx.intern("super"), a],
+                smallvec![ccx.intern("super"), a],
                 ImportKind::Glob,
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
-                vec![ccx.intern("super"), b],
+                smallvec![ccx.intern("super"), b],
                 ImportKind::Glob,
                 Visibility::Private,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
-                vec![ccx.intern("super"), a, missing],
+                smallvec![ccx.intern("super"), a, missing],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
@@ -1411,7 +1513,7 @@ mod tests {
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, x],
+                smallvec![ccx.intern("super"), a, x],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,
@@ -1464,7 +1566,7 @@ mod tests {
             );
             db.add_import(
                 b_scope,
-                vec![ccx.intern("super"), a, e, v],
+                smallvec![ccx.intern("super"), a, e, v],
                 ImportKind::Single,
                 Visibility::Private,
                 Origin::Untracked,

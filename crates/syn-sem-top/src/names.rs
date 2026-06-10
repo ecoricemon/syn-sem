@@ -1,4 +1,5 @@
 use crate::TopCx;
+use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
@@ -567,7 +568,7 @@ impl<'tcx> NameCollector<'tcx> {
     /// ```
     fn collect_use(&mut self, scope: ScopeId, item: &'tcx ast::ItemUse<'tcx>) {
         let visibility = self.visibility_from_ast(scope, &item.vis);
-        self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
+        self.collect_use_tree(scope, SmallVec::new(), &item.tree, visibility);
     }
 
     /// For `use crate::a::{B, C as D, *};`, this flattens the use tree into import records:
@@ -583,7 +584,7 @@ impl<'tcx> NameCollector<'tcx> {
     fn collect_use_tree(
         &mut self,
         scope: ScopeId,
-        prefix: Vec<Name<'tcx>>,
+        prefix: SmallVec<[Name<'tcx>; 4]>,
         tree: &'tcx ast::UseTree<'tcx>,
         visibility: Visibility,
     ) {
@@ -964,11 +965,11 @@ mod tests {
     use crate::TopCx;
     use syn_sem_name::{DefId, Import, ImportKind, ImportStatus, Namespace, ResolveResult};
 
-    fn expect_kind(
-        db: &NameDb<'_>,
+    fn expect_kind<'cx>(
+        db: &NameDb<'cx>,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'_>,
+        name: Name<'cx>,
         kind: DefKind,
     ) {
         let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
@@ -1024,10 +1025,10 @@ mod tests {
         scope: ScopeId,
         source_path: &[&str],
     ) -> &'a Import<'tcx> {
-        let source_path: Vec<_> = source_path
+        let source_path = source_path
             .iter()
             .map(|segment| tcx.common.intern(segment))
-            .collect();
+            .collect::<SmallVec<[_; 4]>>();
         let mut imports = db
             .imports()
             .iter()
@@ -1065,11 +1066,11 @@ mod tests {
         db[db.follow_aliases(def)].kind
     }
 
-    fn resolve_lexical(
-        db: &NameDb<'_>,
+    fn resolve_lexical<'cx>(
+        db: &NameDb<'cx>,
         mut scope: ScopeId,
         namespace: Namespace,
-        name: Name<'_>,
+        name: Name<'cx>,
     ) -> ResolveResult {
         loop {
             if let Some(binding) = db.binding(scope, namespace, name) {

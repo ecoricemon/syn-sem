@@ -1,4 +1,5 @@
 use crate::{DefId, Map, Name, Namespace, ScopeId};
+use smallvec::SmallVec;
 
 /// Lexical scope with namespace-partitioned bindings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +118,7 @@ impl<'cx> Bindings<'cx> {
 /// Binding for one name in one namespace.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Binding {
-    defs: Vec<DefId>,
+    defs: SmallVec<[DefId; 1]>,
 }
 
 impl Binding {

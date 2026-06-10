@@ -132,11 +132,11 @@ fn follow_aliases_kind<'tcx>(
     db[db.follow_aliases(def)].kind
 }
 
-fn resolve_lexical(
-    db: &NameDb<'_>,
+fn resolve_lexical<'cx>(
+    db: &NameDb<'cx>,
     mut scope: ScopeId,
     namespace: Namespace,
-    name: syn_sem_name::Name<'_>,
+    name: syn_sem_name::Name<'cx>,
 ) -> ResolveResult {
     loop {
         if let Some(binding) = db.binding(scope, namespace, name) {
