@@ -188,7 +188,7 @@ mod upper_phase_integration {
         let semantics = tcx.analyze(entry_path).unwrap();
         let repr = semantics.repr();
         let names = semantics.names();
-        let infer = InferDb::analyze(repr, names);
+        let infer = InferDb::analyze(&tcx.common, repr, names);
 
         let entry = repr
             .items()

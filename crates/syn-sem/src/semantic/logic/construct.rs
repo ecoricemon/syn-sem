@@ -165,11 +165,11 @@ impl<'gcx> ImplLogic<'gcx> {
         }
     }
 
-    pub fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, 'gcx, GlobalCx<'gcx>> {
+    pub fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, NameIn<'gcx>> {
         self.db.query(expr)
     }
 
-    pub fn clauses(&self) -> ClauseIter<'_, 'gcx, GlobalCx<'gcx>> {
+    pub fn clauses(&self) -> ClauseIter<'_, NameIn<'gcx>> {
         self.db.clauses()
     }
 
@@ -1422,7 +1422,7 @@ impl<'a, 'gcx> DefaultGenericCx<'a, 'gcx> {
 
 #[derive(Debug)]
 pub(crate) struct DatabaseWrapper<'gcx> {
-    db: Database<'gcx, GlobalCx<'gcx>>,
+    db: Database<NameIn<'gcx>>,
 
     /// Added well known 'Sized' types such as 'i32', 'u32', 'arr', and so on.
     added_sized_known: Set<PredicateIn<'gcx>>,
@@ -1433,7 +1433,7 @@ pub(crate) struct DatabaseWrapper<'gcx> {
 impl<'gcx> DatabaseWrapper<'gcx> {
     fn new(gcx: &'gcx GlobalCx<'gcx>) -> Self {
         Self {
-            db: Database::with_interner(gcx),
+            db: Database::new(),
             added_sized_known: Set::default(),
             gcx,
         }
@@ -1456,7 +1456,7 @@ impl<'gcx> DatabaseWrapper<'gcx> {
         self.db.commit();
     }
 
-    fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, 'gcx, GlobalCx<'gcx>> {
+    fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, NameIn<'gcx>> {
         self.db.query(expr)
     }
 
@@ -1728,7 +1728,7 @@ impl<'gcx> DatabaseWrapper<'gcx> {
 }
 
 impl<'gcx> ops::Deref for DatabaseWrapper<'gcx> {
-    type Target = Database<'gcx, GlobalCx<'gcx>>;
+    type Target = Database<NameIn<'gcx>>;
 
     fn deref(&self) -> &Self::Target {
         &self.db

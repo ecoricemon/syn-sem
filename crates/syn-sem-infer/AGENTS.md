@@ -39,4 +39,5 @@
 - `TraitBoundFact`: generic trait bounds lowered as solver/logic input facts.
 - `ProjectionCandidate`: candidate trait selections derived from projection
   obligations and known trait bounds.
+- `ProjectionMatch`: associated type projections matched against concrete trait members.
 - `PrimitiveType`: primitive Rust type classification stored as `Type::Primitive`.

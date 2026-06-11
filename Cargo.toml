@@ -10,7 +10,7 @@ syn-sem-pr = { path = "crates/syn-sem-pr" }
 syn-sem-infer = { path = "crates/syn-sem-infer" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }
 syn-locator = "0.2.0"
-logic-eval = "0.1.5"
+logic-eval = "0.2.0"
 logic-eval-util = "0.1.5"
 any-intern = "0.1.5"
 my-utils = "0.1.1"

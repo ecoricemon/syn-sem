@@ -1182,6 +1182,10 @@ pub struct Type<'cx> {
 }
 
 /// Representation-native source type shape.
+//
+// Allowing `large_enum_variant`: `Path` is the common source type form. Boxing it would shrink
+// scalar variants but add one heap allocation for each normal path type.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind<'cx> {
     /// Fixed-length array type.
