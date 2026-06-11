@@ -27,7 +27,7 @@
 
 ## Possible V2 Directions
 
-- May model generics in representation-native data.
+- May further expand generics beyond item-level parameter and trait-bound facts.
 - May expose function parameters and pattern names in a more upper-phase-friendly form.
 - May give `Body` statement, expression, or pattern entry points.
 - May further refine path and type occurrence representation for upper semantic phases.
@@ -38,3 +38,5 @@
 
 - `ProgramRepr`: program representation produced from AST and name-resolution data.
 - `Item`, `Signature`, `Body`, `Field`, `Variant`, `AssocItem`, `Type`: source-level components.
+- `Generics`, `GenericParam`, `TypeParamBound`: item-level generic parameter
+  and bound facts for upper phases.

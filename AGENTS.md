@@ -62,6 +62,7 @@
 ## Style
 
 - Keep `lib.rs` clean.
+- Keep `mod.rs` clean like `lib.rs`; put implementation in named module files.
 - Prefer incremental refactors.
 - Prefer iterator-family inputs over slices when callers can avoid building
   temporary `Vec`s.

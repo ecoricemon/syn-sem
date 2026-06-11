@@ -132,11 +132,11 @@ fn follow_aliases_kind<'tcx>(
     db[db.follow_aliases(def)].kind
 }
 
-fn resolve_lexical(
-    db: &NameDb<'_>,
+fn resolve_lexical<'cx>(
+    db: &NameDb<'cx>,
     mut scope: ScopeId,
     namespace: Namespace,
-    name: syn_sem_name::Name<'_>,
+    name: syn_sem_name::Name<'cx>,
 ) -> ResolveResult {
     loop {
         if let Some(binding) = db.binding(scope, namespace, name) {
@@ -188,7 +188,7 @@ mod upper_phase_integration {
         let semantics = tcx.analyze(entry_path).unwrap();
         let repr = semantics.repr();
         let names = semantics.names();
-        let infer = InferDb::analyze(repr, names);
+        let infer = InferDb::analyze(&tcx.common, repr, names);
 
         let entry = repr
             .items()

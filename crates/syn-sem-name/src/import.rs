@@ -1,4 +1,5 @@
 use crate::{ImportId, Name, Origin, ScopeId, Visibility};
+use smallvec::SmallVec;
 
 /// Import declaration collected during name resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +11,7 @@ pub struct Import<'cx> {
     pub scope: ScopeId,
 
     /// Path segments naming the import target.
-    pub source_path: Vec<Name<'cx>>,
+    pub source_path: SmallVec<[Name<'cx>; 4]>,
 
     /// Import kind.
     pub kind: ImportKind<'cx>,

@@ -162,11 +162,11 @@ fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
         .id
 }
 
-fn expect_def(
-    db: &NameDb<'_>,
+fn expect_def<'cx>(
+    db: &NameDb<'cx>,
     scope: ScopeId,
     namespace: Namespace,
-    name: Name<'_>,
+    name: Name<'cx>,
     kind: DefKind,
 ) -> DefId {
     let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
@@ -176,11 +176,11 @@ fn expect_def(
     def
 }
 
-fn resolve_lexical(
-    db: &NameDb<'_>,
+fn resolve_lexical<'cx>(
+    db: &NameDb<'cx>,
     mut scope: ScopeId,
     namespace: Namespace,
-    name: Name<'_>,
+    name: Name<'cx>,
 ) -> ResolveResult {
     loop {
         if let Some(binding) = db.binding(scope, namespace, name) {

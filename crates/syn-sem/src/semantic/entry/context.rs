@@ -43,7 +43,7 @@ impl Default for GlobalCx<'_> {
 }
 
 impl<'gcx> Intern for GlobalCx<'gcx> {
-    type InternedStr<'a>
+    type Interned<'a>
         = any_intern::Interned<'a, str>
     where
         Self: 'a;
@@ -52,11 +52,11 @@ impl<'gcx> Intern for GlobalCx<'gcx> {
         &self,
         value: &T,
         upper_size: usize,
-    ) -> StdResult<Self::InternedStr<'_>, fmt::Error> {
+    ) -> StdResult<Self::Interned<'_>, fmt::Error> {
         self.interner.intern_formatted_str(value, upper_size)
     }
 
-    fn intern_str(&self, text: &str) -> Self::InternedStr<'_> {
+    fn intern_str(&self, text: &str) -> Self::Interned<'_> {
         self.interner.intern(text)
     }
 }

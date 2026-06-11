@@ -5,6 +5,10 @@
 //! occurrences into inference-oriented type facts while preserving path syntax and keeping name
 //! lookup classification separate from final type solving.
 
+mod logic;
+mod lower;
+mod obligations;
 mod types;
 
+pub use obligations::*;
 pub use types::*;

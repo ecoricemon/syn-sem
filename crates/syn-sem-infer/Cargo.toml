@@ -8,9 +8,11 @@ description = "Type inference for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 
 [dependencies]
+logic-eval = { workspace = true }
 syn-sem-common = { workspace = true }
 syn-sem-name = { workspace = true }
 syn-sem-pr = { workspace = true }
+smallvec = { workspace = true }
 
 [dev-dependencies]
 syn-sem-ast = { workspace = true }

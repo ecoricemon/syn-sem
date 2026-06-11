@@ -1,3 +1,4 @@
+use smallvec::SmallVec;
 use std::ops::{Index, IndexMut};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
@@ -98,14 +99,16 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 ItemKind::Const { ty, body }
             }
             ast::Item::Enum(item) => {
+                let generics = self.collect_generics(&item.generics, type_scope);
                 let variants = item
                     .variants
                     .iter()
                     .map(|variant| self.collect_variant(variant, type_scope))
                     .collect();
-                ItemKind::Enum { variants }
+                ItemKind::Enum { generics, variants }
             }
             ast::Item::Fn(item) => {
+                let generics = self.collect_generics(&item.sig.generics, type_scope);
                 let signature =
                     self.collect_signature(SignatureSource::ItemFn, &item.sig, type_scope);
                 let body = self.collect_body(
@@ -113,9 +116,14 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     def.and_then(|def| self.names.def_body_scope(def)),
                     BodyKind::Block,
                 );
-                ItemKind::Fn { signature, body }
+                ItemKind::Fn {
+                    generics,
+                    signature,
+                    body,
+                }
             }
             ast::Item::Impl(item) => {
+                let generics = self.collect_generics(&item.generics, type_scope);
                 let self_ty = self.collect_type(item.self_ty, type_scope, TypeSource::ImplSelf);
                 let items = item
                     .items
@@ -123,6 +131,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .map(|item| self.collect_impl_item(item, type_scope))
                     .collect();
                 ItemKind::Impl {
+                    generics,
                     trait_: item.trait_.as_ref().map(Path::from_ast),
                     self_ty,
                     items,
@@ -137,24 +146,27 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 }
             }
             ast::Item::Struct(item) => {
+                let generics = self.collect_generics(&item.generics, type_scope);
                 let fields = item
                     .fields
                     .iter()
                     .map(|field| self.collect_struct_field(field, type_scope))
                     .collect();
-                ItemKind::Struct { fields }
+                ItemKind::Struct { generics, fields }
             }
             ast::Item::Trait(item) => {
+                let generics = self.collect_generics(&item.generics, type_scope);
                 let items = item
                     .items
                     .iter()
                     .map(|item| self.collect_trait_item(item, type_scope))
                     .collect();
-                ItemKind::Trait { items }
+                ItemKind::Trait { generics, items }
             }
             ast::Item::Type(item) => {
+                let generics = self.collect_generics(&item.generics, type_scope);
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::TypeAlias);
-                ItemKind::Type { ty }
+                ItemKind::Type { generics, ty }
             }
             ast::Item::Use(_) => ItemKind::Use,
         }
@@ -334,6 +346,65 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         id
     }
 
+    fn collect_generics(
+        &mut self,
+        generics: &'cx ast::Generics<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Generics<'cx> {
+        Generics {
+            scope,
+            params: generics
+                .params
+                .iter()
+                .map(|param| self.collect_generic_param(param, scope))
+                .collect(),
+            where_clause: generics
+                .where_clause
+                .as_ref()
+                .map(|where_clause| SourceWhereClause {
+                    predicates: where_clause.predicates.len(),
+                }),
+        }
+    }
+
+    fn collect_generic_param(
+        &mut self,
+        param: &'cx ast::GenericParam<'cx>,
+        scope: Option<ScopeId>,
+    ) -> GenericParam<'cx> {
+        match param {
+            ast::GenericParam::Type(param) => GenericParam::Type(TypeParam {
+                name: param.ident.inner,
+                bounds: param
+                    .bounds
+                    .iter()
+                    .map(|bound| self.collect_type_param_bound(bound, scope))
+                    .collect(),
+                default: param
+                    .default
+                    .map(|ty| self.collect_type(ty, scope, TypeSource::GenericParamDefault)),
+            }),
+            ast::GenericParam::Const(param) => GenericParam::Const(ConstParam {
+                name: param.ident.inner,
+                ty: self.collect_type(param.ty, scope, TypeSource::ConstGenericParam),
+            }),
+            ast::GenericParam::Unsupported(_) => GenericParam::Unsupported,
+        }
+    }
+
+    fn collect_type_param_bound(
+        &mut self,
+        bound: &'cx ast::TypeParamBound<'cx>,
+        scope: Option<ScopeId>,
+    ) -> TypeParamBound<'cx> {
+        match bound {
+            ast::TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
+                path: self.collect_type_path(&bound.path, scope),
+            }),
+            ast::TypeParamBound::Unsupported(_) => TypeParamBound::Unsupported,
+        }
+    }
+
     fn collect_type(
         &mut self,
         ty: &'cx ast::Type<'cx>,
@@ -445,7 +516,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         &mut self,
         args: &'cx ast::PathArguments<'cx>,
         scope: Option<ScopeId>,
-    ) -> Vec<GenericArgument<'cx>> {
+    ) -> SmallVec<[GenericArgument<'cx>; 2]> {
         args.args()
             .iter()
             .map(|arg| self.collect_generic_arg(arg, scope))
@@ -763,11 +834,15 @@ pub enum ItemKind<'cx> {
     },
     /// Enum item.
     Enum {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Represented variants.
         variants: Vec<VariantId>,
     },
     /// Function item.
     Fn {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Represented signature.
         signature: SignatureId,
         /// Function body.
@@ -775,6 +850,8 @@ pub enum ItemKind<'cx> {
     },
     /// Implementation block.
     Impl {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Implemented trait path, if this is a trait impl.
         trait_: Option<Path<'cx>>,
         /// Implementing self type.
@@ -793,21 +870,96 @@ pub enum ItemKind<'cx> {
     },
     /// Struct item.
     Struct {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Represented fields.
         fields: Vec<FieldId>,
     },
     /// Trait item.
     Trait {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Represented associated items.
         items: Vec<AssocItemId>,
     },
     /// Type alias item.
     Type {
+        /// Source generics.
+        generics: Generics<'cx>,
         /// Aliased type.
         ty: TypeId,
     },
     /// Use item.
     Use,
+}
+
+/// Representation-native item generics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generics<'cx> {
+    /// Scope where generic parameters and bounds should be resolved.
+    pub scope: Option<ScopeId>,
+    /// Generic parameters in source order.
+    pub params: Vec<GenericParam<'cx>>,
+    /// Source where-clause shape, when present.
+    pub where_clause: Option<SourceWhereClause>,
+}
+
+/// Representation-native generic parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenericParam<'cx> {
+    /// Type generic parameter.
+    Type(TypeParam<'cx>),
+    /// Const generic parameter.
+    Const(ConstParam<'cx>),
+    /// Unsupported generic parameter form.
+    Unsupported,
+}
+
+/// Representation-native type generic parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParam<'cx> {
+    /// Parameter name.
+    pub name: Name<'cx>,
+    /// Bounds on the parameter.
+    pub bounds: Vec<TypeParamBound<'cx>>,
+    /// Default type, when present.
+    pub default: Option<TypeId>,
+}
+
+/// Representation-native const generic parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstParam<'cx> {
+    /// Parameter name.
+    pub name: Name<'cx>,
+    /// Parameter type.
+    pub ty: TypeId,
+}
+
+/// Representation-native type parameter bound.
+//
+// Allowing `large_enum_variant`: `Trait` is the common bound form. Boxing it would shrink the rare
+// `Unsupported` case but add one heap allocation for each normal trait bound.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeParamBound<'cx> {
+    /// Trait bound.
+    Trait(TraitBound<'cx>),
+    /// Unsupported bound form.
+    Unsupported,
+}
+
+/// Representation-native trait bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitBound<'cx> {
+    /// Trait path.
+    pub path: TypePathValue<'cx>,
+}
+
+/// Source where-clause shape before predicate lowering exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceWhereClause {
+    /// Number of source predicates in the where-clause.
+    pub predicates: usize,
 }
 
 /// One represented function-like signature.
@@ -1030,6 +1182,10 @@ pub struct Type<'cx> {
 }
 
 /// Representation-native source type shape.
+//
+// Allowing `large_enum_variant`: `Path` is the common source type form. Boxing it would shrink
+// scalar variants but add one heap allocation for each normal path type.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind<'cx> {
     /// Fixed-length array type.
@@ -1058,7 +1214,7 @@ pub enum TypeKind<'cx> {
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elems: Vec<TypeId>,
+        elems: SmallVec<[TypeId; 4]>,
     },
 }
 
@@ -1088,7 +1244,7 @@ pub struct QSelf<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypePathValue<'cx> {
     /// Path segments in source order.
-    pub segments: Vec<TypePathSegment<'cx>>,
+    pub segments: SmallVec<[TypePathSegment<'cx>; 3]>,
 }
 
 /// One representation-native type path segment.
@@ -1097,7 +1253,7 @@ pub struct TypePathSegment<'cx> {
     /// Segment name.
     pub name: Name<'cx>,
     /// Generic arguments on this segment.
-    pub args: Vec<GenericArgument<'cx>>,
+    pub args: SmallVec<[GenericArgument<'cx>; 2]>,
 }
 
 /// Representation-native generic argument shape.
@@ -1169,6 +1325,10 @@ pub enum TypeSource {
     AssocConstType,
     /// Associated type value, for example `T` in `type Item = T;` inside a trait or impl.
     AssocTypeValue,
+    /// Type generic parameter default, for example `T` in `struct S<U = T>;`.
+    GenericParamDefault,
+    /// Const generic parameter type, for example `usize` in `struct S<const N: usize>;`.
+    ConstGenericParam,
     /// Nested type inside another represented type occurrence, for example `T` in `Vec<T>`.
     Nested,
 }
@@ -1682,6 +1842,29 @@ mod tests {
         assert_eq!(path.path.segments[1].name.as_ref(), "b");
         assert_eq!(path.path.segments[2].name.as_ref(), "Trait");
         assert_eq!(path.path.segments[3].name.as_ref(), "Item");
+    }
+
+    #[test]
+    fn represents_type_param_trait_bounds() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(&ccx, &scx, "struct S<T: Iterator> { field: <T>::Item }");
+
+        let item = named_item(&model, "S");
+        let ItemKind::Struct { generics, .. } = &item.kind else {
+            panic!("expected struct item");
+        };
+        assert_eq!(generics.params.len(), 1);
+        let GenericParam::Type(param) = &generics.params[0] else {
+            panic!("expected type parameter");
+        };
+        assert_eq!(param.name.as_ref(), "T");
+        assert_eq!(param.bounds.len(), 1);
+        let TypeParamBound::Trait(bound) = &param.bounds[0] else {
+            panic!("expected trait bound");
+        };
+        assert_eq!(bound.path.segments.len(), 1);
+        assert_eq!(bound.path.segments[0].name.as_ref(), "Iterator");
     }
 
     #[test]

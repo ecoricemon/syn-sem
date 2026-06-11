@@ -13,6 +13,7 @@ syn-sem-ast = { workspace = true }
 syn-sem-name = { workspace = true }
 syn-sem-pr = { workspace = true }
 syn = { workspace = true, features = ["full", "extra-traits"] }
+smallvec = { workspace = true }
 
 [dev-dependencies]
 syn-sem-infer = { workspace = true }
