@@ -1,3 +1,9 @@
+//! Declaration type inference.
+//!
+//! This module lowers explicit source type occurrences from `syn-sem-pr` into inference
+//! [`TypeId`](crate::TypeId)s, collects declaration-level facts such as trait bounds and impl
+//! associated type assignments, and then invokes logic-backed derivation for projection solving.
+
 use crate::{
     ArrayLen, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
     PrimitiveType, ProjectionObligation, ProjectionType, QSelf, SourceConstArg, SourceTypeBounds,
@@ -1096,6 +1102,108 @@ mod tests {
             infer[substitution.substituted_ty],
             Type::Primitive(PrimitiveType::U32)
         );
+        assert_eq!(
+            infer.projection_normalization(projection),
+            ProjectionNormalizationResult::Known(substitution.substituted_ty)
+        );
+    }
+
+    #[test]
+    fn classifies_projection_normalization_query_results() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, mut infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Result {
+                projected: <Vec<u32> as Iterator>::Item,
+                plain: u32,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [projected_ty, plain_ty] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let projection = infer.type_for_repr_type(*projected_ty).unwrap();
+        let plain = infer.type_for_repr_type(*plain_ty).unwrap();
+        let known = infer
+            .normalized_projection_type(projection)
+            .expect("projection should have one normalization");
+
+        assert_eq!(
+            infer.projection_normalization(projection),
+            ProjectionNormalizationResult::Known(known)
+        );
+        assert_eq!(
+            infer.projection_normalization(plain),
+            ProjectionNormalizationResult::NotProjection
+        );
+
+        let ambiguous_value = infer.intern_type(Type::Primitive(PrimitiveType::Bool));
+        let ProjectionNormalizationResult::Known(_) = infer.projection_normalization(projection)
+        else {
+            panic!("projection should start with one known normalization");
+        };
+        let existing = infer.projection_normalizations()[0];
+        infer
+            .projection_normalizations
+            .push(ProjectionNormalization {
+                value_ty: ambiguous_value,
+                ..existing
+            });
+        assert_eq!(
+            infer.projection_normalization(projection),
+            ProjectionNormalizationResult::Ambiguous
+        );
+        assert_eq!(infer.normalized_projection_type(projection), None);
+        assert_eq!(infer.normalized_type(projection), projection);
+    }
+
+    #[test]
+    fn reports_projection_without_known_normalization() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, mut infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            struct Result {
+                field: <Vec<u32> as Iterator>::Item,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let projection = infer.type_for_repr_type(*field_ty).unwrap();
+
+        assert_eq!(
+            infer.projection_normalization(projection),
+            ProjectionNormalizationResult::NoNormalization
+        );
+        assert_eq!(infer.normalized_projection_type(projection), None);
+        assert_eq!(infer.normalized_type(projection), projection);
     }
 
     #[test]
@@ -1303,6 +1411,46 @@ mod tests {
             panic!("slice_ref element should normalize to a slice type");
         };
         assert_primitive_type(&infer, elem, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn caches_recursive_normalization_results() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, mut infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Result {
+                field: Option<<Vec<u32> as Iterator>::Item>,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let before = infer.types().len();
+        let first = infer.normalized_type_for_repr_type(*field_ty).unwrap();
+        let after_first = infer.types().len();
+        let second = infer.normalized_type_for_repr_type(*field_ty).unwrap();
+        let after_second = infer.types().len();
+
+        assert_eq!(first, second);
+        assert!(after_first >= before);
+        assert_eq!(after_first, after_second);
     }
 
     #[test]

@@ -22,16 +22,18 @@ pub struct InferDb<'cx> {
     pub(crate) projection_candidates: Vec<ProjectionCandidate>,
     pub(crate) projection_matches: Vec<ProjectionMatch>,
     pub(crate) projection_normalizations: Vec<ProjectionNormalization>,
+    pub(crate) recursive_normalizations: Map<TypeId, TypeId>,
 }
 
 impl<'cx> InferDb<'cx> {
     /// Builds inference type facts from program representation and name-resolution data.
     pub fn analyze(ccx: &'cx CommonCx, repr: &pr::ProgramRepr<'cx>, names: &NameDb<'cx>) -> Self {
-        crate::lower::analyze(ccx, repr, names)
+        crate::inference::analyze(ccx, repr, names)
     }
 
     /// Returns all collected inference types.
-    pub fn types(&self) -> &[Type<'cx>] {
+    #[cfg(test)]
+    pub(crate) fn types(&self) -> &[Type<'cx>] {
         &self.types
     }
 
@@ -43,7 +45,11 @@ impl<'cx> InferDb<'cx> {
     /// Returns the shallow normalized inference type linked to a represented type occurrence.
     ///
     /// This returns `None` when the represented type occurrence was not lowered.
-    pub fn shallow_normalized_type_for_repr_type(&self, repr_type: pr::TypeId) -> Option<TypeId> {
+    #[cfg(test)]
+    pub(crate) fn shallow_normalized_type_for_repr_type(
+        &self,
+        repr_type: pr::TypeId,
+    ) -> Option<TypeId> {
         self.type_for_repr_type(repr_type)
             .map(|ty| self.shallow_normalized_type(ty))
     }
@@ -52,7 +58,8 @@ impl<'cx> InferDb<'cx> {
     ///
     /// This returns `None` when the represented type occurrence was not lowered, is not a
     /// projection with a known normalization, or currently has multiple possible normalizations.
-    pub fn normalized_projection_type_for_repr_type(
+    #[cfg(test)]
+    pub(crate) fn normalized_projection_type_for_repr_type(
         &self,
         repr_type: pr::TypeId,
     ) -> Option<TypeId> {
@@ -66,11 +73,6 @@ impl<'cx> InferDb<'cx> {
     pub fn normalized_type_for_repr_type(&mut self, repr_type: pr::TypeId) -> Option<TypeId> {
         let ty = self.type_for_repr_type(repr_type)?;
         Some(self.normalized_type(ty))
-    }
-
-    /// Returns all represented-type-to-inference-type links.
-    pub fn repr_types(&self) -> &Map<pr::TypeId, TypeId> {
-        &self.repr_types
     }
 
     /// Returns associated type projections that still need solver work.
@@ -141,20 +143,41 @@ impl<'cx> InferDb<'cx> {
     ///
     /// Returns `None` when the projection has no known normalization or when multiple
     /// normalizations are currently possible.
-    pub fn normalized_projection_type(&self, projection: TypeId) -> Option<TypeId> {
-        let mut normalizations = self.normalizations_for_projection(projection);
-        let value_ty = normalizations.next()?.value_ty;
-        if normalizations.next().is_some() {
-            return None;
+    #[cfg(test)]
+    pub(crate) fn normalized_projection_type(&self, projection: TypeId) -> Option<TypeId> {
+        match self.projection_normalization(projection) {
+            ProjectionNormalizationResult::Known(value_ty) => Some(value_ty),
+            ProjectionNormalizationResult::NotProjection
+            | ProjectionNormalizationResult::NoNormalization
+            | ProjectionNormalizationResult::Ambiguous => None,
         }
-        Some(value_ty)
+    }
+
+    /// Returns the normalization query result for one associated type projection.
+    pub fn projection_normalization(&self, projection: TypeId) -> ProjectionNormalizationResult {
+        if self.projection(projection).is_none() {
+            return ProjectionNormalizationResult::NotProjection;
+        }
+
+        let mut normalizations = self.normalizations_for_projection(projection);
+        let Some(value_ty) = normalizations
+            .next()
+            .map(|normalization| normalization.value_ty)
+        else {
+            return ProjectionNormalizationResult::NoNormalization;
+        };
+        if normalizations.next().is_some() {
+            return ProjectionNormalizationResult::Ambiguous;
+        }
+        ProjectionNormalizationResult::Known(value_ty)
     }
 
     /// Returns the shallow normalized form of an inference type.
     ///
     /// This only normalizes the type itself when it is an associated type projection. It does not
     /// recursively rewrite nested type arguments.
-    pub fn shallow_normalized_type(&self, ty: TypeId) -> TypeId {
+    #[cfg(test)]
+    pub(crate) fn shallow_normalized_type(&self, ty: TypeId) -> TypeId {
         if self.projection(ty).is_some() {
             if let Some(value_ty) = self.normalized_projection_type(ty) {
                 return value_ty;
@@ -168,7 +191,12 @@ impl<'cx> InferDb<'cx> {
     /// This rewrites associated type projections in the type itself and in nested type positions
     /// for the currently supported type shapes.
     pub fn normalized_type(&mut self, ty: TypeId) -> TypeId {
-        self.normalized_type_inner(ty, &mut Vec::new())
+        if let Some(normalized) = self.recursive_normalizations.get(&ty).copied() {
+            return normalized;
+        }
+        let normalized = self.normalized_type_inner(ty, &mut Vec::new());
+        self.recursive_normalizations.insert(ty, normalized);
+        normalized
     }
 
     pub(crate) fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
@@ -218,14 +246,16 @@ impl<'cx> InferDb<'cx> {
         }
         active.push(ty);
 
-        if self.projection(ty).is_some() {
-            if let Some(value_ty) = self.normalized_projection_type(ty) {
-                if value_ty != ty {
-                    let normalized = self.normalized_type_inner(value_ty, active);
-                    active.pop();
-                    return normalized;
-                }
+        match self.projection_normalization(ty) {
+            ProjectionNormalizationResult::Known(value_ty) if value_ty != ty => {
+                let normalized = self.normalized_type_inner(value_ty, active);
+                active.pop();
+                return normalized;
             }
+            ProjectionNormalizationResult::Known(_)
+            | ProjectionNormalizationResult::NotProjection
+            | ProjectionNormalizationResult::NoNormalization
+            | ProjectionNormalizationResult::Ambiguous => {}
         }
 
         let normalized = match self[ty].clone() {
@@ -345,6 +375,19 @@ impl<'cx> InferDb<'cx> {
     }
 }
 
+/// Result of asking whether one projection type can normalize to a value type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionNormalizationResult {
+    /// The projection has one known normalized value type.
+    Known(TypeId),
+    /// The queried type is not an associated type projection.
+    NotProjection,
+    /// The queried type is a projection, but no normalization is known.
+    NoNormalization,
+    /// The queried projection currently has multiple possible normalizations.
+    Ambiguous,
+}
+
 impl<'cx> Index<TypeId> for InferDb<'cx> {
     type Output = Type<'cx>;
 
@@ -359,12 +402,12 @@ pub struct TypeId(usize);
 
 impl TypeId {
     /// Creates an id from a raw index.
-    pub const fn new(index: usize) -> Self {
+    pub(crate) const fn new(index: usize) -> Self {
         Self(index)
     }
 
     /// Returns the raw index represented by this id.
-    pub const fn index(self) -> usize {
+    pub(crate) const fn index(self) -> usize {
         self.0
     }
 }

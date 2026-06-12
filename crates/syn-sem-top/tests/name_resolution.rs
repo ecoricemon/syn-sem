@@ -157,7 +157,10 @@ fn resolve_lexical<'cx>(
 
 mod upper_phase_integration {
     use super::*;
-    use syn_sem_infer::{GenericArgument, InferDb, PrimitiveType, ProjectionType, Type, TypeId};
+    use syn_sem_infer::{
+        GenericArgument, InferDb, PrimitiveType, ProjectionNormalizationResult, ProjectionType,
+        Type, TypeId,
+    };
     use syn_sem_pr::TypeSource;
 
     // Validates the intended upper-phase consumption pattern:
@@ -344,13 +347,11 @@ mod upper_phase_integration {
         assert!(trait_ty.is_some());
         assert_eq!(names[*assoc_type].kind, DefKind::AssocType);
 
-        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+        let ProjectionNormalizationResult::Known(normalized_ty) =
+            infer.projection_normalization(projection)
+        else {
             panic!("Output.field projection should have one normalization");
         };
-        assert_eq!(
-            infer.shallow_normalized_type_for_repr_type(field_ty),
-            Some(normalized_ty)
-        );
         let Type::Primitive(primitive) = infer[normalized_ty] else {
             panic!("normalized projection value should lower to primitive type");
         };
@@ -401,13 +402,11 @@ mod upper_phase_integration {
             .expect("Output.field type should be lowered");
         assert!(infer.projection(projection).is_some());
 
-        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+        let ProjectionNormalizationResult::Known(normalized_ty) =
+            infer.projection_normalization(projection)
+        else {
             panic!("Output.field projection should have one normalization");
         };
-        assert_eq!(
-            infer.shallow_normalized_type_for_repr_type(field_ty),
-            Some(normalized_ty)
-        );
         let Type::Primitive(primitive) = infer[normalized_ty] else {
             panic!("normalized projection value should lower to primitive type");
         };
@@ -456,7 +455,12 @@ mod upper_phase_integration {
         };
         let field_ty = repr[*field].ty;
 
-        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+        let projection = infer
+            .type_for_repr_type(field_ty)
+            .expect("Result.field type should be lowered");
+        let ProjectionNormalizationResult::Known(normalized_ty) =
+            infer.projection_normalization(projection)
+        else {
             panic!("Result.field projection should have one normalization");
         };
         let Type::Primitive(primitive) = infer[normalized_ty] else {
@@ -508,7 +512,12 @@ mod upper_phase_integration {
         };
         let field_ty = repr[*field].ty;
 
-        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+        let projection = infer
+            .type_for_repr_type(field_ty)
+            .expect("Result.field type should be lowered");
+        let ProjectionNormalizationResult::Known(normalized_ty) =
+            infer.projection_normalization(projection)
+        else {
             panic!("Result.field projection should have one normalization");
         };
         let Type::Path(path) = &infer[normalized_ty] else {
@@ -525,6 +534,53 @@ mod upper_phase_integration {
             panic!("Option argument should lower to primitive type");
         };
         assert_eq!(primitive, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn consumes_recursive_normalization_query_from_program_repr() {
+        let tcx = TopCx::default();
+        let entry_path = tcx.common.intern("recursive_projection_normalization.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Result {
+                field: Option<<Vec<u32> as Iterator>::Item>,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let mut infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+
+        let result = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
+            .expect("Result struct should be represented");
+        let ItemKind::Struct { fields, .. } = &result.kind else {
+            panic!("Result should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("Result should have one field");
+        };
+        let field_ty = repr[*field].ty;
+
+        let normalized_ty = infer
+            .normalized_type_for_repr_type(field_ty)
+            .expect("Result.field type should be lowered");
+        assert_option_of(&infer, normalized_ty, PrimitiveType::U32);
     }
 
     #[test]
@@ -576,13 +632,21 @@ mod upper_phase_integration {
         let vec_field_ty = repr[*vec_field].ty;
         let box_field_ty = repr[*box_field].ty;
 
-        let Some(vec_normalized_ty) = infer.normalized_projection_type_for_repr_type(vec_field_ty)
+        let vec_projection = infer
+            .type_for_repr_type(vec_field_ty)
+            .expect("Result.vec_field type should be lowered");
+        let ProjectionNormalizationResult::Known(vec_normalized_ty) =
+            infer.projection_normalization(vec_projection)
         else {
             panic!("Vec projection should have one context-matched normalization");
         };
         assert_option_of(&infer, vec_normalized_ty, PrimitiveType::U32);
 
-        let Some(box_normalized_ty) = infer.normalized_projection_type_for_repr_type(box_field_ty)
+        let box_projection = infer
+            .type_for_repr_type(box_field_ty)
+            .expect("Result.box_field type should be lowered");
+        let ProjectionNormalizationResult::Known(box_normalized_ty) =
+            infer.projection_normalization(box_projection)
         else {
             panic!("Box projection should have one context-matched normalization");
         };

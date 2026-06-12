@@ -30,14 +30,11 @@
 
 ## Primary Public Items
 
-- `InferDb`: entry point for lowering represented type occurrences.
-- `Type`, `TypeId`: inference type shapes and stable ids.
+- `InferDb`: entry point and focused query surface for represented type occurrences.
+- `Type`, `TypeId`: inference type shapes and stable ids returned by queries.
 - `PathType`, `QSelf`, `PathTypeResolution`: source-shaped path types plus
   current solver-friendly resolution classification.
-- `ProjectionObligation`: associated type projections that later solver/logic
-  work must prove or normalize.
-- `TraitBoundFact`: generic trait bounds lowered as solver/logic input facts.
-- `ProjectionCandidate`: candidate trait selections derived from projection
-  obligations and known trait bounds.
-- `ProjectionMatch`: associated type projections matched against concrete trait members.
+- `ProjectionType`: associated type projection metadata for projection path types.
+- `ProjectionNormalizationResult`: public result of asking whether a projection
+  has a known normalized value type.
 - `PrimitiveType`: primitive Rust type classification stored as `Type::Primitive`.
