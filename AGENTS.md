@@ -46,6 +46,9 @@
   source program shape plus ids that connect to name facts.
 - Treat `syn-sem-name` as the owner of definition, scope, import, resolution,
   and semantic visibility facts.
+- Keep the `syn-sem-name` core model syntax-agnostic, but allow its collection
+  layer to consume already parsed `syn-sem-ast` inputs.
+- Do not make `syn-sem-name` read files or depend on `TopCx`.
 - Let upper semantic phases depend on both `syn-sem-pr` and `syn-sem-name`:
   traverse program shape through `ProgramRepr`, then query name facts through
   focused `NameDb` APIs using ids stored in the representation.

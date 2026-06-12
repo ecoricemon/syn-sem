@@ -8,8 +8,8 @@
 ## Role
 
 - Wire extracted crates together.
-- Own top-level orchestration for parsing, name collection, and program
-  representation construction.
+- Own top-level orchestration for parsing, preparing name-collection inputs,
+  invoking name collection, and program representation construction.
 
 ## Boundaries
 

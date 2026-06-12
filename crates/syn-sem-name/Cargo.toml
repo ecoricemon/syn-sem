@@ -8,9 +8,8 @@ description = "Name-resolution model for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 
 [dependencies]
+syn-sem-ast = { workspace = true }
 syn-sem-common = { workspace = true }
-smallvec = { workspace = true }
+syn = { workspace = true, features = ["full", "extra-traits"] }
 
 [dev-dependencies]
-syn-sem-ast = { workspace = true }
-syn = { workspace = true, features = ["full", "extra-traits"] }

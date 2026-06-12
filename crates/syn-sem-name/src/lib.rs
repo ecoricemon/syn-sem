@@ -1,8 +1,10 @@
 //! Name-resolution model for `syn-sem`.
 //!
 //! This crate owns the reusable vocabulary for resolving names: definitions, scopes, namespaces,
-//! bindings, imports, and simple lexical lookup. It is intentionally independent from `syn` and
-//! `syn-sem-ast`; higher layers can attach AST-specific identities through [`Origin`].
+//! bindings, imports, and simple lexical lookup. Its core database remains syntax-agnostic, while
+//! [`collect`] provides AST-aware collection from already parsed source inputs.
+
+pub mod collect;
 
 mod db;
 mod def;

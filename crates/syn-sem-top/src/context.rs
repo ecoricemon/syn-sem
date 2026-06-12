@@ -1,7 +1,8 @@
-use crate::{NameCollector, Semantics};
+use crate::{NameInputBuilder, Semantics};
 use std::{fs, path::Path};
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
+use syn_sem_name::collect::collect_names;
 use syn_sem_pr::ProgramReprBuilder;
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
@@ -30,8 +31,9 @@ impl<'tcx> TopCx<'tcx> {
 
     /// Analyzes a previously inserted or read entry file.
     pub fn analyze(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
+        let name_inputs = NameInputBuilder::new(self).collect(entry_path)?;
+        let names = collect_names(name_inputs, entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
-        let names = NameCollector::new(self).collect(entry_path, file)?;
         let repr = ProgramReprBuilder::new(&names).build(entry_path, file);
         Ok(Semantics::new(self, names, repr))
     }
