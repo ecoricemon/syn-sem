@@ -1,7 +1,7 @@
 use std::fs;
 
 use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
-use syn_sem_pr::{BodyKind, ItemKind};
+use syn_sem_pr::ItemKind;
 use syn_sem_top::TopCx;
 
 /// Verifies physical module files are loaded from the filesystem and `use` declarations across
@@ -200,7 +200,7 @@ mod upper_phase_integration {
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "entry"))
             .expect("entry function should be represented");
         let ItemKind::Fn {
-            signature, body, ..
+            signature, block, ..
         } = entry.kind
         else {
             panic!("entry should be represented as a function item");
@@ -210,8 +210,7 @@ mod upper_phase_integration {
             .expect("function item should link to a definition");
 
         assert_eq!(names[entry_def].kind, DefKind::Fn);
-        assert_eq!(repr[body].kind, BodyKind::Block);
-        assert_eq!(repr[body].scope, names[entry_def].scopes.body);
+        assert_eq!(repr[block].scope, names[entry_def].scopes.body);
         assert!(repr[signature]
             .types
             .iter()

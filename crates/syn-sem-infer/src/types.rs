@@ -396,19 +396,10 @@ impl<'cx> Index<TypeId> for InferDb<'cx> {
     }
 }
 
-/// Stable identity for one inference type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TypeId(usize);
-
-impl TypeId {
-    /// Creates an id from a raw index.
-    pub(crate) const fn new(index: usize) -> Self {
-        Self(index)
-    }
-
-    /// Returns the raw index represented by this id.
-    pub(crate) const fn index(self) -> usize {
-        self.0
+syn_sem_macros::define_id! {
+    {
+        /// Stable identity for one inference type.
+        pub(crate) TypeId
     }
 }
 
@@ -487,8 +478,8 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub(crate) fn from_repr_path(path: &pr::TypePathValue<'_>) -> Option<Self> {
-        let [segment] = path.segments.as_slice() else {
+    pub(crate) fn from_repr_path(path: &[pr::PathSegment<'_>]) -> Option<Self> {
+        let [segment] = path else {
             return None;
         };
         if !segment.args.is_empty() {

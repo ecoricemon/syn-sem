@@ -10,6 +10,7 @@ repository = "https://github.com/ecoricemon/syn-sem"
 [dependencies]
 syn-sem-ast = { workspace = true }
 syn-sem-common = { workspace = true }
+syn-sem-macros = { workspace = true }
 syn = { workspace = true, features = ["full", "extra-traits"] }
 
 [dev-dependencies]

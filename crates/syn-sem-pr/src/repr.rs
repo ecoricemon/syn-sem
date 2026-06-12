@@ -1,4 +1,6 @@
 use std::ops::{Index, IndexMut};
+
+use crate::{AssocItemId, BlockId, FieldId, FileId, ItemId, SignatureId, TypeId, VariantId};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
 use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
@@ -50,7 +52,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
         let source_visibility = item_source_visibility(item);
-        let kind = self.collect_item_kind(id, item, parent_scope, def);
+        let kind = self.collect_item_kind(item, parent_scope, def);
 
         self.repr.add_item(Item {
             id,
@@ -81,7 +83,6 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
 
     fn collect_item_kind(
         &mut self,
-        id: ItemId,
         item: &'cx ast::Item<'cx>,
         parent_scope: Option<ScopeId>,
         def: Option<DefId>,
@@ -90,12 +91,10 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match item {
             ast::Item::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
-                let body = self.collect_body(
-                    BodyOwner::Item(id),
-                    def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Expr,
-                );
-                ItemKind::Const { ty, body }
+                ItemKind::Const {
+                    ty,
+                    init: SourceExpr,
+                }
             }
             ast::Item::Enum(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
@@ -110,20 +109,23 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 let generics = self.collect_generics(&item.sig.generics, type_scope);
                 let signature =
                     self.collect_signature(SignatureSource::ItemFn, &item.sig, type_scope);
-                let body = self.collect_body(
-                    BodyOwner::Item(id),
+                let block = self.collect_block(
+                    &item.block,
                     def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Block,
                 );
                 ItemKind::Fn {
                     generics,
                     signature,
-                    body,
+                    block,
                 }
             }
             ast::Item::Impl(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
                 let self_ty = self.collect_type(item.self_ty, type_scope, TypeSource::ImplSelf);
+                let trait_ = item
+                    .trait_
+                    .as_ref()
+                    .map(|path| self.collect_type_path(path, type_scope));
                 let items = item
                     .items
                     .iter()
@@ -131,7 +133,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .collect();
                 ItemKind::Impl {
                     generics,
-                    trait_: item.trait_.as_ref().map(Path::from_ast),
+                    trait_,
                     self_ty,
                     items,
                 }
@@ -203,10 +205,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .collect(),
                 None,
             ),
-            ast::VariantKind::Discriminant(_) => (
-                Vec::new(),
-                Some(self.collect_body(BodyOwner::Variant(id), None, BodyKind::Expr)),
-            ),
+            ast::VariantKind::Discriminant(_) => (Vec::new(), Some(SourceExpr)),
             ast::VariantKind::Unit => (Vec::new(), None),
         };
         self.repr.add_variant(Variant {
@@ -247,22 +246,19 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::ImplItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                let body = self.collect_body(
-                    BodyOwner::AssocItem(id),
-                    def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Expr,
-                );
-                AssocItemKind::ImplConst { ty, body }
+                AssocItemKind::ImplConst {
+                    ty,
+                    init: SourceExpr,
+                }
             }
             ast::ImplItem::Fn(item) => {
                 let signature =
                     self.collect_signature(SignatureSource::ImplFn, &item.sig, type_scope);
-                let body = self.collect_body(
-                    BodyOwner::AssocItem(id),
+                let block = self.collect_block(
+                    &item.block,
                     def.and_then(|def| self.names.def_body_scope(def)),
-                    BodyKind::Block,
                 );
-                AssocItemKind::ImplFn { signature, body }
+                AssocItemKind::ImplFn { signature, block }
             }
             ast::ImplItem::Type(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocTypeValue);
@@ -289,24 +285,14 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::TraitItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                let default = item.default.map(|_| {
-                    self.collect_body(
-                        BodyOwner::AssocItem(id),
-                        def.and_then(|def| self.names.def_body_scope(def)),
-                        BodyKind::Expr,
-                    )
-                });
+                let default = item.default.map(|_| SourceExpr);
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
                 let signature =
                     self.collect_signature(SignatureSource::TraitFn, &item.sig, type_scope);
-                let default = item.default.as_ref().map(|_| {
-                    self.collect_body(
-                        BodyOwner::AssocItem(id),
-                        def.and_then(|def| self.names.def_body_scope(def)),
-                        BodyKind::Block,
-                    )
+                let default = item.default.as_ref().map(|block| {
+                    self.collect_block(block, def.and_then(|def| self.names.def_body_scope(def)))
                 });
                 AssocItemKind::TraitFn { signature, default }
             }
@@ -433,9 +419,9 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 len: ArrayLen::SourceExpr,
             },
             ast::Type::Infer(_) => TypeKind::Infer,
-            ast::Type::Path(ty) => TypeKind::Path(TypePath {
+            ast::Type::Path(ty) => TypeKind::Path(Path {
                 qself: self.collect_type_qself(ty.qself.as_ref(), &ty.path, scope),
-                path: self.collect_type_path(&ty.path, scope),
+                segments: self.collect_type_path(&ty.path, scope),
             }),
             ast::Type::Reference(ty) => TypeKind::Reference {
                 elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
@@ -472,40 +458,34 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         position: usize,
         path: &'cx ast::Path<'cx>,
         scope: Option<ScopeId>,
-    ) -> Option<TypePathValue<'cx>> {
+    ) -> Vec<PathSegment<'cx>> {
         if position == 0 {
-            return None;
+            return Vec::new();
         }
-        Some(TypePathValue {
-            segments: path
-                .segments
-                .iter()
-                .take(position)
-                .map(|segment| self.collect_type_path_segment(segment, scope))
-                .collect(),
-        })
+        path.segments
+            .iter()
+            .take(position)
+            .map(|segment| self.collect_type_path_segment(segment, scope))
+            .collect()
     }
 
     fn collect_type_path(
         &mut self,
         path: &'cx ast::Path<'cx>,
         scope: Option<ScopeId>,
-    ) -> TypePathValue<'cx> {
-        TypePathValue {
-            segments: path
-                .segments
-                .iter()
-                .map(|segment| self.collect_type_path_segment(segment, scope))
-                .collect(),
-        }
+    ) -> Vec<PathSegment<'cx>> {
+        path.segments
+            .iter()
+            .map(|segment| self.collect_type_path_segment(segment, scope))
+            .collect()
     }
 
     fn collect_type_path_segment(
         &mut self,
         segment: &'cx ast::PathSegment<'cx>,
         scope: Option<ScopeId>,
-    ) -> TypePathSegment<'cx> {
-        TypePathSegment {
+    ) -> PathSegment<'cx> {
+        PathSegment {
             name: segment.ident.inner,
             args: self.collect_generic_args(&segment.args, scope),
         }
@@ -553,14 +533,9 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             .or(fallback)
     }
 
-    fn collect_body(&mut self, owner: BodyOwner, scope: Option<ScopeId>, kind: BodyKind) -> BodyId {
-        let id = self.repr.next_body_id();
-        self.repr.add_body(Body {
-            id,
-            owner,
-            scope,
-            kind,
-        });
+    fn collect_block(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) -> BlockId {
+        let id = self.repr.next_block_id();
+        self.repr.add_block(Block { id, block, scope });
         id
     }
 
@@ -597,7 +572,7 @@ pub struct ProgramRepr<'cx> {
     fields: Vec<Field<'cx>>,
     variants: Vec<Variant<'cx>>,
     assoc_items: Vec<AssocItem<'cx>>,
-    bodies: Vec<Body>,
+    blocks: Vec<Block<'cx>>,
     types: Vec<Type<'cx>>,
 }
 
@@ -632,9 +607,9 @@ impl<'cx> ProgramRepr<'cx> {
         &self.assoc_items
     }
 
-    /// Returns all represented body entries.
-    pub fn bodies(&self) -> &[Body] {
-        &self.bodies
+    /// Returns all represented braced source blocks.
+    pub fn blocks(&self) -> &[Block<'cx>] {
+        &self.blocks
     }
 
     /// Returns all represented source types.
@@ -702,14 +677,14 @@ impl<'cx> ProgramRepr<'cx> {
         self.assoc_items.push(item);
     }
 
-    fn next_body_id(&self) -> BodyId {
-        BodyId::new(self.bodies.len())
+    fn next_block_id(&self) -> BlockId {
+        BlockId::new(self.blocks.len())
     }
 
-    fn add_body(&mut self, body: Body) {
-        let id = body.id;
-        assert_eq!(id, self.next_body_id());
-        self.bodies.push(body);
+    fn add_block(&mut self, block: Block<'cx>) {
+        let id = block.id;
+        assert_eq!(id, self.next_block_id());
+        self.blocks.push(block);
     }
 
     fn next_type_id(&self) -> TypeId {
@@ -777,11 +752,11 @@ impl<'cx> Index<AssocItemId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<BodyId> for ProgramRepr<'cx> {
-    type Output = Body;
+impl<'cx> Index<BlockId> for ProgramRepr<'cx> {
+    type Output = Block<'cx>;
 
-    fn index(&self, id: BodyId) -> &Self::Output {
-        &self.bodies[id.index()]
+    fn index(&self, id: BlockId) -> &Self::Output {
+        &self.blocks[id.index()]
     }
 }
 
@@ -828,8 +803,8 @@ pub enum ItemKind<'cx> {
     Const {
         /// Constant type.
         ty: TypeId,
-        /// Initializer body.
-        body: BodyId,
+        /// Initializer expression.
+        init: SourceExpr,
     },
     /// Enum item.
     Enum {
@@ -844,15 +819,15 @@ pub enum ItemKind<'cx> {
         generics: Generics<'cx>,
         /// Represented signature.
         signature: SignatureId,
-        /// Function body.
-        body: BodyId,
+        /// Function body block.
+        block: BlockId,
     },
     /// Implementation block.
     Impl {
         /// Source generics.
         generics: Generics<'cx>,
         /// Implemented trait path, if this is a trait impl.
-        trait_: Option<Path<'cx>>,
+        trait_: Option<Vec<PathSegment<'cx>>>,
         /// Implementing self type.
         self_ty: TypeId,
         /// Represented associated items.
@@ -947,7 +922,7 @@ pub enum TypeParamBound<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitBound<'cx> {
     /// Trait path.
-    pub path: TypePathValue<'cx>,
+    pub path: Vec<PathSegment<'cx>>,
 }
 
 /// Source where-clause shape before predicate lowering exists.
@@ -1014,8 +989,8 @@ pub struct Variant<'cx> {
     pub name: Name<'cx>,
     /// Represented payload fields.
     pub fields: Vec<FieldId>,
-    /// Discriminant body, if present.
-    pub discriminant: Option<BodyId>,
+    /// Discriminant expression, if present.
+    pub discriminant: Option<SourceExpr>,
 }
 
 /// One represented associated item declaration.
@@ -1038,15 +1013,15 @@ pub enum AssocItemKind {
     ImplConst {
         /// Associated const type.
         ty: TypeId,
-        /// Initializer body.
-        body: BodyId,
+        /// Initializer expression.
+        init: SourceExpr,
     },
     /// Impl associated function.
     ImplFn {
         /// Represented signature.
         signature: SignatureId,
-        /// Function body.
-        body: BodyId,
+        /// Function body block.
+        block: BlockId,
     },
     /// Impl associated type.
     ImplType {
@@ -1057,15 +1032,15 @@ pub enum AssocItemKind {
     TraitConst {
         /// Associated const type.
         ty: TypeId,
-        /// Optional default body.
-        default: Option<BodyId>,
+        /// Optional default expression.
+        default: Option<SourceExpr>,
     },
     /// Trait associated function.
     TraitFn {
         /// Represented signature.
         signature: SignatureId,
-        /// Optional default body.
-        default: Option<BodyId>,
+        /// Optional default body block.
+        default: Option<BlockId>,
     },
     /// Trait associated type.
     TraitType {
@@ -1080,19 +1055,22 @@ pub enum SourceVisibility<'cx> {
     /// Public visibility.
     Public,
     /// Restricted visibility path, such as `crate` or `foo::bar`.
-    Restricted(Path<'cx>),
+    Restricted(VisibilityPath<'cx>),
     /// Inherited private visibility.
     Private,
 }
 
-/// Source path represented without depending on the AST crate.
+/// Generic-argument-free source path used by restricted visibility.
+///
+/// Rust visibility restrictions such as `pub(crate)` and `pub(in a::b)` accept plain path
+/// segments, not generic arguments, so this intentionally stores names only.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Path<'cx> {
+pub struct VisibilityPath<'cx> {
     /// Path segment names in source order.
     pub segments: Vec<Name<'cx>>,
 }
 
-impl<'cx> Path<'cx> {
+impl<'cx> VisibilityPath<'cx> {
     fn from_ast(path: &ast::Path<'cx>) -> Self {
         Self {
             segments: path
@@ -1108,7 +1086,7 @@ impl<'cx> SourceVisibility<'cx> {
     fn from_ast(visibility: &ast::Visibility<'cx>) -> Self {
         match visibility {
             ast::Visibility::Public(_) => Self::Public,
-            ast::Visibility::Restricted(path) => Self::Restricted(Path::from_ast(path)),
+            ast::Visibility::Restricted(path) => Self::Restricted(VisibilityPath::from_ast(path)),
             ast::Visibility::Private => Self::Private,
         }
     }
@@ -1128,38 +1106,20 @@ fn item_source_visibility<'cx>(item: &'cx ast::Item<'cx>) -> SourceVisibility<'c
     }
 }
 
-/// One source body entry.
+/// One braced source block.
 #[derive(Debug)]
-pub struct Body {
-    /// Body id in the representation.
-    pub id: BodyId,
-    /// Owner of this body.
-    pub owner: BodyOwner,
-    /// Scope containing body-local bindings, if linked from the current name-resolution data.
+pub struct Block<'cx> {
+    /// Block id in the representation.
+    pub id: BlockId,
+    /// Original semantic AST block.
+    pub block: &'cx ast::Block<'cx>,
+    /// Scope containing block-local bindings, if linked from the current name-resolution data.
     pub scope: Option<ScopeId>,
-    /// Source body kind.
-    pub kind: BodyKind,
 }
 
-/// Owner of one source body.
+/// Source expression that is not represented natively yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyOwner {
-    /// Body owned by an item.
-    Item(ItemId),
-    /// Body owned by an associated item.
-    AssocItem(AssocItemId),
-    /// Body owned by an enum variant discriminant.
-    Variant(VariantId),
-}
-
-/// Source kind for a body entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyKind {
-    /// Block body.
-    Block,
-    /// Expression body.
-    Expr,
-}
+pub struct SourceExpr;
 
 /// One source type occurrence.
 #[derive(Debug)]
@@ -1189,7 +1149,7 @@ pub enum TypeKind<'cx> {
     /// Inferred type placeholder.
     Infer,
     /// Path type.
-    Path(TypePath<'cx>),
+    Path(Path<'cx>),
     /// Borrowed reference type.
     Reference {
         /// Referenced type.
@@ -1209,17 +1169,17 @@ pub enum TypeKind<'cx> {
     },
 }
 
-/// Representation-native path type.
+/// Representation-native source path in type position.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypePath<'cx> {
+pub struct Path<'cx> {
     /// Qualified self type, when the source type used qualified path syntax.
     pub qself: Option<QSelf<'cx>>,
-    /// Path naming the type.
+    /// Path segments naming the type.
     ///
     /// For qualified paths, this remains the full source path after `as`; for example,
     /// `<T as a::b::Trait>::Assoc` stores `a::b::Trait::Assoc` here, while `qself.trait_path`
     /// stores only `a::b::Trait`.
-    pub path: TypePathValue<'cx>,
+    pub segments: Vec<PathSegment<'cx>>,
 }
 
 /// Representation-native qualified self type.
@@ -1227,20 +1187,15 @@ pub struct TypePath<'cx> {
 pub struct QSelf<'cx> {
     /// Self type: `T` in `<T as a::b::Trait>::Assoc`.
     pub self_ty: TypeId,
-    /// Optional trait path: `a::b::Trait` in `<T as a::b::Trait>::Assoc`.
-    pub trait_path: Option<TypePathValue<'cx>>,
-}
-
-/// Representation-native type path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypePathValue<'cx> {
-    /// Path segments in source order.
-    pub segments: Vec<TypePathSegment<'cx>>,
+    /// Trait path segments: `a::b::Trait` in `<T as a::b::Trait>::Assoc`.
+    ///
+    /// This is empty when the source used `<T>::Assoc` without an explicit trait path.
+    pub trait_path: Vec<PathSegment<'cx>>,
 }
 
 /// One representation-native type path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypePathSegment<'cx> {
+pub struct PathSegment<'cx> {
     /// Segment name.
     pub name: Name<'cx>,
     /// Generic arguments on this segment.
@@ -1324,66 +1279,6 @@ pub enum TypeSource {
     Nested,
 }
 
-macro_rules! id_type {
-    ($(#[$meta:meta])* $name:ident) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(usize);
-
-        impl $name {
-            /// Creates an id from a raw index.
-            pub const fn new(index: usize) -> Self {
-                Self(index)
-            }
-
-            /// Returns the raw index represented by this id.
-            pub const fn index(self) -> usize {
-                self.0
-            }
-        }
-    };
-}
-
-id_type! {
-    /// Stable identity for one represented source file.
-    FileId
-}
-
-id_type! {
-    /// Stable identity for one represented item declaration.
-    ItemId
-}
-
-id_type! {
-    /// Stable identity for one represented function-like signature.
-    SignatureId
-}
-
-id_type! {
-    /// Stable identity for one represented field declaration.
-    FieldId
-}
-
-id_type! {
-    /// Stable identity for one represented enum variant declaration.
-    VariantId
-}
-
-id_type! {
-    /// Stable identity for one represented associated item declaration.
-    AssocItemId
-}
-
-id_type! {
-    /// Stable identity for one source body entry.
-    BodyId
-}
-
-id_type! {
-    /// Stable identity for one source type occurrence.
-    TypeId
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1445,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_items_signatures_and_body_handles() {
+    fn builds_items_signatures_and_block_handles() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1457,17 +1352,17 @@ mod tests {
         assert_eq!(model.files().len(), 1);
         assert_eq!(model.items().len(), 2);
         assert_eq!(model.signatures().len(), 1);
-        assert_eq!(model.bodies().len(), 2);
+        assert_eq!(model.blocks().len(), 1);
         assert!(model.types().len() >= 3);
 
         let ItemKind::Fn {
-            signature, body, ..
+            signature, block, ..
         } = model[model.files()[0].items[0]].kind
         else {
             panic!("expected function item");
         };
         assert_eq!(model[signature].types.len(), 2);
-        assert!(matches!(model[body].kind, BodyKind::Block));
+        assert_eq!(model[block].block.stmts.len(), 1);
     }
 
     #[test]
@@ -1580,8 +1475,9 @@ mod tests {
             panic!("expected impl item");
         };
         let trait_ = trait_.as_ref().expect("expected trait path");
-        assert_eq!(trait_.segments.len(), 1);
-        assert_eq!(trait_.segments[0].as_ref(), "Tr");
+        assert_eq!(trait_.len(), 1);
+        assert_eq!(trait_[0].name.as_ref(), "Tr");
+        assert!(trait_[0].args.is_empty());
 
         let public_field = model
             .fields()
@@ -1609,6 +1505,43 @@ mod tests {
             .map(|item| item.name.as_ref())
             .collect();
         assert_eq!(assoc_names, ["Item", "Item"]);
+    }
+
+    #[test]
+    fn represents_impl_trait_path_generic_arguments() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            trait Generic<T> {}
+            struct S;
+            impl Generic<usize> for S {}
+            "#,
+        );
+
+        let impl_item = model
+            .items()
+            .iter()
+            .find(|item| matches!(item.kind, ItemKind::Impl { .. }))
+            .expect("expected generic impl item");
+        let ItemKind::Impl {
+            trait_: Some(trait_),
+            ..
+        } = &impl_item.kind
+        else {
+            panic!("expected trait impl item");
+        };
+        assert_eq!(trait_.len(), 1);
+        assert_eq!(trait_[0].name.as_ref(), "Generic");
+        let [GenericArgument::Type(arg)] = trait_[0].args.as_slice() else {
+            panic!("expected generic trait argument");
+        };
+        let TypeKind::Path(path) = &model[*arg].kind else {
+            panic!("expected generic trait argument type path");
+        };
+        assert_eq!(path.segments[0].name.as_ref(), "usize");
     }
 
     #[test]
@@ -1652,33 +1585,29 @@ mod tests {
 
         for item in model.assoc_items() {
             match item.kind {
-                AssocItemKind::ImplConst { ty, body, .. } => {
+                AssocItemKind::ImplConst { ty, init, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    assert_eq!(model[body].owner, BodyOwner::AssocItem(item.id));
+                    assert_eq!(init, SourceExpr);
                 }
                 AssocItemKind::ImplFn {
-                    signature, body, ..
+                    signature, block, ..
                 } => {
                     assert!(matches!(model[signature].source, SignatureSource::ImplFn));
-                    assert_eq!(model[body].owner, BodyOwner::AssocItem(item.id));
-                    assert!(matches!(model[body].kind, BodyKind::Block));
+                    assert_eq!(model[block].block.stmts.len(), 1);
                 }
                 AssocItemKind::ImplType { ty, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocTypeValue);
                 }
                 AssocItemKind::TraitConst { ty, default, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    let default = default.expect("trait const default should create a body");
-                    assert_eq!(model[default].owner, BodyOwner::AssocItem(item.id));
-                    assert!(matches!(model[default].kind, BodyKind::Expr));
+                    assert_eq!(default, Some(SourceExpr));
                 }
                 AssocItemKind::TraitFn {
                     signature, default, ..
                 } => {
                     assert!(matches!(model[signature].source, SignatureSource::TraitFn));
-                    let default = default.expect("trait fn default should create a body");
-                    assert_eq!(model[default].owner, BodyOwner::AssocItem(item.id));
-                    assert!(matches!(model[default].kind, BodyKind::Block));
+                    let default = default.expect("trait fn default should create a block");
+                    assert_eq!(model[default].block.stmts.len(), 1);
                 }
                 AssocItemKind::TraitType { default, .. } => {
                     let default = default.expect("trait type default should create a type");
@@ -1769,11 +1698,11 @@ mod tests {
         let TypeKind::Path(path) = &field_type.kind else {
             panic!("expected path type");
         };
-        assert_eq!(path.path.segments.len(), 3);
-        assert_eq!(path.path.segments[0].name.as_ref(), "std");
-        assert_eq!(path.path.segments[1].name.as_ref(), "collections");
+        assert_eq!(path.segments.len(), 3);
+        assert_eq!(path.segments[0].name.as_ref(), "std");
+        assert_eq!(path.segments[1].name.as_ref(), "collections");
 
-        let last = &path.path.segments[2];
+        let last = &path.segments[2];
         assert_eq!(last.name.as_ref(), "HashMap");
         assert_eq!(last.args.len(), 2);
         assert!(matches!(last.args[0], GenericArgument::Type(_)));
@@ -1784,9 +1713,9 @@ mod tests {
         let TypeKind::Path(iter_path) = &model[iter_ty].kind else {
             panic!("expected nested iterator path type");
         };
-        assert_eq!(iter_path.path.segments[0].name.as_ref(), "Iterator");
+        assert_eq!(iter_path.segments[0].name.as_ref(), "Iterator");
         assert!(matches!(
-            iter_path.path.segments[0].args[0],
+            iter_path.segments[0].args[0],
             GenericArgument::AssocType { .. }
         ));
     }
@@ -1818,21 +1747,18 @@ mod tests {
         let TypeKind::Path(self_ty) = &model[qself.self_ty].kind else {
             panic!("expected qself self type to be a path");
         };
-        let trait_path = qself
-            .trait_path
-            .as_ref()
-            .expect("expected qself trait path");
+        let trait_path = &qself.trait_path;
 
-        assert_eq!(self_ty.path.segments[0].name.as_ref(), "T");
-        assert_eq!(trait_path.segments.len(), 3);
-        assert_eq!(trait_path.segments[0].name.as_ref(), "a");
-        assert_eq!(trait_path.segments[1].name.as_ref(), "b");
-        assert_eq!(trait_path.segments[2].name.as_ref(), "Trait");
-        assert_eq!(path.path.segments.len(), 4);
-        assert_eq!(path.path.segments[0].name.as_ref(), "a");
-        assert_eq!(path.path.segments[1].name.as_ref(), "b");
-        assert_eq!(path.path.segments[2].name.as_ref(), "Trait");
-        assert_eq!(path.path.segments[3].name.as_ref(), "Item");
+        assert_eq!(self_ty.segments[0].name.as_ref(), "T");
+        assert_eq!(trait_path.len(), 3);
+        assert_eq!(trait_path[0].name.as_ref(), "a");
+        assert_eq!(trait_path[1].name.as_ref(), "b");
+        assert_eq!(trait_path[2].name.as_ref(), "Trait");
+        assert_eq!(path.segments.len(), 4);
+        assert_eq!(path.segments[0].name.as_ref(), "a");
+        assert_eq!(path.segments[1].name.as_ref(), "b");
+        assert_eq!(path.segments[2].name.as_ref(), "Trait");
+        assert_eq!(path.segments[3].name.as_ref(), "Item");
     }
 
     #[test]
@@ -1854,12 +1780,12 @@ mod tests {
         let TypeParamBound::Trait(bound) = &param.bounds[0] else {
             panic!("expected trait bound");
         };
-        assert_eq!(bound.path.segments.len(), 1);
-        assert_eq!(bound.path.segments[0].name.as_ref(), "Iterator");
+        assert_eq!(bound.path.len(), 1);
+        assert_eq!(bound.path[0].name.as_ref(), "Iterator");
     }
 
     #[test]
-    fn covers_body_owners_and_kinds() {
+    fn covers_block_handles_and_source_expr_placeholders() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1880,20 +1806,37 @@ mod tests {
             "#,
         );
 
-        assert!(model.bodies().iter().any(|body| {
-            matches!(body.owner, BodyOwner::Item(_)) && matches!(body.kind, BodyKind::Expr)
+        assert_eq!(model.blocks().len(), 3);
+        assert!(model.items().iter().any(|item| {
+            matches!(
+                item.kind,
+                ItemKind::Const {
+                    init: SourceExpr,
+                    ..
+                }
+            )
         }));
-        assert!(model.bodies().iter().any(|body| {
-            matches!(body.owner, BodyOwner::Item(_)) && matches!(body.kind, BodyKind::Block)
+        assert!(model
+            .variants()
+            .iter()
+            .any(|variant| { variant.discriminant == Some(SourceExpr) }));
+        assert!(model.assoc_items().iter().any(|item| {
+            matches!(
+                item.kind,
+                AssocItemKind::ImplConst {
+                    init: SourceExpr,
+                    ..
+                }
+            )
         }));
-        assert!(model.bodies().iter().any(|body| {
-            matches!(body.owner, BodyOwner::Variant(_)) && matches!(body.kind, BodyKind::Expr)
-        }));
-        assert!(model.bodies().iter().any(|body| {
-            matches!(body.owner, BodyOwner::AssocItem(_)) && matches!(body.kind, BodyKind::Expr)
-        }));
-        assert!(model.bodies().iter().any(|body| {
-            matches!(body.owner, BodyOwner::AssocItem(_)) && matches!(body.kind, BodyKind::Block)
+        assert!(model.assoc_items().iter().any(|item| {
+            matches!(
+                item.kind,
+                AssocItemKind::TraitConst {
+                    default: Some(SourceExpr),
+                    ..
+                }
+            )
         }));
     }
 
@@ -1954,12 +1897,10 @@ mod tests {
             .collect();
         assert!(variant_field_counts.contains(&0));
         assert!(variant_field_counts.contains(&1));
-        assert!(model.variants().iter().any(|variant| {
-            matches!(
-                variant.discriminant,
-                Some(body) if model[body].owner == BodyOwner::Variant(variant.id)
-            )
-        }));
+        assert!(model
+            .variants()
+            .iter()
+            .any(|variant| { variant.discriminant == Some(SourceExpr) }));
     }
 
     #[test]
