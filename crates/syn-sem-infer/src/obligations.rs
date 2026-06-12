@@ -36,6 +36,45 @@ pub struct AssocTypeImplFact {
     pub value_ty: TypeId,
 }
 
+/// Impl self type pattern matched against a projection self type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImplSelfMatch {
+    /// Self type from the projection, such as `Vec<u32>`.
+    pub projection_self_ty: TypeId,
+    /// Self type from the impl header, such as `Vec<T>`.
+    pub impl_self_ty: TypeId,
+}
+
+/// Generic type binding discovered while matching an impl self type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeBindingFact {
+    /// Self type from the projection, such as `Vec<u32>`.
+    pub projection_self_ty: TypeId,
+    /// Self type from the impl header, such as `Vec<T>`.
+    pub impl_self_ty: TypeId,
+    /// Generic type occurrence from the impl self type, such as `T`.
+    pub generic_ty: TypeId,
+    /// Type argument matched for the generic, such as `u32`.
+    pub arg_ty: TypeId,
+}
+
+/// Type substitution fact used while normalizing associated type projections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeSubstitution {
+    /// Self type from the projection that requested the substitution.
+    pub projection_self_ty: TypeId,
+    /// Self type from the impl header whose value type is substituted.
+    pub impl_self_ty: TypeId,
+    /// Type before substitution, such as `T`.
+    pub value_ty: TypeId,
+    /// Generic type occurrence being substituted, such as `T`.
+    pub generic_ty: TypeId,
+    /// Type argument used for the generic, such as `u32`.
+    pub arg_ty: TypeId,
+    /// Type after substitution, such as `u32`.
+    pub substituted_ty: TypeId,
+}
+
 /// Candidate trait selected for an associated type projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectionCandidate {

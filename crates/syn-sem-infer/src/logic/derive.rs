@@ -1,7 +1,7 @@
 use super::term;
 use crate::{
-    InferDb, PathTypeResolution, ProjectionCandidate, ProjectionMatch, ProjectionNormalization,
-    Type, TypeId,
+    GenericArgument, ImplSelfMatch, InferDb, PathType, PathTypeResolution, ProjectionCandidate,
+    ProjectionMatch, ProjectionNormalization, Type, TypeBindingFact, TypeId, TypeSubstitution,
 };
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
@@ -11,6 +11,8 @@ pub(crate) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &Nam
     let mut logic = LogicCx { ccx, db, names };
     logic.derive_projection_candidates();
     logic.derive_projection_matches();
+    logic.derive_impl_self_matches();
+    logic.derive_type_substitutions();
     logic.derive_projection_normalizations();
 }
 
@@ -95,30 +97,124 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
         self.db.projection_matches.extend(matches);
     }
 
+    fn derive_impl_self_matches(&mut self) {
+        let matches = self.db.projection_matches.clone();
+        let impl_facts = self.db.assoc_type_impl_facts.clone();
+        let mut impl_self_matches = Vec::new();
+        let mut type_bindings = Vec::new();
+        for projection_match in matches {
+            for impl_fact in &impl_facts {
+                if projection_match.assoc_type != impl_fact.assoc_type
+                    || !self.same_type(projection_match.trait_ty, impl_fact.trait_ty)
+                {
+                    continue;
+                }
+                let Some(bindings) =
+                    self.type_bindings(projection_match.self_ty, impl_fact.impl_self_ty)
+                else {
+                    continue;
+                };
+                let match_ = ImplSelfMatch {
+                    projection_self_ty: projection_match.self_ty,
+                    impl_self_ty: impl_fact.impl_self_ty,
+                };
+                if !impl_self_matches.contains(&match_) {
+                    impl_self_matches.push(match_);
+                }
+                for binding in bindings {
+                    if !type_bindings.contains(&binding) {
+                        type_bindings.push(binding);
+                    }
+                }
+            }
+        }
+        self.db.impl_self_matches.extend(impl_self_matches);
+        self.db.type_binding_facts.extend(type_bindings);
+    }
+
+    fn derive_type_substitutions(&mut self) {
+        let impl_facts = self.db.assoc_type_impl_facts.clone();
+        let bindings = self.db.type_binding_facts.clone();
+        let mut substitutions = Vec::new();
+        for impl_fact in impl_facts {
+            let mut contexts = Vec::new();
+            for binding in bindings
+                .iter()
+                .filter(|binding| binding.impl_self_ty == impl_fact.impl_self_ty)
+            {
+                let context = (binding.projection_self_ty, binding.impl_self_ty);
+                if !contexts.contains(&context) {
+                    contexts.push(context);
+                }
+            }
+
+            for (projection_self_ty, impl_self_ty) in contexts {
+                let impl_bindings = bindings
+                    .iter()
+                    .filter(|binding| {
+                        binding.projection_self_ty == projection_self_ty
+                            && binding.impl_self_ty == impl_self_ty
+                    })
+                    .copied()
+                    .collect::<Vec<_>>();
+                let Some((substituted_ty, used_bindings)) =
+                    self.substitute_type(impl_fact.value_ty, &impl_bindings)
+                else {
+                    continue;
+                };
+                for binding in used_bindings {
+                    let substitution = TypeSubstitution {
+                        projection_self_ty: binding.projection_self_ty,
+                        impl_self_ty: binding.impl_self_ty,
+                        value_ty: impl_fact.value_ty,
+                        generic_ty: binding.generic_ty,
+                        arg_ty: binding.arg_ty,
+                        substituted_ty,
+                    };
+                    if !substitutions.contains(&substitution) {
+                        substitutions.push(substitution);
+                    }
+                }
+            }
+        }
+        self.db.type_substitutions.extend(substitutions);
+    }
+
     fn derive_projection_normalizations(&mut self) {
         let mut logic = ProjectionLogic::new(self.ccx, self.db);
         logic.load_projection_normalizations();
         let matches = self.db.projection_matches.clone();
         let impl_facts = self.db.assoc_type_impl_facts.clone();
+        let substitutions = self.db.type_substitutions.clone();
         let mut normalizations = Vec::new();
         for projection_match in matches {
             for impl_fact in &impl_facts {
-                if logic.proves_normalization(
-                    projection_match.projection,
-                    projection_match.self_ty,
-                    projection_match.assoc_type,
-                    projection_match.trait_ty,
-                    impl_fact.value_ty,
-                ) {
-                    let normalization = ProjectionNormalization {
-                        projection: projection_match.projection,
-                        self_ty: projection_match.self_ty,
-                        assoc_type: projection_match.assoc_type,
-                        trait_ty: projection_match.trait_ty,
-                        value_ty: impl_fact.value_ty,
-                    };
-                    if !normalizations.contains(&normalization) {
-                        normalizations.push(normalization);
+                let substituted_values = substitutions
+                    .iter()
+                    .filter(|substitution| {
+                        substitution.projection_self_ty == projection_match.self_ty
+                            && substitution.impl_self_ty == impl_fact.impl_self_ty
+                            && substitution.value_ty == impl_fact.value_ty
+                    })
+                    .map(|substitution| substitution.substituted_ty);
+                for value_ty in std::iter::once(impl_fact.value_ty).chain(substituted_values) {
+                    if logic.proves_normalization(
+                        projection_match.projection,
+                        projection_match.self_ty,
+                        projection_match.assoc_type,
+                        projection_match.trait_ty,
+                        value_ty,
+                    ) {
+                        let normalization = ProjectionNormalization {
+                            projection: projection_match.projection,
+                            self_ty: projection_match.self_ty,
+                            assoc_type: projection_match.assoc_type,
+                            trait_ty: projection_match.trait_ty,
+                            value_ty,
+                        };
+                        if !normalizations.contains(&normalization) {
+                            normalizations.push(normalization);
+                        }
                     }
                 }
             }
@@ -160,6 +256,230 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
             return None;
         };
         let PathTypeResolution::Nominal(def) = path.resolution else {
+            return None;
+        };
+        Some(def)
+    }
+
+    fn same_type(&self, left: TypeId, right: TypeId) -> bool {
+        left == right || self.db.types[left.index()] == self.db.types[right.index()]
+    }
+
+    fn type_bindings(
+        &self,
+        projection_self_ty: TypeId,
+        impl_self_ty: TypeId,
+    ) -> Option<Vec<TypeBindingFact>> {
+        let projection_path = self.path_type(projection_self_ty)?;
+        let impl_path = self.path_type(impl_self_ty)?;
+        if self.nominal_def(projection_self_ty)? != self.nominal_def(impl_self_ty)? {
+            return None;
+        }
+
+        let [projection_segment] = projection_path.path.segments.as_slice() else {
+            return None;
+        };
+        let [impl_segment] = impl_path.path.segments.as_slice() else {
+            return None;
+        };
+        if projection_segment.args.len() != impl_segment.args.len() {
+            return None;
+        }
+
+        let mut bindings = Vec::new();
+        for (projection_arg, impl_arg) in projection_segment.args.iter().zip(&impl_segment.args) {
+            let GenericArgument::Type(arg_ty) = projection_arg else {
+                return None;
+            };
+            let GenericArgument::Type(generic_ty) = impl_arg else {
+                return None;
+            };
+            self.generic_def(*generic_ty)?;
+            bindings.push(TypeBindingFact {
+                projection_self_ty,
+                impl_self_ty,
+                generic_ty: *generic_ty,
+                arg_ty: *arg_ty,
+            });
+        }
+
+        Some(bindings)
+    }
+
+    fn substitute_type(
+        &mut self,
+        ty: TypeId,
+        bindings: &[TypeBindingFact],
+    ) -> Option<(TypeId, Vec<TypeBindingFact>)> {
+        if let Some(binding) = self.binding_for_generic(ty, bindings) {
+            return Some((binding.arg_ty, vec![binding]));
+        }
+
+        match self.db.types[ty.index()].clone() {
+            Type::Array { elem, len } => {
+                let (elem, used) = self.substitute_type(elem, bindings)?;
+                Some((self.db.intern_type(Type::Array { elem, len }), used))
+            }
+            Type::Infer | Type::Primitive(_) => None,
+            Type::Path(path) => {
+                let (path, used) = self.substitute_path_type(path, bindings)?;
+                Some((self.db.intern_type(Type::Path(path)), used))
+            }
+            Type::Reference { elem, is_mut } => {
+                let (elem, used) = self.substitute_type(elem, bindings)?;
+                Some((self.db.intern_type(Type::Reference { elem, is_mut }), used))
+            }
+            Type::Slice { elem } => {
+                let (elem, used) = self.substitute_type(elem, bindings)?;
+                Some((self.db.intern_type(Type::Slice { elem }), used))
+            }
+            Type::Tuple { elems } => {
+                let (elems, used) = self.substitute_type_ids(elems, bindings);
+                if used.is_empty() {
+                    return None;
+                }
+                Some((self.db.intern_type(Type::Tuple { elems }), used))
+            }
+        }
+    }
+
+    fn substitute_path_type(
+        &self,
+        path: PathType<'cx>,
+        bindings: &[TypeBindingFact],
+    ) -> Option<(PathType<'cx>, Vec<TypeBindingFact>)> {
+        let mut used = Vec::new();
+        let qself = path.qself.map(|qself| {
+            let (self_ty, self_used) = self.substitute_type_id(qself.self_ty, bindings);
+            used.extend(self_used);
+            let trait_ty = qself.trait_ty.map(|trait_ty| {
+                let (trait_ty, trait_used) = self.substitute_type_id(trait_ty, bindings);
+                used.extend(trait_used);
+                trait_ty
+            });
+            crate::QSelf { self_ty, trait_ty }
+        });
+        let segments = path
+            .path
+            .segments
+            .into_iter()
+            .map(|segment| {
+                let args = segment
+                    .args
+                    .into_iter()
+                    .map(|arg| self.substitute_generic_argument(arg, bindings, &mut used))
+                    .collect();
+                crate::PathSegment {
+                    name: segment.name,
+                    args,
+                }
+            })
+            .collect();
+
+        let used = Self::unique_bindings(used);
+        if used.is_empty() {
+            return None;
+        }
+        Some((
+            PathType {
+                qself,
+                path: crate::Path { segments },
+                resolution: path.resolution,
+            },
+            used,
+        ))
+    }
+
+    fn substitute_generic_argument(
+        &self,
+        arg: GenericArgument<'cx>,
+        bindings: &[TypeBindingFact],
+        used: &mut Vec<TypeBindingFact>,
+    ) -> GenericArgument<'cx> {
+        match arg {
+            GenericArgument::Type(ty) => {
+                let (ty, ty_used) = self.substitute_type_id(ty, bindings);
+                used.extend(ty_used);
+                GenericArgument::Type(ty)
+            }
+            GenericArgument::AssocType { name, ty } => {
+                let (ty, ty_used) = self.substitute_type_id(ty, bindings);
+                used.extend(ty_used);
+                GenericArgument::AssocType { name, ty }
+            }
+            GenericArgument::Const(arg) => GenericArgument::Const(arg),
+            GenericArgument::AssocConst { name, value } => {
+                GenericArgument::AssocConst { name, value }
+            }
+            GenericArgument::Constraint { name, bounds } => {
+                GenericArgument::Constraint { name, bounds }
+            }
+            GenericArgument::Unsupported => GenericArgument::Unsupported,
+        }
+    }
+
+    fn substitute_type_ids(
+        &self,
+        tys: Vec<TypeId>,
+        bindings: &[TypeBindingFact],
+    ) -> (Vec<TypeId>, Vec<TypeBindingFact>) {
+        let mut used = Vec::new();
+        let tys = tys
+            .into_iter()
+            .map(|ty| {
+                let (ty, ty_used) = self.substitute_type_id(ty, bindings);
+                used.extend(ty_used);
+                ty
+            })
+            .collect();
+        (tys, Self::unique_bindings(used))
+    }
+
+    fn substitute_type_id(
+        &self,
+        ty: TypeId,
+        bindings: &[TypeBindingFact],
+    ) -> (TypeId, Vec<TypeBindingFact>) {
+        if let Some(binding) = self.binding_for_generic(ty, bindings) {
+            return (binding.arg_ty, vec![binding]);
+        }
+        (ty, Vec::new())
+    }
+
+    fn binding_for_generic(
+        &self,
+        ty: TypeId,
+        bindings: &[TypeBindingFact],
+    ) -> Option<TypeBindingFact> {
+        let generic_def = self.generic_def(ty)?;
+        bindings
+            .iter()
+            .copied()
+            .find(|binding| self.generic_def(binding.generic_ty) == Some(generic_def))
+    }
+
+    fn unique_bindings(bindings: Vec<TypeBindingFact>) -> Vec<TypeBindingFact> {
+        let mut unique = Vec::new();
+        for binding in bindings {
+            if !unique.contains(&binding) {
+                unique.push(binding);
+            }
+        }
+        unique
+    }
+
+    fn path_type(&self, ty: TypeId) -> Option<&PathType<'cx>> {
+        let Type::Path(path) = &self.db.types[ty.index()] else {
+            return None;
+        };
+        Some(path)
+    }
+
+    fn generic_def(&self, ty: TypeId) -> Option<DefId> {
+        let Type::Path(path) = &self.db.types[ty.index()] else {
+            return None;
+        };
+        let PathTypeResolution::GenericParam(def) = path.resolution else {
             return None;
         };
         Some(def)
@@ -214,6 +534,9 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_normalization_rules();
         self.insert_projection_matches();
         self.insert_impl_assoc_types();
+        self.insert_impl_self_matches();
+        self.insert_type_binding_facts();
+        self.insert_type_substitutions();
         self.insert_same_types();
         self.db.commit();
     }
@@ -296,6 +619,24 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn insert_impl_assoc_types(&mut self) {
         for fact in &self.infer.assoc_type_impl_facts {
             self.insert_clause(term::impl_assoc_type_clause(self.ccx, *fact));
+        }
+    }
+
+    fn insert_impl_self_matches(&mut self) {
+        for match_ in &self.infer.impl_self_matches {
+            self.insert_clause(term::impl_self_match_clause(self.ccx, *match_));
+        }
+    }
+
+    fn insert_type_binding_facts(&mut self) {
+        for binding in &self.infer.type_binding_facts {
+            self.insert_clause(term::type_binding_clause(self.ccx, *binding));
+        }
+    }
+
+    fn insert_type_substitutions(&mut self) {
+        for substitution in &self.infer.type_substitutions {
+            self.insert_clause(term::type_substitution_clause(self.ccx, *substitution));
         }
     }
 

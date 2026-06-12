@@ -385,7 +385,10 @@ mod tests {
     use crate::*;
     use syn_sem_ast::{self as ast, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility};
+    use syn_sem_name::{
+        collect::{collect_names, FileInput},
+        AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
+    };
     use syn_sem_pr as pr;
 
     fn infer_types<'cx>(
@@ -418,6 +421,21 @@ mod tests {
         (repr, infer)
     }
 
+    fn infer_collected_types<'cx>(
+        ccx: &'cx CommonCx,
+        scx: &'cx SyntaxCx<'cx>,
+        code: &str,
+    ) -> (pr::ProgramRepr<'cx>, NameDb<'cx>, InferDb<'cx>) {
+        let file_path = ccx.intern("test.rs");
+        let text = ccx.intern(code);
+        scx.parse_virtual_file(file_path, text).unwrap();
+        let file = scx.lookup_source(file_path).unwrap().ast();
+        let names = collect_names([FileInput { file_path, file }], file_path).unwrap();
+        let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
+        let infer = InferDb::analyze(ccx, &repr, &names);
+        (repr, names, infer)
+    }
+
     fn struct_field_path_type<'a, 'cx>(
         repr: &'a pr::ProgramRepr<'cx>,
         infer: &'a InferDb<'cx>,
@@ -436,6 +454,21 @@ mod tests {
             .find(|source| matches!(source.source, pr::TypeSource::StructField))
             .unwrap();
         infer.type_for_repr_type(repr_type.id).unwrap()
+    }
+
+    fn struct_field_repr_types<'cx>(
+        repr: &pr::ProgramRepr<'cx>,
+        struct_name: &str,
+    ) -> Vec<pr::TypeId> {
+        let item = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == struct_name))
+            .expect("struct item should be represented");
+        let pr::ItemKind::Struct { fields, .. } = &item.kind else {
+            panic!("item should be represented as a struct");
+        };
+        fields.iter().map(|field| repr[*field].ty).collect()
     }
 
     fn struct_field_path_resolution<'cx>(
@@ -1004,6 +1037,347 @@ mod tests {
             infer[normalizations[0].value_ty],
             Type::Primitive(PrimitiveType::U32)
         );
+    }
+
+    #[test]
+    fn derives_generic_impl_self_binding_and_substitution() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Output {
+                field: <Vec<u32> as Iterator>::Item,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Output");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Output should have one field type");
+        };
+        let projection = infer.type_for_repr_type(*field_ty).unwrap();
+        let [impl_self_match] = infer.impl_self_matches() else {
+            panic!("generic impl self should match projection self once");
+        };
+        let [binding] = infer.type_binding_facts() else {
+            panic!("generic impl self should create one type binding");
+        };
+        let [substitution] = infer.type_substitutions() else {
+            panic!("generic impl associated type should create one substitution");
+        };
+
+        assert_eq!(
+            binding.projection_self_ty,
+            impl_self_match.projection_self_ty
+        );
+        assert_eq!(binding.impl_self_ty, impl_self_match.impl_self_ty);
+        assert_eq!(substitution.projection_self_ty, binding.projection_self_ty);
+        assert_eq!(substitution.impl_self_ty, binding.impl_self_ty);
+        assert_eq!(substitution.generic_ty, binding.generic_ty);
+        assert_eq!(substitution.arg_ty, binding.arg_ty);
+        assert_eq!(substitution.substituted_ty, binding.arg_ty);
+        assert_eq!(
+            infer.normalized_projection_type(projection),
+            Some(substitution.substituted_ty)
+        );
+        assert_eq!(
+            infer[substitution.substituted_ty],
+            Type::Primitive(PrimitiveType::U32)
+        );
+    }
+
+    #[test]
+    fn derives_selected_substitution_from_multiple_generic_bindings() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Pair<K, V>;
+
+            trait Select {
+                type Output;
+            }
+
+            impl<K, V> Select for Pair<K, V> {
+                type Output = V;
+            }
+
+            struct Result {
+                field: <Pair<u32, bool> as Select>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let [_first_binding, _second_binding] = infer.type_binding_facts() else {
+            panic!("Pair<K, V> should create two type bindings");
+        };
+        let [substitution] = infer.type_substitutions() else {
+            panic!("type Output = V should create one selected substitution");
+        };
+
+        assert!(infer.type_binding_facts().iter().any(|binding| {
+            substitution.projection_self_ty == binding.projection_self_ty
+                && substitution.impl_self_ty == binding.impl_self_ty
+                && substitution.generic_ty == binding.generic_ty
+                && substitution.arg_ty == binding.arg_ty
+        }));
+        assert_eq!(
+            infer.normalized_projection_type_for_repr_type(*field_ty),
+            Some(substitution.substituted_ty)
+        );
+        assert_eq!(
+            infer[substitution.substituted_ty],
+            Type::Primitive(PrimitiveType::Bool)
+        );
+    }
+
+    #[test]
+    fn derives_nested_generic_value_substitution() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Wrap {
+                type Output;
+            }
+
+            impl<T> Wrap for Vec<T> {
+                type Output = Option<T>;
+            }
+
+            struct Result {
+                field: <Vec<u32> as Wrap>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let [_binding] = infer.type_binding_facts() else {
+            panic!("Vec<T> should create one type binding");
+        };
+        let [substitution] = infer.type_substitutions() else {
+            panic!("nested generic associated type should create one substitution");
+        };
+
+        assert_eq!(
+            substitution.projection_self_ty,
+            infer.type_binding_facts()[0].projection_self_ty
+        );
+        assert_eq!(
+            substitution.impl_self_ty,
+            infer.type_binding_facts()[0].impl_self_ty
+        );
+        assert_eq!(
+            infer.normalized_projection_type_for_repr_type(*field_ty),
+            Some(substitution.substituted_ty)
+        );
+        assert_option_of(&infer, substitution.substituted_ty, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn recursively_normalizes_projection_inside_generic_argument() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, mut infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Result {
+                field: Option<<Vec<u32> as Iterator>::Item>,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [field_ty] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let shallow = infer
+            .shallow_normalized_type_for_repr_type(*field_ty)
+            .expect("Result.field type should be lowered");
+        let normalized = infer
+            .normalized_type_for_repr_type(*field_ty)
+            .expect("Result.field type should be lowered");
+
+        assert_ne!(shallow, normalized);
+        assert_option_of(&infer, normalized, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn recursively_normalizes_projection_inside_type_containers() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, mut infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Result {
+                reference: &<Vec<u32> as Iterator>::Item,
+                tuple: (<Vec<u32> as Iterator>::Item, bool),
+                array: [<Vec<u32> as Iterator>::Item; 1],
+                slice_ref: &[<Vec<u32> as Iterator>::Item],
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [reference_ty, tuple_ty, array_ty, slice_ref_ty] = fields.as_slice() else {
+            panic!("Result should have four field types");
+        };
+
+        let reference = infer.normalized_type_for_repr_type(*reference_ty).unwrap();
+        let Type::Reference { elem, is_mut } = infer[reference] else {
+            panic!("reference field should normalize to a reference type");
+        };
+        assert!(!is_mut);
+        assert_primitive_type(&infer, elem, PrimitiveType::U32);
+
+        let tuple = infer.normalized_type_for_repr_type(*tuple_ty).unwrap();
+        let Type::Tuple { elems } = &infer[tuple] else {
+            panic!("tuple field should normalize to a tuple type");
+        };
+        let [first, second] = elems.as_slice() else {
+            panic!("tuple field should have two elements");
+        };
+        assert_primitive_type(&infer, *first, PrimitiveType::U32);
+        assert_primitive_type(&infer, *second, PrimitiveType::Bool);
+
+        let array = infer.normalized_type_for_repr_type(*array_ty).unwrap();
+        let Type::Array { elem, .. } = infer[array] else {
+            panic!("array field should normalize to an array type");
+        };
+        assert_primitive_type(&infer, elem, PrimitiveType::U32);
+
+        let slice_ref = infer.normalized_type_for_repr_type(*slice_ref_ty).unwrap();
+        let Type::Reference { elem: slice, .. } = infer[slice_ref] else {
+            panic!("slice_ref field should normalize to a reference type");
+        };
+        let Type::Slice { elem } = infer[slice] else {
+            panic!("slice_ref element should normalize to a slice type");
+        };
+        assert_primitive_type(&infer, elem, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn keeps_generic_substitutions_tied_to_impl_self_match() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (repr, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Box<T>;
+            struct Option<T>;
+
+            trait Wrap {
+                type Output;
+            }
+
+            impl<T> Wrap for Vec<T> {
+                type Output = Option<T>;
+            }
+
+            impl<U> Wrap for Box<U> {
+                type Output = Option<U>;
+            }
+
+            struct Result {
+                vec_field: <Vec<u32> as Wrap>::Output,
+                box_field: <Box<bool> as Wrap>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_repr_types(&repr, "Result");
+        let [vec_field_ty, box_field_ty] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let [_vec_substitution, _box_substitution] = infer.type_substitutions() else {
+            panic!("each generic impl associated type should create one substitution");
+        };
+
+        for substitution in infer.type_substitutions() {
+            assert!(infer.type_binding_facts().iter().any(|binding| {
+                substitution.projection_self_ty == binding.projection_self_ty
+                    && substitution.impl_self_ty == binding.impl_self_ty
+                    && substitution.generic_ty == binding.generic_ty
+                    && substitution.arg_ty == binding.arg_ty
+            }));
+        }
+        let vec_normalized_ty = infer
+            .normalized_projection_type_for_repr_type(*vec_field_ty)
+            .expect("Vec projection should have one context-matched normalization");
+        let box_normalized_ty = infer
+            .normalized_projection_type_for_repr_type(*box_field_ty)
+            .expect("Box projection should have one context-matched normalization");
+        assert_option_of(&infer, vec_normalized_ty, PrimitiveType::U32);
+        assert_option_of(&infer, box_normalized_ty, PrimitiveType::Bool);
+    }
+
+    fn assert_option_of(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
+        let Type::Path(path) = &infer[ty] else {
+            panic!("normalized projection value should lower to path type");
+        };
+        let [segment] = path.path.segments.as_slice() else {
+            panic!("Option<T> should have one path segment");
+        };
+        assert_eq!(segment.name.as_ref(), "Option");
+        let [GenericArgument::Type(arg)] = segment.args.as_slice() else {
+            panic!("Option<T> should have one type argument");
+        };
+        assert_eq!(infer[*arg], Type::Primitive(expected));
+    }
+
+    fn assert_primitive_type(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
+        assert_eq!(infer[ty], Type::Primitive(expected));
     }
 
     #[test]

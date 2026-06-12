@@ -157,7 +157,7 @@ fn resolve_lexical<'cx>(
 
 mod upper_phase_integration {
     use super::*;
-    use syn_sem_infer::{InferDb, PathTypeResolution, PrimitiveType, ProjectionType, Type};
+    use syn_sem_infer::{GenericArgument, InferDb, PrimitiveType, ProjectionType, Type, TypeId};
     use syn_sem_pr::TypeSource;
 
     // Validates the intended upper-phase consumption pattern:
@@ -245,10 +245,7 @@ mod upper_phase_integration {
         let infer_local_ty = infer
             .type_for_repr_type(local_ty)
             .expect("signature return type should be lowered");
-        let Type::Path(path) = &infer[infer_local_ty] else {
-            panic!("signature return type should lower to path type");
-        };
-        assert_eq!(path.resolution, PathTypeResolution::Nominal(local_def));
+        assert_eq!(infer.nominal_def(infer_local_ty), Some(local_def));
 
         let usize_ty = repr[signature].types[2];
         let infer_usize_ty = infer
@@ -288,10 +285,7 @@ mod upper_phase_integration {
         let infer_t_return_ty = infer
             .type_for_repr_type(t_return_ty)
             .expect("generic return type should be lowered");
-        let Type::Path(path) = &infer[infer_t_return_ty] else {
-            panic!("generic return type should lower to path type");
-        };
-        assert_eq!(path.resolution, PathTypeResolution::GenericParam(t_def));
+        assert_eq!(infer.generic_param_def(infer_t_return_ty), Some(t_def));
     }
 
     #[test]
@@ -339,37 +333,276 @@ mod upper_phase_integration {
         let projection = infer
             .type_for_repr_type(field_ty)
             .expect("Output.field type should be lowered");
-        let Type::Path(path) = &infer[projection] else {
-            panic!("Output.field type should lower to path type");
-        };
-
-        let PathTypeResolution::Projection(ProjectionType {
+        let ProjectionType {
             assoc_type,
             self_ty,
             trait_ty,
-        }) = path.resolution
-        else {
-            let qself = path.qself.expect("qself should be present");
-            panic!(
-                "Output.field should remain a projection path, got {:?} with qself {:?} and trait {:?}",
-                path.resolution,
-                qself,
-                qself.trait_ty.map(|trait_ty| &infer[trait_ty])
-            );
-        };
+        } = infer
+            .projection(projection)
+            .expect("Output.field should remain a projection path");
         assert!(self_ty.is_some());
         assert!(trait_ty.is_some());
-        assert_eq!(names[assoc_type].kind, DefKind::AssocType);
+        assert_eq!(names[*assoc_type].kind, DefKind::AssocType);
 
-        let normalizations = infer
-            .normalizations_for_projection(projection)
-            .collect::<Vec<_>>();
-        let [normalization] = normalizations.as_slice() else {
+        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
             panic!("Output.field projection should have one normalization");
         };
-        let Type::Primitive(primitive) = infer[normalization.value_ty] else {
+        assert_eq!(
+            infer.shallow_normalized_type_for_repr_type(field_ty),
+            Some(normalized_ty)
+        );
+        let Type::Primitive(primitive) = infer[normalized_ty] else {
             panic!("normalized projection value should lower to primitive type");
         };
         assert_eq!(primitive, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn consumes_generic_projection_normalization_query_from_program_repr() {
+        let tcx = TopCx::default();
+        let entry_path = tcx.common.intern("generic_projection_normalization.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Vec<T>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl<T> Iterator for Vec<T> {
+                type Item = T;
+            }
+
+            struct Output {
+                field: <Vec<u32> as Iterator>::Item,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+
+        let output = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Output"))
+            .expect("Output struct should be represented");
+        let ItemKind::Struct { fields, .. } = &output.kind else {
+            panic!("Output should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("Output should have one field");
+        };
+        let field_ty = repr[*field].ty;
+        let projection = infer
+            .type_for_repr_type(field_ty)
+            .expect("Output.field type should be lowered");
+        assert!(infer.projection(projection).is_some());
+
+        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+            panic!("Output.field projection should have one normalization");
+        };
+        assert_eq!(
+            infer.shallow_normalized_type_for_repr_type(field_ty),
+            Some(normalized_ty)
+        );
+        let Type::Primitive(primitive) = infer[normalized_ty] else {
+            panic!("normalized projection value should lower to primitive type");
+        };
+        assert_eq!(primitive, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn normalizes_projection_with_multiple_generic_bindings() {
+        let tcx = TopCx::default();
+        let entry_path = tcx
+            .common
+            .intern("multi_generic_projection_normalization.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Pair<K, V>;
+
+            trait Select {
+                type Output;
+            }
+
+            impl<K, V> Select for Pair<K, V> {
+                type Output = V;
+            }
+
+            struct Result {
+                field: <Pair<u32, bool> as Select>::Output,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+
+        let result = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
+            .expect("Result struct should be represented");
+        let ItemKind::Struct { fields, .. } = &result.kind else {
+            panic!("Result should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("Result should have one field");
+        };
+        let field_ty = repr[*field].ty;
+
+        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+            panic!("Result.field projection should have one normalization");
+        };
+        let Type::Primitive(primitive) = infer[normalized_ty] else {
+            panic!("normalized projection value should lower to primitive type");
+        };
+        assert_eq!(primitive, PrimitiveType::Bool);
+    }
+
+    #[test]
+    fn normalizes_nested_generic_projection_values() {
+        let tcx = TopCx::default();
+        let entry_path = tcx
+            .common
+            .intern("nested_generic_projection_normalization.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Wrap {
+                type Output;
+            }
+
+            impl<T> Wrap for Vec<T> {
+                type Output = Option<T>;
+            }
+
+            struct Result {
+                field: <Vec<u32> as Wrap>::Output,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+
+        let result = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
+            .expect("Result struct should be represented");
+        let ItemKind::Struct { fields, .. } = &result.kind else {
+            panic!("Result should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("Result should have one field");
+        };
+        let field_ty = repr[*field].ty;
+
+        let Some(normalized_ty) = infer.normalized_projection_type_for_repr_type(field_ty) else {
+            panic!("Result.field projection should have one normalization");
+        };
+        let Type::Path(path) = &infer[normalized_ty] else {
+            panic!("normalized projection value should lower to path type");
+        };
+        let [segment] = path.path.segments.as_slice() else {
+            panic!("Option<u32> should have one path segment");
+        };
+        assert_eq!(segment.name.as_ref(), "Option");
+        let [GenericArgument::Type(arg)] = segment.args.as_slice() else {
+            panic!("Option<u32> should have one type argument");
+        };
+        let Type::Primitive(primitive) = infer[*arg] else {
+            panic!("Option argument should lower to primitive type");
+        };
+        assert_eq!(primitive, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn keeps_generic_substitutions_tied_to_impl_self_match() {
+        let tcx = TopCx::default();
+        let entry_path = tcx.common.intern("contextual_projection_substitution.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Vec<T>;
+            struct Box<T>;
+            struct Option<T>;
+
+            trait Wrap {
+                type Output;
+            }
+
+            impl<T> Wrap for Vec<T> {
+                type Output = Option<T>;
+            }
+
+            impl<U> Wrap for Box<U> {
+                type Output = Option<U>;
+            }
+
+            struct Result {
+                vec_field: <Vec<u32> as Wrap>::Output,
+                box_field: <Box<bool> as Wrap>::Output,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+
+        let result = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
+            .expect("Result struct should be represented");
+        let ItemKind::Struct { fields, .. } = &result.kind else {
+            panic!("Result should be represented as a struct item");
+        };
+        let [vec_field, box_field] = fields.as_slice() else {
+            panic!("Result should have two fields");
+        };
+
+        let vec_field_ty = repr[*vec_field].ty;
+        let box_field_ty = repr[*box_field].ty;
+
+        let Some(vec_normalized_ty) = infer.normalized_projection_type_for_repr_type(vec_field_ty)
+        else {
+            panic!("Vec projection should have one context-matched normalization");
+        };
+        assert_option_of(&infer, vec_normalized_ty, PrimitiveType::U32);
+
+        let Some(box_normalized_ty) = infer.normalized_projection_type_for_repr_type(box_field_ty)
+        else {
+            panic!("Box projection should have one context-matched normalization");
+        };
+        assert_option_of(&infer, box_normalized_ty, PrimitiveType::Bool);
+    }
+
+    fn assert_option_of(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
+        let Type::Path(path) = &infer[ty] else {
+            panic!("normalized projection value should lower to path type");
+        };
+        let [segment] = path.path.segments.as_slice() else {
+            panic!("Option<T> should have one path segment");
+        };
+        assert_eq!(segment.name.as_ref(), "Option");
+        let [GenericArgument::Type(arg)] = segment.args.as_slice() else {
+            panic!("Option<T> should have one type argument");
+        };
+        let Type::Primitive(primitive) = infer[*arg] else {
+            panic!("Option argument should lower to primitive type");
+        };
+        assert_eq!(primitive, expected);
     }
 }
