@@ -1,4 +1,3 @@
-use smallvec::SmallVec;
 use std::ops::{Index, IndexMut};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
@@ -516,7 +515,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         &mut self,
         args: &'cx ast::PathArguments<'cx>,
         scope: Option<ScopeId>,
-    ) -> SmallVec<[GenericArgument<'cx>; 2]> {
+    ) -> Vec<GenericArgument<'cx>> {
         args.args()
             .iter()
             .map(|arg| self.collect_generic_arg(arg, scope))
@@ -936,10 +935,6 @@ pub struct ConstParam<'cx> {
 }
 
 /// Representation-native type parameter bound.
-//
-// Allowing `large_enum_variant`: `Trait` is the common bound form. Boxing it would shrink the rare
-// `Unsupported` case but add one heap allocation for each normal trait bound.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
@@ -1182,10 +1177,6 @@ pub struct Type<'cx> {
 }
 
 /// Representation-native source type shape.
-//
-// Allowing `large_enum_variant`: `Path` is the common source type form. Boxing it would shrink
-// scalar variants but add one heap allocation for each normal path type.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind<'cx> {
     /// Fixed-length array type.
@@ -1214,7 +1205,7 @@ pub enum TypeKind<'cx> {
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elems: SmallVec<[TypeId; 4]>,
+        elems: Vec<TypeId>,
     },
 }
 
@@ -1244,7 +1235,7 @@ pub struct QSelf<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypePathValue<'cx> {
     /// Path segments in source order.
-    pub segments: SmallVec<[TypePathSegment<'cx>; 3]>,
+    pub segments: Vec<TypePathSegment<'cx>>,
 }
 
 /// One representation-native type path segment.
@@ -1253,7 +1244,7 @@ pub struct TypePathSegment<'cx> {
     /// Segment name.
     pub name: Name<'cx>,
     /// Generic arguments on this segment.
-    pub args: SmallVec<[GenericArgument<'cx>; 2]>,
+    pub args: Vec<GenericArgument<'cx>>,
 }
 
 /// Representation-native generic argument shape.

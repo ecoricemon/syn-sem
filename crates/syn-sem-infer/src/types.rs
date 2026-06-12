@@ -1,5 +1,7 @@
-use crate::{ProjectionCandidate, ProjectionMatch, ProjectionObligation, TraitBoundFact};
-use smallvec::SmallVec;
+use crate::{
+    AssocTypeImplFact, ProjectionCandidate, ProjectionMatch, ProjectionNormalization,
+    ProjectionObligation, TraitBoundFact,
+};
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map};
 use syn_sem_name::{DefId, NameDb};
@@ -12,8 +14,10 @@ pub struct InferDb<'cx> {
     pub(crate) repr_types: Map<pr::TypeId, TypeId>,
     pub(crate) projection_obligations: Vec<ProjectionObligation>,
     pub(crate) trait_bound_facts: Vec<TraitBoundFact>,
+    pub(crate) assoc_type_impl_facts: Vec<AssocTypeImplFact>,
     pub(crate) projection_candidates: Vec<ProjectionCandidate>,
     pub(crate) projection_matches: Vec<ProjectionMatch>,
+    pub(crate) projection_normalizations: Vec<ProjectionNormalization>,
 }
 
 impl<'cx> InferDb<'cx> {
@@ -47,6 +51,11 @@ impl<'cx> InferDb<'cx> {
         &self.trait_bound_facts
     }
 
+    /// Returns associated type assignments collected from trait impls.
+    pub fn assoc_type_impl_facts(&self) -> &[AssocTypeImplFact] {
+        &self.assoc_type_impl_facts
+    }
+
     /// Returns projection candidates derived from obligations and known trait bounds.
     pub fn projection_candidates(&self) -> &[ProjectionCandidate] {
         &self.projection_candidates
@@ -55,6 +64,21 @@ impl<'cx> InferDb<'cx> {
     /// Returns projections matched against concrete associated type members.
     pub fn projection_matches(&self) -> &[ProjectionMatch] {
         &self.projection_matches
+    }
+
+    /// Returns projections normalized to impl-provided value types.
+    pub fn projection_normalizations(&self) -> &[ProjectionNormalization] {
+        &self.projection_normalizations
+    }
+
+    /// Returns normalization results for one projection type occurrence.
+    pub fn normalizations_for_projection(
+        &self,
+        projection: TypeId,
+    ) -> impl Iterator<Item = &ProjectionNormalization> {
+        self.projection_normalizations
+            .iter()
+            .filter(move |normalization| normalization.projection == projection)
     }
 }
 
@@ -83,10 +107,6 @@ impl TypeId {
 }
 
 /// Type shape used by inference.
-//
-// Allowing `large_enum_variant`: Path types are the common semantic payload here. Boxing `PathType`
-// would shrink scalar variants but add one heap allocation for each normal path type.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type<'cx> {
     /// Fixed-length array type.
@@ -229,7 +249,7 @@ pub enum PathTypeResolution {
     /// Path denotes an associated type projection.
     Projection(ProjectionType),
     /// Multiple candidates matched the path.
-    Ambiguous(SmallVec<[DefId; 2]>),
+    Ambiguous(Vec<DefId>),
     /// No target is known for the path yet.
     Unresolved,
 }
@@ -249,7 +269,7 @@ pub struct ProjectionType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path<'cx> {
     /// Path segments in source order.
-    pub segments: SmallVec<[PathSegment<'cx>; 3]>,
+    pub segments: Vec<PathSegment<'cx>>,
 }
 
 /// One type path segment.
@@ -258,7 +278,7 @@ pub struct PathSegment<'cx> {
     /// Segment name.
     pub name: syn_sem_name::Name<'cx>,
     /// Generic arguments on this segment.
-    pub args: SmallVec<[GenericArgument<'cx>; 2]>,
+    pub args: Vec<GenericArgument<'cx>>,
 }
 
 /// Generic argument shape used by inference.

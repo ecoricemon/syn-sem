@@ -157,7 +157,8 @@ fn resolve_lexical<'cx>(
 
 mod upper_phase_integration {
     use super::*;
-    use syn_sem_infer::{InferDb, PathTypeResolution, PrimitiveType, Type};
+    use syn_sem_infer::{InferDb, PathTypeResolution, PrimitiveType, ProjectionType, Type};
+    use syn_sem_pr::TypeSource;
 
     // Validates the intended upper-phase consumption pattern:
     // traverse source program shape through syn-sem-pr and query definition/scope facts through
@@ -291,5 +292,84 @@ mod upper_phase_integration {
             panic!("generic return type should lower to path type");
         };
         assert_eq!(path.resolution, PathTypeResolution::GenericParam(t_def));
+    }
+
+    #[test]
+    fn consumes_projection_normalization_query_from_program_repr() {
+        let tcx = TopCx::default();
+        let entry_path = tcx.common.intern("projection_normalization.rs");
+        let text = tcx.common.intern(
+            r#"
+            struct Vec;
+
+            trait Iterator {
+                type Item;
+            }
+
+            impl Iterator for Vec {
+                type Item = u32;
+            }
+
+            struct Output {
+                field: <Vec as Iterator>::Item,
+            }
+            "#,
+        );
+
+        tcx.insert_virtual_file(entry_path, text).unwrap();
+        let semantics = tcx.analyze(entry_path).unwrap();
+        let repr = semantics.repr();
+        let names = semantics.names();
+        let infer = InferDb::analyze(&tcx.common, repr, names);
+
+        let output = repr
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "Output"))
+            .expect("Output struct should be represented");
+        let ItemKind::Struct { fields, .. } = &output.kind else {
+            panic!("Output should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("Output should have one field");
+        };
+        let field_ty = repr[*field].ty;
+        assert_eq!(repr[field_ty].source, TypeSource::StructField);
+
+        let projection = infer
+            .type_for_repr_type(field_ty)
+            .expect("Output.field type should be lowered");
+        let Type::Path(path) = &infer[projection] else {
+            panic!("Output.field type should lower to path type");
+        };
+
+        let PathTypeResolution::Projection(ProjectionType {
+            assoc_type,
+            self_ty,
+            trait_ty,
+        }) = path.resolution
+        else {
+            let qself = path.qself.expect("qself should be present");
+            panic!(
+                "Output.field should remain a projection path, got {:?} with qself {:?} and trait {:?}",
+                path.resolution,
+                qself,
+                qself.trait_ty.map(|trait_ty| &infer[trait_ty])
+            );
+        };
+        assert!(self_ty.is_some());
+        assert!(trait_ty.is_some());
+        assert_eq!(names[assoc_type].kind, DefKind::AssocType);
+
+        let normalizations = infer
+            .normalizations_for_projection(projection)
+            .collect::<Vec<_>>();
+        let [normalization] = normalizations.as_slice() else {
+            panic!("Output.field projection should have one normalization");
+        };
+        let Type::Primitive(primitive) = infer[normalization.value_ty] else {
+            panic!("normalized projection value should lower to primitive type");
+        };
+        assert_eq!(primitive, PrimitiveType::U32);
     }
 }

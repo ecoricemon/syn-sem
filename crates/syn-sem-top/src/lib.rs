@@ -5,9 +5,9 @@
 //! `syn-sem-name`.
 
 mod context;
-mod names;
+mod name_inputs;
 mod semantics;
 
 pub use context::*;
-pub(crate) use names::*;
+pub(crate) use name_inputs::*;
 pub use semantics::*;

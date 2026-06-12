@@ -1,24 +1,32 @@
-use crate::{ProjectionCandidate, ProjectionObligation, TraitBoundFact, TypeId};
+use crate::{
+    AssocTypeImplFact, ProjectionCandidate, ProjectionMatch, ProjectionObligation, TraitBoundFact,
+    TypeId,
+};
 use logic_eval::{Clause, Expr, Term};
 use syn_sem_common::{CommonCx, InternedStr};
 use syn_sem_name::DefId;
 
 // In examples below, `tyN` encodes `TypeId::new(N)` and `defN` encodes `DefId::new(N)`.
 const PRED_EXPLICIT_PROJECTION_OBLIGATION: &str = "explicit_projection_obligation";
+const PRED_IMPL_ASSOC_TYPE: &str = "impl_assoc_type";
 const PRED_PROJECTION_OBLIGATION: &str = "projection_obligation";
 const PRED_PROJECTION_CANDIDATE: &str = "projection_candidate";
 const PRED_PROJECTION_MATCH: &str = "projection_match";
+const PRED_PROJECTION_NORMALIZES_TO: &str = "projection_normalizes_to";
 const PRED_SAME_TYPE: &str = "same_type";
 const PRED_TRAIT_MEMBER: &str = "trait_member";
 const PRED_TRAIT_BOUND: &str = "trait_bound";
 
 const VAR_ASSOC: &str = "Assoc";
+const VAR_IMPL_SELF: &str = "ImplSelf";
+const VAR_IMPL_TRAIT: &str = "ImplTrait";
 const VAR_MEMBER_ASSOC: &str = "MemberAssoc";
 const VAR_PROJECTION: &str = "Projection";
 const VAR_REQUESTED_ASSOC: &str = "RequestedAssoc";
 const VAR_SELF: &str = "Self";
 const VAR_SUBJECT: &str = "Subject";
 const VAR_TRAIT: &str = "Trait";
+const VAR_VALUE: &str = "Value";
 
 /// * Rule 0 - `projection_candidate(P, Self, Assoc, Trait) :-
 ///   explicit_projection_obligation(P, Self, Assoc, Trait).`
@@ -111,6 +119,53 @@ pub(super) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'c
     }]
 }
 
+/// * Rule 0 - `projection_normalizes_to(P, Self, Assoc, Trait, Value) :-
+///   projection_match(P, Self, Assoc, Trait),
+///   impl_assoc_type(ImplSelf, ImplTrait, Assoc, Value),
+///   same_type(Self, ImplSelf), same_type(Trait, ImplTrait).`
+///
+/// # Examples
+///
+/// * Code - `<Vec as Iterator>::Item` with `impl Iterator for Vec { type Item = u32; }`
+/// * Output clause - `projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Value) :-
+///   projection_match($Projection, $Self, $Assoc, $Trait),
+///   impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
+///   same_type($Self, $ImplSelf), same_type($Trait, $ImplTrait).`
+pub(super) fn projection_normalization_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
+    [Clause {
+        head: projection_normalizes_to(
+            ccx,
+            var(ccx, VAR_PROJECTION),
+            var(ccx, VAR_SELF),
+            var(ccx, VAR_ASSOC),
+            var(ccx, VAR_TRAIT),
+            var(ccx, VAR_VALUE),
+        ),
+        body: Some(Expr::And(vec![
+            Expr::Term(projection_match(
+                ccx,
+                var(ccx, VAR_PROJECTION),
+                var(ccx, VAR_SELF),
+                var(ccx, VAR_ASSOC),
+                var(ccx, VAR_TRAIT),
+            )),
+            Expr::Term(impl_assoc_type(
+                ccx,
+                var(ccx, VAR_IMPL_SELF),
+                var(ccx, VAR_IMPL_TRAIT),
+                var(ccx, VAR_ASSOC),
+                var(ccx, VAR_VALUE),
+            )),
+            Expr::Term(same_type(ccx, var(ccx, VAR_SELF), var(ccx, VAR_IMPL_SELF))),
+            Expr::Term(same_type(
+                ccx,
+                var(ccx, VAR_TRAIT),
+                var(ccx, VAR_IMPL_TRAIT),
+            )),
+        ])),
+    }]
+}
+
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
 /// * self_ty - Type written as the projection self type, such as `T`
 /// * assoc_type - Definition of the associated type being projected, such as `Trait::Assoc`
@@ -173,6 +228,32 @@ pub(super) fn trait_bound_clause<'cx>(
     }
 }
 
+/// * impl_self_ty - Implementing self type in `impl Trait for Self`
+/// * trait_ty - Implemented trait type in `impl Trait for Self`
+/// * assoc_type - Associated type definition assigned by the impl item
+/// * value_ty - Type assigned by the impl item
+///
+/// # Examples
+///
+/// * Code - `impl Iterator for Vec { type Item = u32; }`
+/// * Input - `impl_self_ty = ty0`, `trait_ty = ty1`, `assoc_type = def2`, `value_ty = ty3`
+/// * Output - `impl_assoc_type(ty0, ty1, def2, ty3).`
+pub(super) fn impl_assoc_type_clause<'cx>(
+    ccx: &'cx CommonCx,
+    fact: AssocTypeImplFact,
+) -> LogicClause<'cx> {
+    Clause {
+        head: impl_assoc_type(
+            ccx,
+            type_id(ccx, fact.impl_self_ty),
+            type_id(ccx, fact.trait_ty),
+            def_id(ccx, fact.assoc_type),
+            type_id(ccx, fact.value_ty),
+        ),
+        body: None,
+    }
+}
+
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
 /// * self_ty - Type written as the projection self type, such as `T`
 /// * assoc_type - Definition requested by the projection path
@@ -194,6 +275,32 @@ pub(super) fn projection_candidate_clause<'cx>(
             type_id(ccx, candidate.self_ty),
             def_id(ccx, candidate.assoc_type),
             type_id(ccx, candidate.trait_ty),
+        ),
+        body: None,
+    }
+}
+
+/// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
+/// * self_ty - Type written as the projection self type, such as `T`
+/// * assoc_type - Associated type definition found inside the candidate trait
+/// * trait_ty - Candidate trait type that provides the associated type
+///
+/// # Examples
+///
+/// * Code - `<T>::Assoc` matched against `Trait::Assoc`
+/// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`
+/// * Output - `projection_match(ty0, ty1, def2, ty3).`
+pub(super) fn projection_match_clause<'cx>(
+    ccx: &'cx CommonCx,
+    match_: ProjectionMatch,
+) -> LogicClause<'cx> {
+    Clause {
+        head: projection_match(
+            ccx,
+            type_id(ccx, match_.projection),
+            type_id(ccx, match_.self_ty),
+            def_id(ccx, match_.assoc_type),
+            type_id(ccx, match_.trait_ty),
         ),
         body: None,
     }
@@ -296,6 +403,35 @@ pub(super) fn projection_match_query<'cx>(
     ))
 }
 
+/// * projection - Type occurrence for the whole projection, such as `<Vec as Iterator>::Item`
+/// * self_ty - Type written as the projection self type, such as `Vec`
+/// * assoc_type - Associated type member used for normalization, such as `Iterator::Item`
+/// * trait_ty - Trait type that provides the associated type, such as `Iterator`
+/// * value_ty - Type assigned by the matching impl item, such as `u32`
+///
+/// # Examples
+///
+/// * Code - can `<Vec as Iterator>::Item` normalize to `u32`?
+/// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`, `value_ty = ty4`
+/// * Output - `Expr::Term(projection_normalizes_to(ty0, ty1, def2, ty3, ty4))`
+pub(super) fn projection_normalization_query<'cx>(
+    ccx: &'cx CommonCx,
+    projection: TypeId,
+    self_ty: TypeId,
+    assoc_type: DefId,
+    trait_ty: TypeId,
+    value_ty: TypeId,
+) -> Expr<LogicAtom<'cx>> {
+    Expr::Term(projection_normalizes_to(
+        ccx,
+        type_id(ccx, projection),
+        type_id(ccx, self_ty),
+        def_id(ccx, assoc_type),
+        type_id(ccx, trait_ty),
+        type_id(ccx, value_ty),
+    ))
+}
+
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
 /// * self_ty - Type written as the projection self type, such as `T`
 /// * assoc_type - Definition of the associated type being projected, such as `Trait::Assoc`
@@ -344,6 +480,32 @@ fn projection_match<'cx>(
     )
 }
 
+/// * projection - Type occurrence for the whole projection, such as `<Vec as Iterator>::Item`
+/// * self_ty - Type written as the projection self type, such as `Vec`
+/// * assoc_type - Associated type member used for normalization, such as `Iterator::Item`
+/// * trait_ty - Trait type that provides the associated type, such as `Iterator`
+/// * value_ty - Type assigned by the matching impl item, such as `u32`
+///
+/// # Examples
+///
+/// * Code - `<Vec as Iterator>::Item` normalized through `impl Iterator for Vec { type Item = u32; }`
+/// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`, `value_ty = ty4`
+/// * Output - `projection_normalizes_to(ty0, ty1, def2, ty3, ty4)`
+fn projection_normalizes_to<'cx>(
+    ccx: &'cx CommonCx,
+    projection: LogicTerm<'cx>,
+    self_ty: LogicTerm<'cx>,
+    assoc_type: LogicTerm<'cx>,
+    trait_ty: LogicTerm<'cx>,
+    value_ty: LogicTerm<'cx>,
+) -> LogicTerm<'cx> {
+    term(
+        ccx,
+        PRED_PROJECTION_NORMALIZES_TO,
+        vec![projection, self_ty, assoc_type, trait_ty, value_ty],
+    )
+}
+
 /// * projection - Type occurrence for the whole projection, such as `<T as Trait>::Assoc`
 /// * self_ty - Type written as the projection self type, such as `T`
 /// * assoc_type - Definition of the associated type being projected, such as `Trait::Assoc`
@@ -365,6 +527,30 @@ fn explicit_projection_obligation<'cx>(
         ccx,
         PRED_EXPLICIT_PROJECTION_OBLIGATION,
         vec![projection, self_ty, assoc_type, trait_ty],
+    )
+}
+
+/// * impl_self_ty - Implementing self type in `impl Trait for Self`
+/// * trait_ty - Implemented trait type in `impl Trait for Self`
+/// * assoc_type - Associated type definition assigned by the impl item
+/// * value_ty - Type assigned by the impl item
+///
+/// # Examples
+///
+/// * Code - `impl Iterator for Vec { type Item = u32; }`
+/// * Input - `impl_self_ty = ty0`, `trait_ty = ty1`, `assoc_type = def2`, `value_ty = ty3`
+/// * Output - `impl_assoc_type(ty0, ty1, def2, ty3)`
+fn impl_assoc_type<'cx>(
+    ccx: &'cx CommonCx,
+    impl_self_ty: LogicTerm<'cx>,
+    trait_ty: LogicTerm<'cx>,
+    assoc_type: LogicTerm<'cx>,
+    value_ty: LogicTerm<'cx>,
+) -> LogicTerm<'cx> {
+    term(
+        ccx,
+        PRED_IMPL_ASSOC_TYPE,
+        vec![impl_self_ty, trait_ty, assoc_type, value_ty],
     )
 }
 

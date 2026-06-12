@@ -1,5 +1,8 @@
 use super::term;
-use crate::{InferDb, PathTypeResolution, ProjectionCandidate, ProjectionMatch, Type, TypeId};
+use crate::{
+    InferDb, PathTypeResolution, ProjectionCandidate, ProjectionMatch, ProjectionNormalization,
+    Type, TypeId,
+};
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult};
@@ -8,6 +11,7 @@ pub(crate) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &Nam
     let mut logic = LogicCx { ccx, db, names };
     logic.derive_projection_candidates();
     logic.derive_projection_matches();
+    logic.derive_projection_normalizations();
 }
 
 struct LogicCx<'a, 'cx> {
@@ -91,6 +95,37 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
         self.db.projection_matches.extend(matches);
     }
 
+    fn derive_projection_normalizations(&mut self) {
+        let mut logic = ProjectionLogic::new(self.ccx, self.db);
+        logic.load_projection_normalizations();
+        let matches = self.db.projection_matches.clone();
+        let impl_facts = self.db.assoc_type_impl_facts.clone();
+        let mut normalizations = Vec::new();
+        for projection_match in matches {
+            for impl_fact in &impl_facts {
+                if logic.proves_normalization(
+                    projection_match.projection,
+                    projection_match.self_ty,
+                    projection_match.assoc_type,
+                    projection_match.trait_ty,
+                    impl_fact.value_ty,
+                ) {
+                    let normalization = ProjectionNormalization {
+                        projection: projection_match.projection,
+                        self_ty: projection_match.self_ty,
+                        assoc_type: projection_match.assoc_type,
+                        trait_ty: projection_match.trait_ty,
+                        value_ty: impl_fact.value_ty,
+                    };
+                    if !normalizations.contains(&normalization) {
+                        normalizations.push(normalization);
+                    }
+                }
+            }
+        }
+        self.db.projection_normalizations.extend(normalizations);
+    }
+
     fn trait_members(&self) -> Vec<TraitMember> {
         self.db
             .projection_candidates
@@ -171,6 +206,15 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_match_rules();
         self.insert_projection_candidates();
         self.insert_trait_members(trait_members);
+        self.insert_impl_assoc_types();
+        self.db.commit();
+    }
+
+    fn load_projection_normalizations(&mut self) {
+        self.insert_normalization_rules();
+        self.insert_projection_matches();
+        self.insert_impl_assoc_types();
+        self.insert_same_types();
         self.db.commit();
     }
 
@@ -182,6 +226,12 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     fn insert_match_rules(&mut self) {
         for clause in term::projection_match_rules(self.ccx) {
+            self.insert_clause(clause);
+        }
+    }
+
+    fn insert_normalization_rules(&mut self) {
+        for clause in term::projection_normalization_rules(self.ccx) {
             self.insert_clause(clause);
         }
     }
@@ -226,6 +276,12 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         }
     }
 
+    fn insert_projection_matches(&mut self) {
+        for projection_match in &self.infer.projection_matches {
+            self.insert_clause(term::projection_match_clause(self.ccx, *projection_match));
+        }
+    }
+
     fn insert_trait_members(&mut self, trait_members: &[TraitMember]) {
         for member in trait_members {
             self.insert_clause(term::trait_member_clause(
@@ -234,6 +290,12 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
                 member.requested_assoc_type,
                 member.member_assoc_type,
             ));
+        }
+    }
+
+    fn insert_impl_assoc_types(&mut self) {
+        for fact in &self.infer.assoc_type_impl_facts {
+            self.insert_clause(term::impl_assoc_type_clause(self.ccx, *fact));
         }
     }
 
@@ -261,6 +323,21 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.db
             .query(term::projection_match_query(
                 self.ccx, projection, self_ty, assoc_type, trait_ty,
+            ))
+            .is_true()
+    }
+
+    fn proves_normalization(
+        &mut self,
+        projection: TypeId,
+        self_ty: TypeId,
+        assoc_type: DefId,
+        trait_ty: TypeId,
+        value_ty: TypeId,
+    ) -> bool {
+        self.db
+            .query(term::projection_normalization_query(
+                self.ccx, projection, self_ty, assoc_type, trait_ty, value_ty,
             ))
             .is_true()
     }

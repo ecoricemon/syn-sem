@@ -23,6 +23,19 @@ pub struct TraitBoundFact {
     pub trait_ty: TypeId,
 }
 
+/// Associated type value assigned by a trait implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssocTypeImplFact {
+    /// Implementing self type in `impl Trait for Self`.
+    pub impl_self_ty: TypeId,
+    /// Implemented trait type in `impl Trait for Self`.
+    pub trait_ty: TypeId,
+    /// Associated type definition assigned by the impl item.
+    pub assoc_type: DefId,
+    /// Type assigned by the impl item.
+    pub value_ty: TypeId,
+}
+
 /// Candidate trait selected for an associated type projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectionCandidate {
@@ -47,4 +60,19 @@ pub struct ProjectionMatch {
     pub assoc_type: DefId,
     /// Trait type that provides the associated type member.
     pub trait_ty: TypeId,
+}
+
+/// Associated type projection normalized to an impl-provided value type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectionNormalization {
+    /// Type occurrence whose value is the projection result.
+    pub projection: TypeId,
+    /// Self type for the projection.
+    pub self_ty: TypeId,
+    /// Associated type member used for normalization.
+    pub assoc_type: DefId,
+    /// Trait type that provides the associated type member.
+    pub trait_ty: TypeId,
+    /// Type assigned by the matching impl item.
+    pub value_ty: TypeId,
 }

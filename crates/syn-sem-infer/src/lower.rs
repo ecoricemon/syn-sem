@@ -3,9 +3,8 @@ use crate::{
     PrimitiveType, ProjectionObligation, ProjectionType, QSelf, SourceConstArg, SourceTypeBounds,
     TraitBoundFact, Type, TypeId,
 };
-use smallvec::{smallvec, SmallVec};
 use syn_sem_common::CommonCx;
-use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult, ScopeId};
+use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
 use syn_sem_pr as pr;
 
 pub(crate) fn analyze<'cx>(
@@ -36,6 +35,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn lower(mut self) -> InferDb<'cx> {
         self.lower_trait_bound_facts();
         self.lower_repr_types();
+        self.lower_assoc_type_impl_facts();
         self.db
     }
 
@@ -79,6 +79,61 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         for ty in self.repr.types() {
             self.lower_repr_type(ty.id);
         }
+    }
+
+    fn lower_assoc_type_impl_facts(&mut self) {
+        for item in self.repr.items() {
+            let pr::ItemKind::Impl {
+                trait_,
+                self_ty,
+                items,
+                ..
+            } = &item.kind
+            else {
+                continue;
+            };
+            let Some(trait_) = trait_ else {
+                continue;
+            };
+            let impl_self_ty = self.lower_repr_type(*self_ty);
+            let trait_ty = self.lower_path_as_type(trait_, item.parent_scope);
+            let Some(trait_def) = self.trait_def_for_type(trait_ty) else {
+                continue;
+            };
+            for assoc_item in items.iter().map(|id| &self.repr[*id]) {
+                let pr::AssocItemKind::ImplType { ty } = assoc_item.kind else {
+                    continue;
+                };
+                let ResolveResult::Found(assoc_type) =
+                    self.names
+                        .member(trait_def, Namespace::Type, assoc_item.name)
+                else {
+                    continue;
+                };
+                let value_ty = self.lower_repr_type(ty);
+                self.db
+                    .assoc_type_impl_facts
+                    .push(crate::AssocTypeImplFact {
+                        impl_self_ty,
+                        trait_ty,
+                        assoc_type,
+                        value_ty,
+                    });
+            }
+        }
+    }
+
+    fn trait_def_for_type(&self, ty: TypeId) -> Option<DefId> {
+        let Type::Path(path) = &self.db.types[ty.index()] else {
+            return None;
+        };
+        let PathTypeResolution::Nominal(def) = path.resolution else {
+            return None;
+        };
+        if self.names[def].kind != DefKind::Trait {
+            return None;
+        }
+        Some(def)
     }
 
     fn lower_repr_type(&mut self, repr_type: pr::TypeId) -> TypeId {
@@ -162,16 +217,31 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         self.push_type(ty)
     }
 
+    fn lower_path_as_type(&mut self, path: &pr::Path<'cx>, scope: Option<ScopeId>) -> TypeId {
+        let path = pr::TypePathValue {
+            segments: path
+                .segments
+                .iter()
+                .map(|name| pr::TypePathSegment {
+                    name: *name,
+                    args: Default::default(),
+                })
+                .collect(),
+        };
+        self.lower_path_value_as_type(&path, scope)
+    }
+
     fn lower_name_as_type(
         &mut self,
         name: syn_sem_name::Name<'cx>,
         scope: Option<ScopeId>,
     ) -> TypeId {
         let path = pr::TypePathValue {
-            segments: smallvec![pr::TypePathSegment {
+            segments: std::iter::once(pr::TypePathSegment {
                 name,
-                args: SmallVec::new(),
-            }],
+                args: Default::default(),
+            })
+            .collect(),
         };
         self.lower_path_value_as_type(&path, scope)
     }
@@ -182,6 +252,10 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         path: &pr::TypePathValue<'cx>,
         qself: Option<&QSelf>,
     ) -> PathTypeResolution {
+        if let Some(projection) = self.resolve_qself_trait_member(path, qself) {
+            return projection;
+        }
+
         let Some(scope) = scope else {
             return PathTypeResolution::Unresolved;
         };
@@ -190,9 +264,35 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
             .resolve_type_path(scope, path.segments.iter().map(|segment| segment.name))
         {
             ResolveResult::Found(def) => self.classify_path_target(def, qself),
-            ResolveResult::Ambiguous(defs) => PathTypeResolution::Ambiguous(defs),
+            ResolveResult::Ambiguous(defs) => {
+                PathTypeResolution::Ambiguous(defs.into_iter().collect())
+            }
             ResolveResult::NotFound => PathTypeResolution::Unresolved,
         }
+    }
+
+    fn resolve_qself_trait_member(
+        &self,
+        path: &pr::TypePathValue<'cx>,
+        qself: Option<&QSelf>,
+    ) -> Option<PathTypeResolution> {
+        let qself = qself?;
+        let trait_ty = qself.trait_ty?;
+        let trait_def = self.trait_def_for_type(trait_ty)?;
+        let assoc_name = path.segments.last()?.name;
+        let ResolveResult::Found(assoc_type) =
+            self.names.member(trait_def, Namespace::Type, assoc_name)
+        else {
+            return None;
+        };
+        if self.names[assoc_type].kind != DefKind::AssocType {
+            return None;
+        }
+        Some(PathTypeResolution::Projection(ProjectionType {
+            assoc_type,
+            self_ty: Some(qself.self_ty),
+            trait_ty: Some(trait_ty),
+        }))
     }
 
     fn classify_path_target(&self, def: DefId, qself: Option<&QSelf>) -> PathTypeResolution {
@@ -283,10 +383,9 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use smallvec::smallvec;
-    use syn_sem_ast::SyntaxCx;
+    use syn_sem_ast::{self as ast, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{DefKind, NameDb, Origin, Visibility};
+    use syn_sem_name::{AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility};
     use syn_sem_pr as pr;
 
     fn infer_types<'cx>(
@@ -774,6 +873,140 @@ mod tests {
     }
 
     #[test]
+    fn lowers_impl_associated_type_assignments_as_solver_input() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let file_path = ccx.intern("test.rs");
+        let code = "struct Vec; trait Iterator { type Item; } impl Iterator for Vec { type Item = u32; } struct Output { field: <Vec as Iterator>::Item }";
+        let text = ccx.intern(code);
+        scx.parse_virtual_file(file_path, text).unwrap();
+        let file = scx.lookup_source(file_path).unwrap().ast();
+
+        let iterator = ccx.intern("Iterator");
+        let vec = ccx.intern("Vec");
+        let item = ccx.intern("Item");
+        let mut names = NameDb::default();
+        let root = names.root_scope();
+        let vec_def = names.add_def(
+            root,
+            DefKind::Struct,
+            Some(vec),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let iterator_def = names.add_def(
+            root,
+            DefKind::Trait,
+            Some(iterator),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let iterator_scope = names.add_scope(ScopeKind::Trait, Some(root));
+        names.set_path_scope(iterator_def, iterator_scope);
+        let trait_assoc_def = names.add_def(
+            iterator_scope,
+            DefKind::AssocType,
+            Some(item),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let impl_item_def = names.add_def(
+            root,
+            DefKind::AssocType,
+            Some(item),
+            Visibility::Private,
+            Origin::Untracked,
+        );
+        let ast::Item::Struct(_) = &file.items[0] else {
+            panic!("expected struct item");
+        };
+        names.set_def_ast_node(vec_def, AstNodeId::from_ref(&file.items[0]));
+        let ast::Item::Trait(trait_item) = &file.items[1] else {
+            panic!("expected trait item");
+        };
+        names.set_def_ast_node(iterator_def, AstNodeId::from_ref(&file.items[1]));
+        let ast::TraitItem::Type(_) = &trait_item.items[0] else {
+            panic!("expected trait associated type");
+        };
+        let ast::Item::Impl(impl_item) = &file.items[2] else {
+            panic!("expected impl item");
+        };
+        let ast::ImplItem::Type(_) = &impl_item.items[0] else {
+            panic!("expected impl associated type");
+        };
+        names.set_def_ast_node(impl_item_def, AstNodeId::from_ref(&impl_item.items[0]));
+
+        let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
+        let infer = InferDb::analyze(&ccx, &repr, &names);
+        let [fact] = infer.assoc_type_impl_facts() else {
+            panic!("expected one impl associated type fact");
+        };
+
+        let pr::ItemKind::Impl {
+            trait_,
+            self_ty,
+            items,
+            ..
+        } = &repr.items()[2].kind
+        else {
+            panic!("expected represented impl");
+        };
+        assert!(trait_.is_some());
+        let [assoc_item] = items.as_slice() else {
+            panic!("expected one represented impl item");
+        };
+        assert!(matches!(
+            repr[*assoc_item].kind,
+            pr::AssocItemKind::ImplType { .. }
+        ));
+        assert_eq!(repr[*assoc_item].def, Some(impl_item_def));
+        assert_eq!(fact.assoc_type, trait_assoc_def);
+        assert_eq!(
+            fact.impl_self_ty,
+            infer.type_for_repr_type(*self_ty).unwrap()
+        );
+        assert!(matches!(
+            infer[fact.impl_self_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::Nominal(def),
+                ..
+            }) if def == vec_def
+        ));
+        assert!(matches!(
+            infer[fact.trait_ty],
+            Type::Path(PathType {
+                resolution: PathTypeResolution::Nominal(def),
+                ..
+            }) if def == iterator_def
+        ));
+        assert_eq!(infer[fact.value_ty], Type::Primitive(PrimitiveType::U32));
+
+        let projection_path = struct_field_path_type(&repr, &infer);
+        let qself = projection_path
+            .qself
+            .expect("projection field should lower qself");
+        let projection = struct_field_type_id(&repr, &infer);
+        assert_eq!(
+            infer.projection_normalizations(),
+            &[ProjectionNormalization {
+                projection,
+                self_ty: qself.self_ty,
+                assoc_type: trait_assoc_def,
+                trait_ty: qself.trait_ty.unwrap(),
+                value_ty: fact.value_ty,
+            }]
+        );
+        let normalizations = infer
+            .normalizations_for_projection(projection)
+            .collect::<Vec<_>>();
+        assert_eq!(normalizations.len(), 1);
+        assert_eq!(
+            infer[normalizations[0].value_ty],
+            Type::Primitive(PrimitiveType::U32)
+        );
+    }
+
+    #[test]
     fn preserves_ambiguous_and_unresolved_path_states() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
@@ -797,7 +1030,7 @@ mod tests {
 
         assert_eq!(
             struct_field_path_resolution(&repr, &infer),
-            PathTypeResolution::Ambiguous(smallvec![first, second])
+            PathTypeResolution::Ambiguous(vec![first, second])
         );
 
         let (repr, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");

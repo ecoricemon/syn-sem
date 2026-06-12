@@ -9,8 +9,9 @@
 
 ## Boundaries
 
-- Keep production dependencies AST-agnostic.
-- Do not depend on `syn` or `syn-sem-ast` for the core model.
+- Keep the core model AST-agnostic.
+- Keep AST-aware collection isolated in a dedicated module.
+- Do not make collection read files or depend on `TopCx`.
 - Let higher layers attach AST-specific identities through opaque origins.
 - Expose owned facts through focused `NameDb` query APIs instead of making
   callers reconstruct them from raw storage.
@@ -39,3 +40,6 @@
 - `Import`, `ImportKind`, `ImportStatus`: import model and resolution state.
 - `ResolveResult`: result of resolving a name from a use site.
 - `Name`: interned name text tied to shared common infrastructure.
+- `collect`: AST-aware collection from already parsed file inputs.
+- `collect::ModulePath`: module path helper for callers that prepare those
+  file inputs without making `syn-sem-name` read files.
