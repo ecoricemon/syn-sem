@@ -5,9 +5,9 @@
 //! associated type assignments, and then invokes logic-backed derivation for projection solving.
 
 use crate::{
-    ArrayLen, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
-    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, SourceConstArg, SourceTypeBounds,
-    TraitBoundFact, Type, TypeId,
+    ArrayLen, ConstArg, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
+    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, TraitBoundFact, Type, TypeBounds,
+    TypeId,
 };
 use syn_sem_common::CommonCx;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
@@ -64,12 +64,12 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     }
 
     fn lower_generics(&mut self, generics: &pr::Generics<'cx>) {
-        for param in &generics.params {
-            let pr::GenericParam::Type(param) = param else {
+        for predicate in &generics.predicates {
+            let pr::WherePredicate::TypeBound { subject, bounds } = predicate else {
                 continue;
             };
-            let subject = self.lower_name_as_type(param.name, generics.scope);
-            for bound in &param.bounds {
+            let subject = self.lower_repr_type(*subject);
+            for bound in bounds {
                 let pr::TypeParamBound::Trait(bound) = bound else {
                     continue;
                 };
@@ -222,19 +222,6 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         self.push_type(ty)
     }
 
-    fn lower_name_as_type(
-        &mut self,
-        name: syn_sem_name::Name<'cx>,
-        scope: Option<ScopeId>,
-    ) -> TypeId {
-        let path = std::iter::once(pr::PathSegment {
-            name,
-            args: Default::default(),
-        })
-        .collect::<Vec<_>>();
-        self.lower_path_value_as_type(&path, scope)
-    }
-
     fn resolve_path_value(
         &self,
         scope: Option<ScopeId>,
@@ -324,18 +311,18 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn lower_generic_arg(&mut self, arg: &pr::GenericArgument<'cx>) -> GenericArgument<'cx> {
         match arg {
             pr::GenericArgument::Type(ty) => GenericArgument::Type(self.lower_repr_type(*ty)),
-            pr::GenericArgument::Const(_) => GenericArgument::Const(SourceConstArg),
+            pr::GenericArgument::Const(_) => GenericArgument::Const(ConstArg),
             pr::GenericArgument::AssocType { name, ty } => GenericArgument::AssocType {
                 name: *name,
                 ty: self.lower_repr_type(*ty),
             },
             pr::GenericArgument::AssocConst { name, .. } => GenericArgument::AssocConst {
                 name: *name,
-                value: SourceConstArg,
+                value: ConstArg,
             },
             pr::GenericArgument::Constraint { name, .. } => GenericArgument::Constraint {
                 name: *name,
-                bounds: SourceTypeBounds,
+                bounds: TypeBounds,
             },
             pr::GenericArgument::Unsupported => GenericArgument::Unsupported,
         }

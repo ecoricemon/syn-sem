@@ -584,7 +584,7 @@ pub enum GenericArgument<'cx> {
     /// Type argument.
     Type(TypeId),
     /// Const expression argument.
-    Const(SourceConstArg),
+    Const(ConstArg),
     /// Associated type equality.
     AssocType {
         /// Associated type name.
@@ -597,14 +597,14 @@ pub enum GenericArgument<'cx> {
         /// Associated const name.
         name: syn_sem_name::Name<'cx>,
         /// Assigned const value.
-        value: SourceConstArg,
+        value: ConstArg,
     },
     /// Associated type constraint.
     Constraint {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Source bounds.
-        bounds: SourceTypeBounds,
+        bounds: TypeBounds,
     },
     /// Unsupported argument form.
     Unsupported,
@@ -616,13 +616,13 @@ pub enum GenericArgument<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayLen {
     /// Length is still a source expression.
-    SourceExpr,
+    Expr,
 }
 
 impl ArrayLen {
     pub(crate) fn from_repr(len: pr::ArrayLen) -> Self {
         match len {
-            pr::ArrayLen::SourceExpr => Self::SourceExpr,
+            pr::ArrayLen::Expr => Self::Expr,
         }
     }
 }
@@ -631,9 +631,9 @@ impl ArrayLen {
 // TODO: Replace this with expression-backed const argument facts once const expression
 // representation is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceConstArg;
+pub struct ConstArg;
 
 /// Type bounds represented before bound lowering exists.
 // TODO: Replace this with bound-backed facts once type bound representation is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceTypeBounds;
+pub struct TypeBounds;

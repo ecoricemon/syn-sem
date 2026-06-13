@@ -1,5 +1,6 @@
 use std::ops::{Index, IndexMut};
 
+use crate::desugar::{self, PredicateSubject};
 use crate::{AssocItemId, BlockId, FieldId, FileId, ItemId, SignatureId, TypeId, VariantId};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
@@ -51,13 +52,13 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let id = self.repr.next_item_id();
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
-        let source_visibility = item_source_visibility(item);
+        let visibility = item_visibility(item);
         let kind = self.collect_item_kind(item, parent_scope, def);
 
         self.repr.add_item(Item {
             id,
             name,
-            source_visibility,
+            visibility,
             def,
             parent_scope,
             kind,
@@ -91,10 +92,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match item {
             ast::Item::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
-                ItemKind::Const {
-                    ty,
-                    init: SourceExpr,
-                }
+                ItemKind::Const { ty, init: Expr }
             }
             ast::Item::Enum(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
@@ -183,7 +181,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
-            source_visibility: SourceVisibility::from_ast(&field.vis),
+            visibility: Visibility::from_ast(&field.vis),
             ty,
             source: FieldSource::Struct,
         });
@@ -205,7 +203,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .collect(),
                 None,
             ),
-            ast::VariantKind::Discriminant(_) => (Vec::new(), Some(SourceExpr)),
+            ast::VariantKind::Discriminant(_) => (Vec::new(), Some(Expr)),
             ast::VariantKind::Unit => (Vec::new(), None),
         };
         self.repr.add_variant(Variant {
@@ -228,7 +226,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         self.repr.add_field(Field {
             id,
             name: field.ident.inner,
-            source_visibility: SourceVisibility::Private,
+            visibility: Visibility::Private,
             ty,
             source: FieldSource::Variant,
         });
@@ -246,10 +244,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::ImplItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                AssocItemKind::ImplConst {
-                    ty,
-                    init: SourceExpr,
-                }
+                AssocItemKind::ImplConst { ty, init: Expr }
             }
             ast::ImplItem::Fn(item) => {
                 let signature =
@@ -285,7 +280,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::TraitItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                let default = item.default.map(|_| SourceExpr);
+                let default = item.default.map(|_| Expr);
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
@@ -318,16 +313,25 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         signature: &'cx ast::Signature<'cx>,
         scope: Option<ScopeId>,
     ) -> SignatureId {
-        let types = signature
+        let params: Vec<_> = signature
             .params
             .iter()
             .enumerate()
             .map(|(index, param)| {
-                self.collect_type(&param.pat.ty, scope, TypeSource::SignatureParam { index })
+                let ty =
+                    self.collect_type(&param.pat.ty, scope, TypeSource::SignatureParam { index });
+                SignatureParam {
+                    pat: (index != 0).then_some(Pat { pat: param.pat.pat }),
+                    ty,
+                }
             })
             .collect();
+        assert!(
+            !params.is_empty(),
+            "semantic AST signatures must include a synthesized return parameter"
+        );
         let id = self.repr.next_signature_id();
-        self.repr.add_signature(Signature { id, source, types });
+        self.repr.add_signature(Signature { id, source, params });
         id
     }
 
@@ -336,19 +340,19 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         generics: &'cx ast::Generics<'cx>,
         scope: Option<ScopeId>,
     ) -> Generics<'cx> {
+        let params = generics
+            .params
+            .iter()
+            .map(|param| self.collect_generic_param(param, scope))
+            .collect();
+        let predicates = desugar::generic_predicates(generics)
+            .into_iter()
+            .map(|predicate| self.collect_desugared_where_predicate(predicate, scope))
+            .collect();
         Generics {
             scope,
-            params: generics
-                .params
-                .iter()
-                .map(|param| self.collect_generic_param(param, scope))
-                .collect(),
-            where_clause: generics
-                .where_clause
-                .as_ref()
-                .map(|where_clause| SourceWhereClause {
-                    predicates: where_clause.predicates.len(),
-                }),
+            params,
+            predicates,
         }
     }
 
@@ -360,11 +364,6 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match param {
             ast::GenericParam::Type(param) => GenericParam::Type(TypeParam {
                 name: param.ident.inner,
-                bounds: param
-                    .bounds
-                    .iter()
-                    .map(|bound| self.collect_type_param_bound(bound, scope))
-                    .collect(),
                 default: param
                     .default
                     .map(|ty| self.collect_type(ty, scope, TypeSource::GenericParamDefault)),
@@ -374,6 +373,31 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 ty: self.collect_type(param.ty, scope, TypeSource::ConstGenericParam),
             }),
             ast::GenericParam::Unsupported(_) => GenericParam::Unsupported,
+        }
+    }
+
+    fn collect_desugared_where_predicate(
+        &mut self,
+        predicate: desugar::WherePredicate<'cx>,
+        scope: Option<ScopeId>,
+    ) -> WherePredicate<'cx> {
+        match predicate {
+            desugar::WherePredicate::TypeBound(predicate) => WherePredicate::TypeBound {
+                subject: match predicate.subject {
+                    PredicateSubject::TypeParam(name) => {
+                        self.collect_name_type(name, scope, TypeSource::WherePredicateSubject)
+                    }
+                    PredicateSubject::Type(ty) => {
+                        self.collect_type(ty, scope, TypeSource::WherePredicateSubject)
+                    }
+                },
+                bounds: predicate
+                    .bounds
+                    .iter()
+                    .map(|bound| self.collect_type_param_bound(bound, scope))
+                    .collect(),
+            },
+            desugar::WherePredicate::Unsupported => WherePredicate::Unsupported,
         }
     }
 
@@ -400,8 +424,31 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let id = self.repr.next_type_id();
         self.repr.add_type(Type {
             id,
-            ty,
+            ty: Some(ty),
             kind,
+            scope,
+            source,
+        });
+        id
+    }
+
+    fn collect_name_type(
+        &mut self,
+        name: Name<'cx>,
+        scope: Option<ScopeId>,
+        source: TypeSource,
+    ) -> TypeId {
+        let id = self.repr.next_type_id();
+        self.repr.add_type(Type {
+            id,
+            ty: None,
+            kind: TypeKind::Path(Path {
+                qself: None,
+                segments: vec![PathSegment {
+                    name,
+                    args: Vec::new(),
+                }],
+            }),
             scope,
             source,
         });
@@ -416,7 +463,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match ty {
             ast::Type::Array(ty) => TypeKind::Array {
                 elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
-                len: ArrayLen::SourceExpr,
+                len: ArrayLen::Expr,
             },
             ast::Type::Infer(_) => TypeKind::Infer,
             ast::Type::Path(ty) => TypeKind::Path(Path {
@@ -511,18 +558,18 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             ast::GenericArgument::Type(ty) => {
                 GenericArgument::Type(self.collect_type(ty, scope, TypeSource::Nested))
             }
-            ast::GenericArgument::Const(_) => GenericArgument::Const(SourceConstArg),
+            ast::GenericArgument::Const(_) => GenericArgument::Const(ConstArg),
             ast::GenericArgument::AssocType(arg) => GenericArgument::AssocType {
                 name: arg.ident.inner,
                 ty: self.collect_type(&arg.ty, scope, TypeSource::Nested),
             },
             ast::GenericArgument::AssocConst(arg) => GenericArgument::AssocConst {
                 name: arg.ident.inner,
-                value: SourceConstArg,
+                value: ConstArg,
             },
             ast::GenericArgument::Constraint(arg) => GenericArgument::Constraint {
                 name: arg.ident.inner,
-                bounds: SourceTypeBounds,
+                bounds: TypeBounds,
             },
             ast::GenericArgument::Unsupported(_) => GenericArgument::Unsupported,
         }
@@ -568,7 +615,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
 pub struct ProgramRepr<'cx> {
     files: Vec<File<'cx>>,
     items: Vec<Item<'cx>>,
-    signatures: Vec<Signature>,
+    signatures: Vec<Signature<'cx>>,
     fields: Vec<Field<'cx>>,
     variants: Vec<Variant<'cx>>,
     assoc_items: Vec<AssocItem<'cx>>,
@@ -588,7 +635,7 @@ impl<'cx> ProgramRepr<'cx> {
     }
 
     /// Returns all represented function-like signatures.
-    pub fn signatures(&self) -> &[Signature] {
+    pub fn signatures(&self) -> &[Signature<'cx>] {
         &self.signatures
     }
 
@@ -641,7 +688,7 @@ impl<'cx> ProgramRepr<'cx> {
         SignatureId::new(self.signatures.len())
     }
 
-    fn add_signature(&mut self, signature: Signature) {
+    fn add_signature(&mut self, signature: Signature<'cx>) {
         let id = signature.id;
         assert_eq!(id, self.next_signature_id());
         self.signatures.push(signature);
@@ -721,7 +768,7 @@ impl IndexMut<ItemId> for ProgramRepr<'_> {
 }
 
 impl<'cx> Index<SignatureId> for ProgramRepr<'cx> {
-    type Output = Signature;
+    type Output = Signature<'cx>;
 
     fn index(&self, id: SignatureId) -> &Self::Output {
         &self.signatures[id.index()]
@@ -786,8 +833,8 @@ pub struct Item<'cx> {
     pub id: ItemId,
     /// Item name, when the item has one source-level name.
     pub name: Option<Name<'cx>>,
-    /// Source item visibility.
-    pub source_visibility: SourceVisibility<'cx>,
+    /// Item visibility.
+    pub visibility: Visibility<'cx>,
     /// Definition linked from the current name-resolution data, if available.
     pub def: Option<DefId>,
     /// Scope containing this item.
@@ -804,7 +851,7 @@ pub enum ItemKind<'cx> {
         /// Constant type.
         ty: TypeId,
         /// Initializer expression.
-        init: SourceExpr,
+        init: Expr,
     },
     /// Enum item.
     Enum {
@@ -874,8 +921,8 @@ pub struct Generics<'cx> {
     pub scope: Option<ScopeId>,
     /// Generic parameters in source order.
     pub params: Vec<GenericParam<'cx>>,
-    /// Source where-clause shape, when present.
-    pub where_clause: Option<SourceWhereClause>,
+    /// Generic predicates from inline bounds and where-clauses.
+    pub predicates: Vec<WherePredicate<'cx>>,
 }
 
 /// Representation-native generic parameter.
@@ -894,8 +941,6 @@ pub enum GenericParam<'cx> {
 pub struct TypeParam<'cx> {
     /// Parameter name.
     pub name: Name<'cx>,
-    /// Bounds on the parameter.
-    pub bounds: Vec<TypeParamBound<'cx>>,
     /// Default type, when present.
     pub default: Option<TypeId>,
 }
@@ -925,22 +970,55 @@ pub struct TraitBound<'cx> {
     pub path: Vec<PathSegment<'cx>>,
 }
 
-/// Source where-clause shape before predicate lowering exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceWhereClause {
-    /// Number of source predicates in the where-clause.
-    pub predicates: usize,
+/// Representation-native generic predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WherePredicate<'cx> {
+    /// Type bound predicate.
+    TypeBound {
+        /// Type being constrained.
+        subject: TypeId,
+        /// Bounds applied to the type.
+        bounds: Vec<TypeParamBound<'cx>>,
+    },
+    /// Unsupported predicate form.
+    Unsupported,
 }
 
 /// One represented function-like signature.
 #[derive(Debug)]
-pub struct Signature {
+pub struct Signature<'cx> {
     /// Signature id in the representation.
     pub id: SignatureId,
     /// Source signature.
     pub source: SignatureSource,
-    /// Source types used by the return parameter and input parameters.
-    pub types: Vec<TypeId>,
+    /// Signature parameters.
+    ///
+    /// This is always non-empty. `params[0]` is the output type and has no source pattern.
+    /// `params[1..]` are input parameters in source order and have source patterns. Omitted
+    /// function returns are represented as unit `()`, which is a tuple type with no element types;
+    /// explicitly inferred returns use [`TypeKind::Infer`].
+    pub params: Vec<SignatureParam<'cx>>,
+}
+
+/// One represented function signature parameter.
+#[derive(Debug)]
+pub struct SignatureParam<'cx> {
+    /// Parameter type.
+    pub ty: TypeId,
+    /// Source pattern for this parameter.
+    ///
+    /// This is `None` for the output parameter at `Signature::params[0]` and `Some` for input
+    /// parameters at `Signature::params[1..]`.
+    pub pat: Option<Pat<'cx>>,
+}
+
+/// Pattern representation.
+///
+/// TODO: Represent patterns natively in `ProgramRepr` instead of keeping the AST pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pat<'cx> {
+    /// Original semantic AST pattern.
+    pub pat: &'cx ast::Pat<'cx>,
 }
 
 /// Source role for a represented signature.
@@ -961,8 +1039,8 @@ pub struct Field<'cx> {
     pub id: FieldId,
     /// Field name.
     pub name: Name<'cx>,
-    /// Source field visibility.
-    pub source_visibility: SourceVisibility<'cx>,
+    /// Field visibility.
+    pub visibility: Visibility<'cx>,
     /// Field type.
     pub ty: TypeId,
     /// Source field kind.
@@ -990,7 +1068,7 @@ pub struct Variant<'cx> {
     /// Represented payload fields.
     pub fields: Vec<FieldId>,
     /// Discriminant expression, if present.
-    pub discriminant: Option<SourceExpr>,
+    pub discriminant: Option<Expr>,
 }
 
 /// One represented associated item declaration.
@@ -1014,7 +1092,7 @@ pub enum AssocItemKind {
         /// Associated const type.
         ty: TypeId,
         /// Initializer expression.
-        init: SourceExpr,
+        init: Expr,
     },
     /// Impl associated function.
     ImplFn {
@@ -1033,7 +1111,7 @@ pub enum AssocItemKind {
         /// Associated const type.
         ty: TypeId,
         /// Optional default expression.
-        default: Option<SourceExpr>,
+        default: Option<Expr>,
     },
     /// Trait associated function.
     TraitFn {
@@ -1049,9 +1127,9 @@ pub enum AssocItemKind {
     },
 }
 
-/// Source-level visibility for represented declarations.
+/// Visibility for represented declarations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SourceVisibility<'cx> {
+pub enum Visibility<'cx> {
     /// Public visibility.
     Public,
     /// Restricted visibility path, such as `crate` or `foo::bar`.
@@ -1082,7 +1160,7 @@ impl<'cx> VisibilityPath<'cx> {
     }
 }
 
-impl<'cx> SourceVisibility<'cx> {
+impl<'cx> Visibility<'cx> {
     fn from_ast(visibility: &ast::Visibility<'cx>) -> Self {
         match visibility {
             ast::Visibility::Public(_) => Self::Public,
@@ -1092,17 +1170,17 @@ impl<'cx> SourceVisibility<'cx> {
     }
 }
 
-fn item_source_visibility<'cx>(item: &'cx ast::Item<'cx>) -> SourceVisibility<'cx> {
+fn item_visibility<'cx>(item: &'cx ast::Item<'cx>) -> Visibility<'cx> {
     match item {
-        ast::Item::Const(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Enum(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Fn(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Impl(_) => SourceVisibility::Private,
-        ast::Item::Mod(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Struct(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Trait(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Type(item) => SourceVisibility::from_ast(&item.vis),
-        ast::Item::Use(item) => SourceVisibility::from_ast(&item.vis),
+        ast::Item::Const(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Enum(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Fn(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Impl(_) => Visibility::Private,
+        ast::Item::Mod(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Struct(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Trait(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Type(item) => Visibility::from_ast(&item.vis),
+        ast::Item::Use(item) => Visibility::from_ast(&item.vis),
     }
 }
 
@@ -1117,17 +1195,21 @@ pub struct Block<'cx> {
     pub scope: Option<ScopeId>,
 }
 
-/// Source expression that is not represented natively yet.
+/// Expression representation.
+///
+/// TODO: Represent expressions natively in `ProgramRepr` instead of using this placeholder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceExpr;
+pub struct Expr;
 
-/// One source type occurrence.
+/// One represented type occurrence.
 #[derive(Debug)]
 pub struct Type<'cx> {
     /// Type id in the representation.
     pub id: TypeId,
-    /// Original semantic AST type.
-    pub ty: &'cx ast::Type<'cx>,
+    /// Original semantic AST type, when this type came directly from source syntax.
+    ///
+    /// This is `None` for synthetic types introduced by representation desugaring.
+    pub ty: Option<&'cx ast::Type<'cx>>,
     /// Representation-native source type shape.
     pub kind: TypeKind<'cx>,
     /// Scope used to resolve paths inside this type occurrence.
@@ -1208,7 +1290,7 @@ pub enum GenericArgument<'cx> {
     /// Type argument.
     Type(TypeId),
     /// Const expression argument.
-    Const(SourceConstArg),
+    Const(ConstArg),
     /// Associated type equality.
     AssocType {
         /// Associated type name.
@@ -1221,14 +1303,14 @@ pub enum GenericArgument<'cx> {
         /// Associated const name.
         name: Name<'cx>,
         /// Assigned const value.
-        value: SourceConstArg,
+        value: ConstArg,
     },
     /// Associated type constraint.
     Constraint {
         /// Associated type name.
         name: Name<'cx>,
         /// Source bounds.
-        bounds: SourceTypeBounds,
+        bounds: TypeBounds,
     },
     /// Unsupported argument form.
     Unsupported,
@@ -1238,25 +1320,32 @@ pub enum GenericArgument<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayLen {
     /// Length is still a source expression; expression lowering is a future representation slice.
-    SourceExpr,
+    Expr,
 }
 
 /// Const argument represented without owning expression lowering.
+///
+/// TODO: Represent const arguments natively in `ProgramRepr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceConstArg;
+pub struct ConstArg;
 
 /// Type bounds represented without owning bound lowering.
+///
+/// TODO: Represent type bounds natively in `ProgramRepr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceTypeBounds;
+pub struct TypeBounds;
 
 /// Source role for a represented type occurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeSource {
     /// Constant item type, for example `T` in `const C: T = value;`.
     ConstType,
-    /// Function signature parameter or return type, for example `R` and `T` in `fn f(x: T) -> R`.
+    /// Function signature parameter type.
+    ///
+    /// `index == 0` is the output type, for example `R` in `fn f() -> R`. `index >= 1` is an
+    /// input parameter type, for example `T` in `fn f(x: T)`.
     SignatureParam {
-        /// Parameter index in the source signature, with return type at index `0`.
+        /// Parameter index in the represented signature.
         index: usize,
     },
     /// Impl self type, for example `T` in `impl T {}`.
@@ -1275,6 +1364,8 @@ pub enum TypeSource {
     GenericParamDefault,
     /// Const generic parameter type, for example `usize` in `struct S<const N: usize>;`.
     ConstGenericParam,
+    /// Where-predicate subject, for example `T` in `where T: Trait`.
+    WherePredicateSubject,
     /// Nested type inside another represented type occurrence, for example `T` in `Vec<T>`.
     Nested,
 }
@@ -1361,7 +1452,23 @@ mod tests {
         else {
             panic!("expected function item");
         };
-        assert_eq!(model[signature].types.len(), 2);
+        assert!(matches!(
+            model[model[signature].params[0].ty].kind,
+            TypeKind::Path(_)
+        ));
+        assert!(model[signature].params[0].pat.is_none());
+        assert_eq!(model[signature].params.len(), 2);
+        assert!(matches!(
+            model[model[signature].params[1].ty].kind,
+            TypeKind::Path(_)
+        ));
+        assert!(matches!(
+            model[signature].params[1]
+                .pat
+                .expect("input should keep source pattern")
+                .pat,
+            ast::Pat::Ident(_)
+        ));
         assert_eq!(model[block].block.stmts.len(), 1);
     }
 
@@ -1449,17 +1556,14 @@ mod tests {
         );
 
         let module = named_item(&model, "m");
-        let SourceVisibility::Restricted(path) = &module.source_visibility else {
+        let Visibility::Restricted(path) = &module.visibility else {
             panic!("expected restricted module source visibility");
         };
         assert_eq!(path.segments.len(), 1);
         assert_eq!(path.segments[0].as_ref(), "crate");
 
         let struct_item = named_item(&model, "S");
-        assert!(matches!(
-            struct_item.source_visibility,
-            SourceVisibility::Public
-        ));
+        assert!(matches!(struct_item.visibility, Visibility::Public));
 
         let impl_item = model
             .items()
@@ -1467,10 +1571,7 @@ mod tests {
             .find(|item| matches!(item.kind, ItemKind::Impl { .. }))
             .expect("expected impl item");
         assert!(impl_item.name.is_none());
-        assert!(matches!(
-            impl_item.source_visibility,
-            SourceVisibility::Private
-        ));
+        assert!(matches!(impl_item.visibility, Visibility::Private));
         let ItemKind::Impl { trait_, .. } = &impl_item.kind else {
             panic!("expected impl item");
         };
@@ -1484,20 +1585,14 @@ mod tests {
             .iter()
             .find(|field| field.name.as_ref() == "field")
             .expect("expected public field");
-        assert!(matches!(
-            public_field.source_visibility,
-            SourceVisibility::Public
-        ));
+        assert!(matches!(public_field.visibility, Visibility::Public));
 
         let private_field = model
             .fields()
             .iter()
             .find(|field| field.name.as_ref() == "private")
             .expect("expected private field");
-        assert!(matches!(
-            private_field.source_visibility,
-            SourceVisibility::Private
-        ));
+        assert!(matches!(private_field.visibility, Visibility::Private));
 
         let assoc_names: Vec<_> = model
             .assoc_items()
@@ -1587,7 +1682,7 @@ mod tests {
             match item.kind {
                 AssocItemKind::ImplConst { ty, init, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    assert_eq!(init, SourceExpr);
+                    assert_eq!(init, Expr);
                 }
                 AssocItemKind::ImplFn {
                     signature, block, ..
@@ -1600,7 +1695,7 @@ mod tests {
                 }
                 AssocItemKind::TraitConst { ty, default, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    assert_eq!(default, Some(SourceExpr));
+                    assert_eq!(default, Some(Expr));
                 }
                 AssocItemKind::TraitFn {
                     signature, default, ..
@@ -1765,7 +1860,11 @@ mod tests {
     fn represents_type_param_trait_bounds() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let model = parsed_model(&ccx, &scx, "struct S<T: Iterator> { field: <T>::Item }");
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            "struct S<T: Clone> where T: Iterator { field: <T>::Item }",
+        );
 
         let item = named_item(&model, "S");
         let ItemKind::Struct { generics, .. } = &item.kind else {
@@ -1776,12 +1875,25 @@ mod tests {
             panic!("expected type parameter");
         };
         assert_eq!(param.name.as_ref(), "T");
-        assert_eq!(param.bounds.len(), 1);
-        let TypeParamBound::Trait(bound) = &param.bounds[0] else {
-            panic!("expected trait bound");
-        };
-        assert_eq!(bound.path.len(), 1);
-        assert_eq!(bound.path[0].name.as_ref(), "Iterator");
+        assert_eq!(generics.predicates.len(), 2);
+        let predicate_bounds = generics
+            .predicates
+            .iter()
+            .map(|predicate| {
+                let WherePredicate::TypeBound { subject, bounds } = predicate else {
+                    panic!("expected type-bound predicate");
+                };
+                let TypeKind::Path(subject_path) = &model[*subject].kind else {
+                    panic!("expected generic parameter subject type");
+                };
+                assert_eq!(subject_path.segments[0].name.as_ref(), "T");
+                let TypeParamBound::Trait(bound) = &bounds[0] else {
+                    panic!("expected trait bound");
+                };
+                bound.path[0].name.as_ref()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(predicate_bounds, ["Clone", "Iterator"]);
     }
 
     #[test]
@@ -1807,33 +1919,23 @@ mod tests {
         );
 
         assert_eq!(model.blocks().len(), 3);
-        assert!(model.items().iter().any(|item| {
-            matches!(
-                item.kind,
-                ItemKind::Const {
-                    init: SourceExpr,
-                    ..
-                }
-            )
-        }));
+        assert!(model
+            .items()
+            .iter()
+            .any(|item| { matches!(item.kind, ItemKind::Const { init: Expr, .. }) }));
         assert!(model
             .variants()
             .iter()
-            .any(|variant| { variant.discriminant == Some(SourceExpr) }));
-        assert!(model.assoc_items().iter().any(|item| {
-            matches!(
-                item.kind,
-                AssocItemKind::ImplConst {
-                    init: SourceExpr,
-                    ..
-                }
-            )
-        }));
+            .any(|variant| { variant.discriminant == Some(Expr) }));
+        assert!(model
+            .assoc_items()
+            .iter()
+            .any(|item| { matches!(item.kind, AssocItemKind::ImplConst { init: Expr, .. }) }));
         assert!(model.assoc_items().iter().any(|item| {
             matches!(
                 item.kind,
                 AssocItemKind::TraitConst {
-                    default: Some(SourceExpr),
+                    default: Some(Expr),
                     ..
                 }
             )
@@ -1900,7 +2002,7 @@ mod tests {
         assert!(model
             .variants()
             .iter()
-            .any(|variant| { variant.discriminant == Some(SourceExpr) }));
+            .any(|variant| { variant.discriminant == Some(Expr) }));
     }
 
     #[test]
