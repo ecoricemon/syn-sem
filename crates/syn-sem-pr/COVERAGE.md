@@ -20,36 +20,36 @@ should inspect.
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| `Item::Const` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Const { ty, body }` | None at item layer | Initializer is a `BodyId` with `BodyKind::Expr`. |
-| `Item::Enum` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Enum { generics, variants }` | None at item layer | Variants are separately indexed. Type parameter trait bounds are repr-native. |
-| `Item::Fn` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Fn { generics, signature, body }` | None at item layer | Body is a `BodyId` with `BodyKind::Block`; signature parameter names/patterns are still not repr-native. |
-| `Item::Impl` | Indexed | `Item { name: None, source_visibility, def, parent_scope }`, `ItemKind::Impl { generics, trait_, self_ty, items }` | None at item layer | `trait_` is a repr-native path. Associated item def links are currently mostly absent because impl scope is not exposed through `DefScopes`. |
-| `Item::Mod` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Mod { is_inline, scope, items }` | None at item layer | Inline module children are indexed. File-backed module children are not represented by `ProgramReprBuilder::build` today. |
-| `Item::Struct` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Struct { generics, fields }` | None at item layer | Fields are separately indexed. Type parameter trait bounds are repr-native. |
-| `Item::Trait` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Trait { generics, items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
-| `Item::Type` | Indexed | `Item { name, source_visibility, def, parent_scope }`, `ItemKind::Type { generics, ty }` | None at item layer | Alias target gets a `TypeId`. |
-| `Item::Use` | Partial | `Item { source_visibility, parent_scope }`, `ItemKind::Use` | None at item layer | Import declarations are not linked to `ImportId` or `DefKind::Use` aliases yet. |
+| `Item::Const` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Const { ty, init }` | None at item layer | Initializer is an `Expr` placeholder until expression representation exists. |
+| `Item::Enum` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Enum { generics, variants }` | None at item layer | Variants are separately indexed. Type parameter trait bounds are repr-native. |
+| `Item::Fn` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Fn { generics, signature, block }` | None at item layer | Function body is a `BlockId`; signature input parameter patterns are retained as pattern anchors. |
+| `Item::Impl` | Indexed | `Item { name: None, visibility, def, parent_scope }`, `ItemKind::Impl { generics, trait_, self_ty, items }` | None at item layer | `trait_` is a repr-native type path with generic arguments. Associated item def links are currently mostly absent because impl scope is not exposed through `DefScopes`. |
+| `Item::Mod` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Mod { is_inline, scope, items }` | None at item layer | Inline module children are indexed. File-backed module children are not represented by `ProgramReprBuilder::build` today. |
+| `Item::Struct` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Struct { generics, fields }` | None at item layer | Fields are separately indexed. Type parameter trait bounds are repr-native. |
+| `Item::Trait` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Trait { generics, items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
+| `Item::Type` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Type { generics, ty }` | None at item layer | Alias target gets a `TypeId`. |
+| `Item::Use` | Partial | `Item { visibility, parent_scope }`, `ItemKind::Use` | None at item layer | Import declarations are not linked to `ImportId` or `DefKind::Use` aliases yet. |
 
 ## Associated Items
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| `ImplItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplConst { ty, body }` | None at associated item layer | Initializer is a `BodyId` with owner `BodyOwner::AssocItem`. |
-| `ImplItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplFn { signature, body }` | None at associated item layer | Body is a `BodyId` with owner `BodyOwner::AssocItem`. |
+| `ImplItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplConst { ty, init }` | None at associated item layer | Initializer is an `Expr` placeholder until expression representation exists. |
+| `ImplItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplFn { signature, block }` | None at associated item layer | Function body is a `BlockId`. |
 | `ImplItem::Type` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplType { ty }` | None at associated item layer | Assigned type gets a `TypeId`. |
-| `TraitItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitConst { ty, default }` | None at associated item layer | Default expression, when present, is a `BodyId`. |
-| `TraitItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitFn { signature, default }` | None at associated item layer | Default block, when present, is a `BodyId`. |
+| `TraitItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitConst { ty, default }` | None at associated item layer | Default expression, when present, is an `Expr` placeholder. |
+| `TraitItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitFn { signature, default }` | None at associated item layer | Default block, when present, is a `BlockId`. |
 | `TraitItem::Type` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitType { default }` | None at associated item layer | Default type, when present, gets a `TypeId`. |
 
 ## Declarations Inside Items
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| `Signature` | Indexed | `Signature { source, types }` | None at signature layer | Return type and parameter types each get `TypeId`; parameter names/patterns/generics are not repr-native yet. |
-| `Field` | Indexed | `Field { name, source_visibility, ty, source }` | None at field layer | Struct field source visibility is repr-native; variant fields use private source visibility. |
-| `Variant` | Indexed | `Variant { name, def, fields, discriminant }` | None at variant layer | Variant payload fields are indexed; explicit discriminant becomes a `BodyId`. |
-| `Generics` | Partial | `Generics { params, where_clause }`, `GenericParam::{Type, Const, Unsupported}`, `TypeParamBound::Trait` | None at item layer | Item-level generic params and trait-bound paths are repr-native; where clauses keep predicate counts only until predicate lowering exists. |
-| `SourceVisibility` | Partial | `SourceVisibility::{Public, Restricted, Private}` on items and fields | Restricted paths are repr-native segment lists | Semantic visibility interactions belong to name-resolution data. |
+| `Signature` | Indexed | `Signature { source, params }`, `SignatureParam { ty, pat }` | Pattern anchor only | `params[0]` is the output type with no pattern; `params[1..]` are input parameters with `Pat` until native pattern representation exists. |
+| `Field` | Indexed | `Field { name, visibility, ty, source }` | None at field layer | Struct field visibility is repr-native; variant fields use private visibility. |
+| `Variant` | Indexed | `Variant { name, def, fields, discriminant }` | None at variant layer | Variant payload fields are indexed; explicit discriminant is an `Expr` placeholder. |
+| `Generics` | Indexed | `Generics { params, predicates }`, `GenericParam::{Type, Const, Unsupported}`, `WherePredicate::TypeBound`, `TypeParamBound::Trait` | None at item layer | Inline type parameter bounds are desugared into generic predicates alongside source where-clause predicates. |
+| `Visibility` | Partial | `Visibility::{Public, Restricted, Private}` on items and fields | Restricted paths are repr-native segment lists | Semantic visibility interactions belong to name-resolution data. |
 
 ## Types
 
@@ -62,34 +62,34 @@ should inspect.
 | `Type::Slice` | Indexed | `Type { kind: TypeKind::Slice { elem }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`. |
 | `Type::Tuple` | Indexed | `Type { kind: TypeKind::Tuple { elems }, scope }` | Retained source anchor only | Tuple element types are indexed as `TypeSource::Nested`. |
 
-Current `TypeSource` roles are `ConstType`, `SignatureParam`, `ImplSelf`,
-`StructField`, `VariantField`, `TypeAlias`, `AssocConstType`,
-`AssocTypeValue`, `GenericParamDefault`, and `ConstGenericParam`; nested type
+Current `TypeSource` roles are `ConstType`, `SignatureParam`,
+`ImplSelf`, `StructField`, `VariantField`, `TypeAlias`, `AssocConstType`,
+`AssocTypeValue`, `GenericParamDefault`, `ConstGenericParam`, and
+`WherePredicateSubject`; nested type
 entries use `Nested`.
 
-## Bodies, Statements, Expressions, and Patterns
+## Blocks, Statements, Expressions, and Patterns
 
 | AST surface | ProgramRepr coverage | Current representation data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| Function block bodies | Indexed | `Body { owner, scope, kind: BodyKind::Block }` | None at body layer | No statement-level or expression-level model is created yet. |
-| Const initializers | Indexed | `Body { owner, kind: BodyKind::Expr }` | None at body layer | Includes free consts, impl consts, trait const defaults, and variant discriminants. |
-| `Stmt::{Local, Item, Expr}` | Missing | None | None through public body data | Block-local items and locals are not repr-native. |
-| `Local` and `LocalInit` | Missing | None | None through public body data | Local initializer expressions do not get separate `BodyId`s today. |
-| `Pat` variants | Missing | None | None through public signature/body data | Parameter patterns are not repr-native yet. |
-| `Expr` variants | Missing | None | None through public body data | Desugared body IR is intentionally not implemented in V1. |
+| Function block bodies | Indexed | `Block { scope }` linked directly from function-like owners | Retained source anchor only | No statement-level or expression-level model is created yet. |
+| Const initializers | Partial | `Expr` placeholders | None at expression layer | Includes free consts, impl consts, trait const defaults, and variant discriminants. |
+| `Stmt::{Local, Item, Expr}` | Missing | None | None through public block data | Block-local items and locals are not repr-native. |
+| `Local` and `LocalInit` | Missing | None | None through public block data | Local initializer expressions do not get separate `ExprId`s today. |
+| `Pat` variants | Missing | None | None through public signature/block data | Parameter patterns are not repr-native yet. |
+| `Expr` variants | Missing | None | None through public block data | Desugared body IR is intentionally not implemented in V1. |
 
-Current `BodyOwner` variants are `Item`, `AssocItem`, and `Variant`.
+Current expression entries use `Expr` placeholders until expression ids are introduced.
 
 ## Current Test Coverage
 
 Existing `syn-sem-pr` tests now cover the main rows in this matrix:
-supported item kinds, associated item kinds, `TypeSource` roles, `BodyOwner`
-roles, body kinds, inline and file-backed module shape, struct and variant
-fields, variant discriminants, item-level generic trait bounds, and simple
-`DefId` linking behavior.
+supported item kinds, associated item kinds, `TypeSource` roles, block handles,
+source-expression placeholders, inline and file-backed module shape, struct and
+variant fields, variant discriminants, generic predicates, and simple `DefId`
+linking behavior.
 
-They still do not prove full repr-native conversion for where predicates,
-statements, locals, patterns, or expression trees because those rows remain
-intentionally missing or partial in V1. `Type` still exposes AST payloads as
-the current source type boundary; `Body` now exposes only owner, scope, and
-source kind.
+They still do not prove full repr-native conversion for statements, locals,
+patterns, or expression trees because those rows remain intentionally missing or
+partial in V1. `Type` and `Block` still expose AST payloads as the current source
+boundary.

@@ -1,7 +1,7 @@
 use std::fs;
 
 use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
-use syn_sem_pr::{BodyKind, ItemKind};
+use syn_sem_pr::ItemKind;
 use syn_sem_top::TopCx;
 
 /// Verifies physical module files are loaded from the filesystem and `use` declarations across
@@ -200,7 +200,7 @@ mod upper_phase_integration {
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "entry"))
             .expect("entry function should be represented");
         let ItemKind::Fn {
-            signature, body, ..
+            signature, block, ..
         } = entry.kind
         else {
             panic!("entry should be represented as a function item");
@@ -210,12 +210,12 @@ mod upper_phase_integration {
             .expect("function item should link to a definition");
 
         assert_eq!(names[entry_def].kind, DefKind::Fn);
-        assert_eq!(repr[body].kind, BodyKind::Block);
-        assert_eq!(repr[body].scope, names[entry_def].scopes.body);
+        assert_eq!(repr[block].scope, names[entry_def].scopes.body);
         assert!(repr[signature]
-            .types
+            .params
             .iter()
-            .all(|ty| infer.type_for_repr_type(*ty).is_some()));
+            .map(|param| param.ty)
+            .all(|ty| infer.type_for_repr_type(ty).is_some()));
 
         let inner = repr
             .items()
@@ -244,13 +244,13 @@ mod upper_phase_integration {
             .and_then(|item| item.def)
             .expect("Local struct should link to a definition");
 
-        let local_ty = repr[signature].types[0];
+        let local_ty = repr[signature].params[0].ty;
         let infer_local_ty = infer
             .type_for_repr_type(local_ty)
             .expect("signature return type should be lowered");
         assert_eq!(infer.nominal_def(infer_local_ty), Some(local_def));
 
-        let usize_ty = repr[signature].types[2];
+        let usize_ty = repr[signature].params[2].ty;
         let infer_usize_ty = infer
             .type_for_repr_type(usize_ty)
             .expect("signature parameter type should be lowered");
@@ -284,7 +284,7 @@ mod upper_phase_integration {
             .and_then(|binding| binding.single())
             .expect("T should bind to one generic type parameter");
 
-        let t_return_ty = repr[generic_signature].types[0];
+        let t_return_ty = repr[generic_signature].params[0].ty;
         let infer_t_return_ty = infer
             .type_for_repr_type(t_return_ty)
             .expect("generic return type should be lowered");

@@ -18,7 +18,7 @@
 ## Model
 
 - Prefer Rust-shaped semantic data over backend-oriented or fully lowered forms.
-- Represent source declarations and bodies explicitly.
+- Represent source declarations, source blocks, and source expression placeholders explicitly.
 - Do not make later phases recover source structure from raw AST nodes.
 - Leave room for future block/body desugaring IR.
 - Keep ownership and lifetimes tied to the shared top-level context.
@@ -29,7 +29,7 @@
 
 - May further expand generics beyond item-level parameter and trait-bound facts.
 - May expose function parameters and pattern names in a more upper-phase-friendly form.
-- May give `Body` statement, expression, or pattern entry points.
+- May give `Block` statement, expression, or pattern entry points.
 - May further refine path and type occurrence representation for upper semantic phases.
 - May link `use` items to import or alias information without owning name resolution.
 - May add traversal helpers when they encode real program-shape relationships.
@@ -37,6 +37,6 @@
 ## Primary Public Items
 
 - `ProgramRepr`: program representation produced from AST and name-resolution data.
-- `Item`, `Signature`, `Body`, `Field`, `Variant`, `AssocItem`, `Type`: source-level components.
+- `Item`, `Signature`, `Block`, `Field`, `Variant`, `AssocItem`, `Type`: source-level components.
 - `Generics`, `GenericParam`, `TypeParamBound`: item-level generic parameter
   and bound facts for upper phases.

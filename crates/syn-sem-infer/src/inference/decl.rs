@@ -5,9 +5,9 @@
 //! associated type assignments, and then invokes logic-backed derivation for projection solving.
 
 use crate::{
-    ArrayLen, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
-    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, SourceConstArg, SourceTypeBounds,
-    TraitBoundFact, Type, TypeId,
+    ArrayLen, ConstArg, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
+    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, TraitBoundFact, Type, TypeBounds,
+    TypeId,
 };
 use syn_sem_common::CommonCx;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
@@ -64,12 +64,12 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     }
 
     fn lower_generics(&mut self, generics: &pr::Generics<'cx>) {
-        for param in &generics.params {
-            let pr::GenericParam::Type(param) = param else {
+        for predicate in &generics.predicates {
+            let pr::WherePredicate::TypeBound { subject, bounds } = predicate else {
                 continue;
             };
-            let subject = self.lower_name_as_type(param.name, generics.scope);
-            for bound in &param.bounds {
+            let subject = self.lower_repr_type(*subject);
+            for bound in bounds {
                 let pr::TypeParamBound::Trait(bound) = bound else {
                     continue;
                 };
@@ -102,7 +102,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
                 continue;
             };
             let impl_self_ty = self.lower_repr_type(*self_ty);
-            let trait_ty = self.lower_path_as_type(trait_, item.parent_scope);
+            let trait_ty = self.lower_path_value_as_type(trait_, item.parent_scope);
             let Some(trait_def) = self.trait_def_for_type(trait_ty) else {
                 continue;
             };
@@ -177,20 +177,20 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_path_type(&mut self, repr_type: pr::TypeId, path: &pr::TypePath<'cx>) -> Type<'cx> {
+    fn lower_path_type(&mut self, repr_type: pr::TypeId, path: &pr::Path<'cx>) -> Type<'cx> {
         if path.qself.is_none() {
-            if let Some(primitive) = PrimitiveType::from_repr_path(&path.path) {
+            if let Some(primitive) = PrimitiveType::from_repr_path(&path.segments) {
                 return Type::Primitive(primitive);
             }
         }
 
         let scope = self.repr[repr_type].scope;
         let qself = self.lower_qself(path.qself.as_ref(), scope);
-        let resolution = self.resolve_path_value(scope, &path.path, qself.as_ref());
+        let resolution = self.resolve_path_value(scope, &path.segments, qself.as_ref());
 
         Type::Path(PathType {
             qself,
-            path: self.lower_path_value(&path.path),
+            path: self.lower_path_value(&path.segments),
             resolution,
         })
     }
@@ -201,18 +201,17 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> Option<QSelf> {
         let qself = qself?;
+        let trait_ty = (!qself.trait_path.is_empty())
+            .then(|| self.lower_path_value_as_type(&qself.trait_path, scope));
         Some(QSelf {
             self_ty: self.lower_repr_type(qself.self_ty),
-            trait_ty: qself
-                .trait_path
-                .as_ref()
-                .map(|path| self.lower_path_value_as_type(path, scope)),
+            trait_ty,
         })
     }
 
     fn lower_path_value_as_type(
         &mut self,
-        path: &pr::TypePathValue<'cx>,
+        path: &[pr::PathSegment<'cx>],
         scope: Option<ScopeId>,
     ) -> TypeId {
         let ty = Type::Path(PathType {
@@ -223,39 +222,10 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         self.push_type(ty)
     }
 
-    fn lower_path_as_type(&mut self, path: &pr::Path<'cx>, scope: Option<ScopeId>) -> TypeId {
-        let path = pr::TypePathValue {
-            segments: path
-                .segments
-                .iter()
-                .map(|name| pr::TypePathSegment {
-                    name: *name,
-                    args: Default::default(),
-                })
-                .collect(),
-        };
-        self.lower_path_value_as_type(&path, scope)
-    }
-
-    fn lower_name_as_type(
-        &mut self,
-        name: syn_sem_name::Name<'cx>,
-        scope: Option<ScopeId>,
-    ) -> TypeId {
-        let path = pr::TypePathValue {
-            segments: std::iter::once(pr::TypePathSegment {
-                name,
-                args: Default::default(),
-            })
-            .collect(),
-        };
-        self.lower_path_value_as_type(&path, scope)
-    }
-
     fn resolve_path_value(
         &self,
         scope: Option<ScopeId>,
-        path: &pr::TypePathValue<'cx>,
+        path: &[pr::PathSegment<'cx>],
         qself: Option<&QSelf>,
     ) -> PathTypeResolution {
         if let Some(projection) = self.resolve_qself_trait_member(path, qself) {
@@ -267,7 +237,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         };
         match self
             .names
-            .resolve_type_path(scope, path.segments.iter().map(|segment| segment.name))
+            .resolve_type_path(scope, path.iter().map(|segment| segment.name))
         {
             ResolveResult::Found(def) => self.classify_path_target(def, qself),
             ResolveResult::Ambiguous(defs) => {
@@ -279,13 +249,13 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
 
     fn resolve_qself_trait_member(
         &self,
-        path: &pr::TypePathValue<'cx>,
+        path: &[pr::PathSegment<'cx>],
         qself: Option<&QSelf>,
     ) -> Option<PathTypeResolution> {
         let qself = qself?;
         let trait_ty = qself.trait_ty?;
         let trait_def = self.trait_def_for_type(trait_ty)?;
-        let assoc_name = path.segments.last()?.name;
+        let assoc_name = path.last()?.name;
         let ResolveResult::Found(assoc_type) =
             self.names.member(trait_def, Namespace::Type, assoc_name)
         else {
@@ -318,17 +288,16 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_path_value(&mut self, path: &pr::TypePathValue<'cx>) -> Path<'cx> {
+    fn lower_path_value(&mut self, path: &[pr::PathSegment<'cx>]) -> Path<'cx> {
         Path {
             segments: path
-                .segments
                 .iter()
                 .map(|segment| self.lower_path_segment(segment))
                 .collect(),
         }
     }
 
-    fn lower_path_segment(&mut self, segment: &pr::TypePathSegment<'cx>) -> PathSegment<'cx> {
+    fn lower_path_segment(&mut self, segment: &pr::PathSegment<'cx>) -> PathSegment<'cx> {
         PathSegment {
             name: segment.name,
             args: segment
@@ -342,18 +311,18 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn lower_generic_arg(&mut self, arg: &pr::GenericArgument<'cx>) -> GenericArgument<'cx> {
         match arg {
             pr::GenericArgument::Type(ty) => GenericArgument::Type(self.lower_repr_type(*ty)),
-            pr::GenericArgument::Const(_) => GenericArgument::Const(SourceConstArg),
+            pr::GenericArgument::Const(_) => GenericArgument::Const(ConstArg),
             pr::GenericArgument::AssocType { name, ty } => GenericArgument::AssocType {
                 name: *name,
                 ty: self.lower_repr_type(*ty),
             },
             pr::GenericArgument::AssocConst { name, .. } => GenericArgument::AssocConst {
                 name: *name,
-                value: SourceConstArg,
+                value: ConstArg,
             },
             pr::GenericArgument::Constraint { name, .. } => GenericArgument::Constraint {
                 name: *name,
-                bounds: SourceTypeBounds,
+                bounds: TypeBounds,
             },
             pr::GenericArgument::Unsupported => GenericArgument::Unsupported,
         }
