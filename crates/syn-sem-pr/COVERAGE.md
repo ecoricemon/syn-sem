@@ -57,7 +57,7 @@ should inspect.
 | --- | --- | --- | --- | --- |
 | `Type::Array` | Indexed | `Type { kind: TypeKind::Array { elem, len }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`; length remains a source-expression placeholder until expression representation exists. |
 | `Type::Infer` | Indexed | `Type { kind: TypeKind::Infer, scope }` | Retained source anchor only | Represents `_` without requiring later phases to inspect AST. |
-| `Type::Path` | Indexed | `Type { kind: TypeKind::Path, scope }` with optional qualified self type, segments, and generic argument shape | Retained source anchor only | Qualified self types link to nested `TypeId`s; type and associated-type generic arguments also link to nested `TypeId`s; const args, associated consts, and constraints remain placeholders until expression/bound representation exists. |
+| `Type::Path` | Indexed | `Type { kind: TypeKind::Path, scope }` with optional qualified self type, segments, and generic argument shape | Retained source anchor only | Qualified self types link to nested `TypeId`s; type and associated-type generic arguments also link to nested `TypeId`s; associated type constraints keep repr-native bounds; const args and associated consts use `ConstArg::{Lit, Path, Expr}`. |
 | `Type::Reference` | Indexed | `Type { kind: TypeKind::Reference { elem, is_mut }, scope }` | Retained source anchor only | Referenced type is indexed as `TypeSource::Nested`. |
 | `Type::Slice` | Indexed | `Type { kind: TypeKind::Slice { elem }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`. |
 | `Type::Tuple` | Indexed | `Type { kind: TypeKind::Tuple { elems }, scope }` | Retained source anchor only | Tuple element types are indexed as `TypeSource::Nested`. |
@@ -86,8 +86,8 @@ Current expression entries use `Expr` placeholders until expression ids are intr
 Existing `syn-sem-pr` tests now cover the main rows in this matrix:
 supported item kinds, associated item kinds, `TypeSource` roles, block handles,
 source-expression placeholders, inline and file-backed module shape, struct and
-variant fields, variant discriminants, generic predicates, and simple `DefId`
-linking behavior.
+variant fields, variant discriminants, generic predicates, const generic
+arguments, associated const arguments, and simple `DefId` linking behavior.
 
 They still do not prove full repr-native conversion for statements, locals,
 patterns, or expression trees because those rows remain intentionally missing or

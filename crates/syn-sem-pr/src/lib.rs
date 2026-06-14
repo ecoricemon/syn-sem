@@ -13,9 +13,11 @@
 //! - Stores connection ids such as `DefId` and `ScopeId`, while leaving resolved name, import,
 //!   visibility, and type facts to other semantic phases.
 
+mod builder;
 mod desugar;
 mod id;
 mod repr;
 
+pub use builder::ProgramReprBuilder;
 pub use id::*;
 pub use repr::*;
