@@ -59,6 +59,8 @@ pub struct TypeParam<'cx> {
     /// Bounds on the parameter.
     pub bounds: &'cx [TypeParamBound<'cx>],
     /// Optional default type.
+    ///
+    /// Stored by reference to break recursive generic/type/expression shapes.
     pub default: Option<&'cx Type<'cx>>,
     /// Source span of the parameter.
     pub span: Span<'cx>,
@@ -87,8 +89,12 @@ pub struct ConstParam<'cx> {
     /// Parameter name.
     pub ident: Ident<'cx>,
     /// Parameter type.
+    ///
+    /// Stored by reference to break recursive generic/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Optional default expression.
+    ///
+    /// Stored by reference to break recursive generic/expression shapes.
     pub default: Option<&'cx Expr<'cx>>,
     /// Source span of the parameter.
     pub span: Span<'cx>,

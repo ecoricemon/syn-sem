@@ -81,8 +81,12 @@ pub struct ItemConst<'cx> {
     /// Constant name.
     pub ident: Ident<'cx>,
     /// Constant type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Initializer expression.
+    ///
+    /// Stored by reference to break recursive item/expression shapes.
     pub init: &'cx Expr<'cx>,
     /// Source span of the item.
     pub span: Span<'cx>,
@@ -180,6 +184,8 @@ pub struct ItemImpl<'cx> {
     /// Implemented trait path, if this is a trait impl.
     pub trait_: Option<Path<'cx>>,
     /// Implementing self type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub self_ty: &'cx Type<'cx>,
     /// Items inside the impl block.
     pub items: &'cx [ImplItem<'cx>],
@@ -258,8 +264,12 @@ pub struct ImplItemConst<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Associated const type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Initializer expression.
+    ///
+    /// Stored by reference to break recursive item/expression shapes.
     pub init: &'cx Expr<'cx>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
@@ -318,6 +328,8 @@ pub struct ImplItemType<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Assigned type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
@@ -421,6 +433,8 @@ pub struct ItemType<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Aliased type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Source span of the item.
     pub span: Span<'cx>,
@@ -668,8 +682,12 @@ pub struct TraitItemConst<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Associated const type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub ty: &'cx Type<'cx>,
     /// Optional default expression.
+    ///
+    /// Stored by reference to break recursive item/expression shapes.
     pub default: Option<&'cx Expr<'cx>>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
@@ -736,6 +754,8 @@ pub struct TraitItemType<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Optional default type.
+    ///
+    /// Stored by reference to break recursive item/type/expression shapes.
     pub default: Option<&'cx Type<'cx>>,
     /// Source span of the associated item.
     pub span: Span<'cx>,
@@ -830,6 +850,22 @@ impl<'cx> Parameter<'cx> {
             pat: scx.alloc(pat_ident),
             ty,
             span,
+        };
+        Self { pat, span }
+    }
+
+    pub(crate) fn from_closure_input(
+        scx: &'cx SyntaxCx<'cx>,
+        desc: InputDesc<'cx, '_, syn::Pat>,
+    ) -> Self {
+        let span = desc.span(desc.input);
+        let pat = match desc.input {
+            syn::Pat::Type(pat) => PatType::from_syn(scx, desc.with_input(pat)),
+            pat => PatType {
+                pat: scx.alloc(Pat::from_syn(scx, desc.with_input(pat))),
+                ty: Type::Infer(span),
+                span,
+            },
         };
         Self { pat, span }
     }

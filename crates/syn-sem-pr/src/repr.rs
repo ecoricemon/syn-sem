@@ -92,6 +92,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match item {
             ast::Item::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
+                self.collect_expr(item.init, type_scope);
                 ItemKind::Const { ty, init: Expr }
             }
             ast::Item::Enum(item) => {
@@ -203,7 +204,10 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .collect(),
                 None,
             ),
-            ast::VariantKind::Discriminant(_) => (Vec::new(), Some(Expr)),
+            ast::VariantKind::Discriminant(expr) => {
+                self.collect_expr(expr, scope);
+                (Vec::new(), Some(Expr))
+            }
             ast::VariantKind::Unit => (Vec::new(), None),
         };
         self.repr.add_variant(Variant {
@@ -244,6 +248,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::ImplItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
+                self.collect_expr(item.init, type_scope);
                 AssocItemKind::ImplConst { ty, init: Expr }
             }
             ast::ImplItem::Fn(item) => {
@@ -280,7 +285,10 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::TraitItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                let default = item.default.map(|_| Expr);
+                let default = item.default.map(|expr| {
+                    self.collect_expr(expr, type_scope);
+                    Expr
+                });
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
@@ -313,8 +321,16 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         signature: &'cx ast::Signature<'cx>,
         scope: Option<ScopeId>,
     ) -> SignatureId {
-        let params: Vec<_> = signature
-            .params
+        self.collect_signature_params(source, signature.params, scope)
+    }
+
+    fn collect_signature_params(
+        &mut self,
+        source: SignatureSource,
+        params: &'cx [ast::Parameter<'cx>],
+        scope: Option<ScopeId>,
+    ) -> SignatureId {
+        let params: Vec<_> = params
             .iter()
             .enumerate()
             .map(|(index, param)| {
@@ -583,7 +599,109 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
     fn collect_block(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) -> BlockId {
         let id = self.repr.next_block_id();
         self.repr.add_block(Block { id, block, scope });
+        self.collect_block_contents(block, scope);
         id
+    }
+
+    fn collect_block_contents(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) {
+        for stmt in block.stmts {
+            self.collect_stmt_exprs(stmt, scope);
+        }
+    }
+
+    fn collect_stmt_exprs(&mut self, stmt: &'cx ast::Stmt<'cx>, scope: Option<ScopeId>) {
+        match stmt {
+            ast::Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    self.collect_expr(init.expr, scope);
+                }
+            }
+            ast::Stmt::Item(_) => {}
+            ast::Stmt::Expr(expr) => self.collect_expr(expr, scope),
+        }
+    }
+
+    fn collect_expr(&mut self, expr: &'cx ast::Expr<'cx>, scope: Option<ScopeId>) {
+        match expr {
+            ast::Expr::Array(expr) => {
+                for elem in expr.elems {
+                    self.collect_expr(elem, scope);
+                }
+            }
+            ast::Expr::Assign(expr) => {
+                self.collect_expr(expr.left, scope);
+                self.collect_expr(expr.right, scope);
+            }
+            ast::Expr::Binary(expr) => {
+                self.collect_expr(expr.left, scope);
+                self.collect_expr(expr.right, scope);
+            }
+            ast::Expr::Block(expr) => {
+                self.collect_block(&expr.block, scope);
+            }
+            ast::Expr::Call(expr) => {
+                self.collect_expr(expr.func, scope);
+                for arg in expr.args {
+                    self.collect_expr(arg, scope);
+                }
+            }
+            ast::Expr::Cast(expr) => {
+                self.collect_expr(expr.expr, scope);
+                self.collect_type(expr.ty, scope, TypeSource::Nested);
+            }
+            ast::Expr::Closure(expr) => {
+                self.collect_signature_params(SignatureSource::Closure, expr.params, scope);
+                self.collect_expr(expr.body, scope);
+            }
+            ast::Expr::Const(expr) => {
+                self.collect_block(&expr.block, scope);
+            }
+            ast::Expr::Field(expr) => {
+                self.collect_expr(expr.base, scope);
+            }
+            ast::Expr::Index(expr) => {
+                self.collect_expr(expr.expr, scope);
+                self.collect_expr(expr.index, scope);
+            }
+            ast::Expr::Lit(_) | ast::Expr::Path(_) => {}
+            ast::Expr::MethodCall(expr) => {
+                self.collect_expr(expr.receiver, scope);
+                for arg in expr.args {
+                    self.collect_expr(arg, scope);
+                }
+            }
+            ast::Expr::Paren(expr) => {
+                self.collect_expr(expr.expr, scope);
+            }
+            ast::Expr::Reference(expr) => {
+                self.collect_expr(expr.expr, scope);
+            }
+            ast::Expr::Repeat(expr) => {
+                self.collect_expr(expr.expr, scope);
+                self.collect_expr(expr.len, scope);
+            }
+            ast::Expr::Return(expr) => {
+                if let Some(expr) = expr.expr {
+                    self.collect_expr(expr, scope);
+                }
+            }
+            ast::Expr::Struct(expr) => {
+                for field in expr.fields {
+                    self.collect_expr(field.expr, scope);
+                }
+                if let Some(rest) = expr.rest {
+                    self.collect_expr(rest, scope);
+                }
+            }
+            ast::Expr::Tuple(expr) => {
+                for elem in expr.elems {
+                    self.collect_expr(elem, scope);
+                }
+            }
+            ast::Expr::Unary(expr) => {
+                self.collect_expr(expr.expr, scope);
+            }
+        }
     }
 
     fn def_for_item(&self, item: &'cx ast::Item<'cx>) -> Option<DefId> {
@@ -1030,6 +1148,8 @@ pub enum SignatureSource {
     ImplFn,
     /// Trait associated function signature.
     TraitFn,
+    /// Closure signature.
+    Closure,
 }
 
 /// One represented field declaration.
@@ -1470,6 +1590,43 @@ mod tests {
             ast::Pat::Ident(_)
         ));
         assert_eq!(model[block].block.stmts.len(), 1);
+    }
+
+    #[test]
+    fn collects_closure_signatures_from_expression_bodies() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let first = |x| x;
+                let second = |y: i32| -> i32 { y };
+            }
+            "#,
+        );
+
+        let closures = model
+            .signatures()
+            .iter()
+            .filter(|signature| signature.source == SignatureSource::Closure)
+            .collect::<Vec<_>>();
+        assert_eq!(closures.len(), 2);
+
+        let inferred = closures
+            .iter()
+            .find(|signature| matches!(model[signature.params[1].ty].kind, TypeKind::Infer))
+            .expect("expected closure with inferred input type");
+        assert!(matches!(model[inferred.params[0].ty].kind, TypeKind::Infer));
+        assert!(matches!(model[inferred.params[1].ty].kind, TypeKind::Infer));
+
+        let typed = closures
+            .iter()
+            .find(|signature| matches!(model[signature.params[1].ty].kind, TypeKind::Path(_)))
+            .expect("expected closure with typed input");
+        assert!(matches!(model[typed.params[0].ty].kind, TypeKind::Path(_)));
+        assert!(matches!(model[typed.params[1].ty].kind, TypeKind::Path(_)));
     }
 
     #[test]

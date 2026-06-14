@@ -74,6 +74,8 @@ impl<'cx> FromSyn<'cx, syn::Local> for Local<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct LocalInit<'cx> {
     /// Initializer expression.
+    ///
+    /// Stored by reference to break the recursive statement/expression shape.
     pub expr: &'cx Expr<'cx>,
     /// Source span of the initializer.
     pub span: Span<'cx>,
