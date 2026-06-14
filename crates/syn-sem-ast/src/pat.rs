@@ -109,6 +109,8 @@ impl<'cx> FromSyn<'cx, syn::Token![self]> for PatIdent<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct PatReference<'cx> {
     /// Referenced pattern.
+    ///
+    /// Stored by reference to break the recursive [`Pat`] shape.
     pub pat: &'cx Pat<'cx>,
     /// Whether the reference pattern is mutable.
     pub is_mut: bool,
@@ -201,6 +203,8 @@ pub struct FieldPat<'cx> {
     /// Field member being matched.
     pub member: Ident<'cx>,
     /// Pattern for the field value.
+    ///
+    /// Stored by reference to break the recursive [`Pat`] shape.
     pub pat: &'cx Pat<'cx>,
     /// Source span of the field pattern.
     pub span: Span<'cx>,
@@ -247,6 +251,8 @@ impl<'cx> FromSyn<'cx, syn::PatTuple> for PatTuple<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct PatType<'cx> {
     /// Inner pattern.
+    ///
+    /// Stored by reference to break the recursive [`Pat`] shape.
     pub pat: &'cx Pat<'cx>,
     /// Annotated type.
     pub ty: Type<'cx>,

@@ -1,4 +1,7 @@
-use crate::{Block, FromSyn, Ident, InputDesc, Lit, Path, Span, SyntaxCx, Type};
+use crate::{
+    Block, FromSyn, Ident, InputDesc, Lit, Parameter, ParameterCx, Path, Span, SyntaxCx, Type,
+};
+use std::iter;
 use syn_sem_macros::CheckDropless;
 
 /// A Rust expression supported by the semantic AST.
@@ -18,6 +21,8 @@ pub enum Expr<'cx> {
     Call(ExprCall<'cx>),
     /// Cast expression.
     Cast(ExprCast<'cx>),
+    /// Closure expression.
+    Closure(ExprClosure<'cx>),
     /// Const block expression.
     Const(ExprConst<'cx>),
     /// Field access expression.
@@ -55,6 +60,7 @@ impl<'cx> FromSyn<'cx, syn::Expr> for Expr<'cx> {
             syn::Expr::Block(v) => Self::Block(ExprBlock::from_syn(scx, desc.with_input(v))),
             syn::Expr::Call(v) => Self::Call(ExprCall::from_syn(scx, desc.with_input(v))),
             syn::Expr::Cast(v) => Self::Cast(ExprCast::from_syn(scx, desc.with_input(v))),
+            syn::Expr::Closure(v) => Self::Closure(ExprClosure::from_syn(scx, desc.with_input(v))),
             syn::Expr::Const(v) => Self::Const(ExprConst::from_syn(scx, desc.with_input(v))),
             syn::Expr::Field(v) => Self::Field(ExprField::from_syn(scx, desc.with_input(v))),
             syn::Expr::Index(v) => Self::Index(ExprIndex::from_syn(scx, desc.with_input(v))),
@@ -73,6 +79,53 @@ impl<'cx> FromSyn<'cx, syn::Expr> for Expr<'cx> {
             syn::Expr::Tuple(v) => Self::Tuple(ExprTuple::from_syn(scx, desc.with_input(v))),
             syn::Expr::Unary(v) => Self::Unary(ExprUnary::from_syn(scx, desc.with_input(v))),
             o => todo!("{o:?}"),
+        }
+    }
+}
+
+/// A closure expression.
+///
+/// For example, `|x| x + 1`, `move |x: i32| x`, or `|| -> i32 { 1 }`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub struct ExprClosure<'cx> {
+    /// Whether the closure has the `async` marker.
+    pub is_async: bool,
+    /// Whether the closure has the `static` marker.
+    pub is_static: bool,
+    /// Whether the closure captures by `move`.
+    pub is_move: bool,
+    /// Return parameter followed by input parameters.
+    pub params: &'cx [Parameter<'cx>],
+    /// Closure body expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
+    pub body: &'cx Expr<'cx>,
+    /// Source span of the expression.
+    pub span: Span<'cx>,
+}
+
+impl<'cx> FromSyn<'cx, syn::ExprClosure> for ExprClosure<'cx> {
+    fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ExprClosure>) -> Self {
+        let output = Parameter::from_return_type(
+            scx,
+            desc.with_input(&desc.input.output),
+            ParameterCx::Closure,
+        );
+        let inputs = desc
+            .input
+            .inputs
+            .iter()
+            .map(|pat| Parameter::from_closure_input(scx, desc.with_input(pat)));
+        let mut params = iter::once(output).chain(inputs);
+        let len = desc.input.inputs.len() + 1;
+
+        Self {
+            is_async: desc.input.asyncness.is_some(),
+            is_static: desc.input.movability.is_some(),
+            is_move: desc.input.capture.is_some(),
+            params: scx.alloc_slice(len, |_| params.next().unwrap()),
+            body: scx.alloc(Expr::from_syn(scx, desc.with_input(&desc.input.body))),
+            span: desc.span(desc.input),
         }
     }
 }
@@ -103,8 +156,12 @@ impl<'cx> FromSyn<'cx, syn::ExprArray> for ExprArray<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprAssign<'cx> {
     /// Left-hand side expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub left: &'cx Expr<'cx>,
     /// Right-hand side expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub right: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -126,8 +183,12 @@ impl<'cx> FromSyn<'cx, syn::ExprAssign> for ExprAssign<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprBinary<'cx> {
     /// Left-hand side expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub left: &'cx Expr<'cx>,
     /// Right-hand side expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub right: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -169,6 +230,8 @@ impl<'cx> FromSyn<'cx, syn::ExprBlock> for ExprBlock<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprCall<'cx> {
     /// Callee expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub func: &'cx Expr<'cx>,
     /// Call arguments.
     pub args: &'cx [Expr<'cx>],
@@ -192,8 +255,12 @@ impl<'cx> FromSyn<'cx, syn::ExprCall> for ExprCall<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprCast<'cx> {
     /// Expression being cast.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Target type.
+    ///
+    /// Stored by reference to break the recursive expression/type shape.
     pub ty: &'cx Type<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -235,6 +302,8 @@ impl<'cx> FromSyn<'cx, syn::ExprConst> for ExprConst<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprField<'cx> {
     /// Base expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub base: &'cx Expr<'cx>,
     /// Field member name or tuple index.
     pub member: Ident<'cx>,
@@ -262,8 +331,12 @@ impl<'cx> FromSyn<'cx, syn::ExprField> for ExprField<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprIndex<'cx> {
     /// Indexed expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Index expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub index: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -305,6 +378,8 @@ impl<'cx> FromSyn<'cx, syn::ExprLit> for ExprLit<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprMethodCall<'cx> {
     /// Receiver expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub receiver: &'cx Expr<'cx>,
     /// Method name.
     pub method: Ident<'cx>,
@@ -331,6 +406,8 @@ impl<'cx> FromSyn<'cx, syn::ExprMethodCall> for ExprMethodCall<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprParen<'cx> {
     /// Inner expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -371,6 +448,8 @@ impl<'cx> FromSyn<'cx, syn::ExprPath> for ExprPath<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprReference<'cx> {
     /// Referenced expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Whether the reference is mutable.
     pub is_mut: bool,
@@ -394,8 +473,12 @@ impl<'cx> FromSyn<'cx, syn::ExprReference> for ExprReference<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprRepeat<'cx> {
     /// Repeated value expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Length expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub len: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -417,6 +500,8 @@ impl<'cx> FromSyn<'cx, syn::ExprRepeat> for ExprRepeat<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprReturn<'cx> {
     /// Optional returned expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: Option<&'cx Expr<'cx>>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -445,6 +530,8 @@ pub struct ExprStruct<'cx> {
     /// Field initializers.
     pub fields: &'cx [FieldValue<'cx>],
     /// Optional rest expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub rest: Option<&'cx Expr<'cx>>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -473,6 +560,8 @@ pub struct FieldValue<'cx> {
     /// Field member being initialized.
     pub member: Ident<'cx>,
     /// Initializer expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Source span of the field value.
     pub span: Span<'cx>,
@@ -545,6 +634,8 @@ pub struct ExprUnary<'cx> {
     /// Unary operator.
     pub op: UnOp,
     /// Operand expression.
+    ///
+    /// Stored by reference to break the recursive [`Expr`] shape.
     pub expr: &'cx Expr<'cx>,
     /// Source span of the expression.
     pub span: Span<'cx>,
@@ -596,6 +687,25 @@ mod tests {
 
         let expr = parse::<syn::ExprConst, ExprConst>(&scx, "const { 1 }");
         assert_eq!(expr.block.stmts.len(), 1);
+    }
+
+    #[test]
+    fn expr_closure() {
+        // Proves closure expressions preserve markers, params, inferred types, and body.
+        let ccx = syn_sem_common::CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+
+        let expr = parse::<syn::ExprClosure, ExprClosure>(&scx, "move |x| x");
+        assert!(expr.is_move);
+        assert_eq!(expr.params.len(), 2);
+        assert!(matches!(expr.params[0].pat.ty, Type::Infer(_)));
+        assert!(matches!(expr.params[1].pat.ty, Type::Infer(_)));
+        assert!(matches!(expr.body, Expr::Path(_)));
+
+        let expr = parse::<syn::ExprClosure, ExprClosure>(&scx, "|x: i32| -> i32 { x }");
+        assert!(matches!(expr.params[0].pat.ty, Type::Path(_)));
+        assert!(matches!(expr.params[1].pat.ty, Type::Path(_)));
+        assert!(matches!(expr.body, Expr::Block(_)));
     }
 
     #[test]

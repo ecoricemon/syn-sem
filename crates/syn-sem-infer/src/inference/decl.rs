@@ -308,23 +308,23 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_generic_arg(&mut self, arg: &pr::GenericArgument<'cx>) -> GenericArgument<'cx> {
+    fn lower_generic_arg(&mut self, arg: &pr::GenericArg<'cx>) -> GenericArgument<'cx> {
         match arg {
-            pr::GenericArgument::Type(ty) => GenericArgument::Type(self.lower_repr_type(*ty)),
-            pr::GenericArgument::Const(_) => GenericArgument::Const(ConstArg),
-            pr::GenericArgument::AssocType { name, ty } => GenericArgument::AssocType {
+            pr::GenericArg::Type(ty) => GenericArgument::Type(self.lower_repr_type(*ty)),
+            pr::GenericArg::Const(_) => GenericArgument::Const(ConstArg),
+            pr::GenericArg::AssocType { name, ty } => GenericArgument::AssocType {
                 name: *name,
                 ty: self.lower_repr_type(*ty),
             },
-            pr::GenericArgument::AssocConst { name, .. } => GenericArgument::AssocConst {
+            pr::GenericArg::AssocConst { name, .. } => GenericArgument::AssocConst {
                 name: *name,
                 value: ConstArg,
             },
-            pr::GenericArgument::Constraint { name, .. } => GenericArgument::Constraint {
+            pr::GenericArg::Constraint { name, .. } => GenericArgument::Constraint {
                 name: *name,
                 bounds: TypeBounds,
             },
-            pr::GenericArgument::Unsupported => GenericArgument::Unsupported,
+            pr::GenericArg::Unsupported => GenericArgument::Unsupported,
         }
     }
 

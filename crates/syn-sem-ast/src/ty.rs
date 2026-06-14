@@ -49,6 +49,8 @@ impl<'cx> FromSyn<'cx, syn::Type> for Type<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct TypeArray<'cx> {
     /// Element type.
+    ///
+    /// Stored by reference to break the recursive [`Type`] shape.
     pub elem: &'cx Type<'cx>,
     /// Length expression.
     pub len: Expr<'cx>,
@@ -100,6 +102,8 @@ impl<'cx> FromSyn<'cx, syn::TypePath> for TypePath<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct QSelf<'cx> {
     /// Self type written inside `<...>`.
+    ///
+    /// Stored by reference to break the recursive [`Type`] shape.
     pub ty: &'cx Type<'cx>,
     /// Split point in the path before the associated item segment.
     pub position: usize,
@@ -123,6 +127,8 @@ impl<'cx> FromSyn<'cx, syn::QSelf> for QSelf<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct TypeReference<'cx> {
     /// Referenced type.
+    ///
+    /// Stored by reference to break the recursive [`Type`] shape.
     pub elem: &'cx Type<'cx>,
     /// Whether the reference is mutable.
     pub is_mut: bool,
@@ -146,6 +152,8 @@ impl<'cx> FromSyn<'cx, syn::TypeReference> for TypeReference<'cx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct TypeSlice<'cx> {
     /// Element type.
+    ///
+    /// Stored by reference to break the recursive [`Type`] shape.
     pub elem: &'cx Type<'cx>,
     /// Source span of the slice type.
     pub span: Span<'cx>,
