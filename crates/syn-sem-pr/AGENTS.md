@@ -18,7 +18,8 @@
 ## Model
 
 - Prefer Rust-shaped semantic data over backend-oriented or fully lowered forms.
-- Represent source declarations, source blocks, and source expression placeholders explicitly.
+- Represent source declarations, source blocks, and source expressions explicitly.
+- Add unsupported pattern variants on demand instead of filling coverage ahead of consumers.
 - Do not make later phases recover source structure from raw AST nodes.
 - Leave room for future block/body desugaring IR.
 - Keep ownership and lifetimes tied to the shared top-level context.

@@ -1,6 +1,9 @@
 use std::ops::{Index, IndexMut};
 
-use crate::{AssocItemId, BlockId, FieldId, FileId, ItemId, SignatureId, TypeId, VariantId};
+use crate::{
+    AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId, StmtId,
+    TypeId, VariantId,
+};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, InternedStr};
 use syn_sem_name::{DefId, Name, ScopeId};
@@ -10,11 +13,15 @@ use syn_sem_name::{DefId, Name, ScopeId};
 pub struct ProgramRepr<'cx> {
     files: Vec<File<'cx>>,
     items: Vec<Item<'cx>>,
-    signatures: Vec<Signature<'cx>>,
+    signatures: Vec<Signature>,
     fields: Vec<Field<'cx>>,
     variants: Vec<Variant<'cx>>,
     assoc_items: Vec<AssocItem<'cx>>,
     blocks: Vec<Block<'cx>>,
+    stmts: Vec<Stmt<'cx>>,
+    locals: Vec<Local<'cx>>,
+    pats: Vec<Pat<'cx>>,
+    exprs: Vec<Expr<'cx>>,
     types: Vec<Type<'cx>>,
 }
 
@@ -30,7 +37,7 @@ impl<'cx> ProgramRepr<'cx> {
     }
 
     /// Returns all represented function-like signatures.
-    pub fn signatures(&self) -> &[Signature<'cx>] {
+    pub fn signatures(&self) -> &[Signature] {
         &self.signatures
     }
 
@@ -52,6 +59,26 @@ impl<'cx> ProgramRepr<'cx> {
     /// Returns all represented braced source blocks.
     pub fn blocks(&self) -> &[Block<'cx>] {
         &self.blocks
+    }
+
+    /// Returns all represented source statements.
+    pub fn stmts(&self) -> &[Stmt<'cx>] {
+        &self.stmts
+    }
+
+    /// Returns all represented local `let` bindings.
+    pub fn locals(&self) -> &[Local<'cx>] {
+        &self.locals
+    }
+
+    /// Returns all represented source patterns.
+    pub fn pats(&self) -> &[Pat<'cx>] {
+        &self.pats
+    }
+
+    /// Returns all represented source expressions.
+    pub fn exprs(&self) -> &[Expr<'cx>] {
+        &self.exprs
     }
 
     /// Returns all represented source types.
@@ -83,7 +110,7 @@ impl<'cx> ProgramRepr<'cx> {
         SignatureId::new(self.signatures.len())
     }
 
-    pub(crate) fn add_signature(&mut self, signature: Signature<'cx>) {
+    pub(crate) fn add_signature(&mut self, signature: Signature) {
         let id = signature.id;
         assert_eq!(id, self.next_signature_id());
         self.signatures.push(signature);
@@ -129,6 +156,46 @@ impl<'cx> ProgramRepr<'cx> {
         self.blocks.push(block);
     }
 
+    pub(crate) fn next_stmt_id(&self) -> StmtId {
+        StmtId::new(self.stmts.len())
+    }
+
+    pub(crate) fn add_stmt(&mut self, stmt: Stmt<'cx>) {
+        let id = stmt.id;
+        assert_eq!(id, self.next_stmt_id());
+        self.stmts.push(stmt);
+    }
+
+    pub(crate) fn next_local_id(&self) -> LocalId {
+        LocalId::new(self.locals.len())
+    }
+
+    pub(crate) fn add_local(&mut self, local: Local<'cx>) {
+        let id = local.id;
+        assert_eq!(id, self.next_local_id());
+        self.locals.push(local);
+    }
+
+    pub(crate) fn next_pat_id(&self) -> PatId {
+        PatId::new(self.pats.len())
+    }
+
+    pub(crate) fn add_pat(&mut self, pat: Pat<'cx>) {
+        let id = pat.id;
+        assert_eq!(id, self.next_pat_id());
+        self.pats.push(pat);
+    }
+
+    pub(crate) fn next_expr_id(&self) -> ExprId {
+        ExprId::new(self.exprs.len())
+    }
+
+    pub(crate) fn add_expr(&mut self, expr: Expr<'cx>) {
+        let id = expr.id;
+        assert_eq!(id, self.next_expr_id());
+        self.exprs.push(expr);
+    }
+
     pub(crate) fn next_type_id(&self) -> TypeId {
         TypeId::new(self.types.len())
     }
@@ -163,7 +230,7 @@ impl IndexMut<ItemId> for ProgramRepr<'_> {
 }
 
 impl<'cx> Index<SignatureId> for ProgramRepr<'cx> {
-    type Output = Signature<'cx>;
+    type Output = Signature;
 
     fn index(&self, id: SignatureId) -> &Self::Output {
         &self.signatures[id.index()]
@@ -199,6 +266,44 @@ impl<'cx> Index<BlockId> for ProgramRepr<'cx> {
 
     fn index(&self, id: BlockId) -> &Self::Output {
         &self.blocks[id.index()]
+    }
+}
+
+impl IndexMut<BlockId> for ProgramRepr<'_> {
+    fn index_mut(&mut self, id: BlockId) -> &mut Self::Output {
+        &mut self.blocks[id.index()]
+    }
+}
+
+impl<'cx> Index<StmtId> for ProgramRepr<'cx> {
+    type Output = Stmt<'cx>;
+
+    fn index(&self, id: StmtId) -> &Self::Output {
+        &self.stmts[id.index()]
+    }
+}
+
+impl<'cx> Index<LocalId> for ProgramRepr<'cx> {
+    type Output = Local<'cx>;
+
+    fn index(&self, id: LocalId) -> &Self::Output {
+        &self.locals[id.index()]
+    }
+}
+
+impl<'cx> Index<PatId> for ProgramRepr<'cx> {
+    type Output = Pat<'cx>;
+
+    fn index(&self, id: PatId) -> &Self::Output {
+        &self.pats[id.index()]
+    }
+}
+
+impl<'cx> Index<ExprId> for ProgramRepr<'cx> {
+    type Output = Expr<'cx>;
+
+    fn index(&self, id: ExprId) -> &Self::Output {
+        &self.exprs[id.index()]
     }
 }
 
@@ -246,7 +351,7 @@ pub enum ItemKind<'cx> {
         /// Constant type.
         ty: TypeId,
         /// Initializer expression.
-        init: Expr,
+        init: ExprId,
     },
     /// Enum item.
     Enum {
@@ -385,7 +490,7 @@ pub enum WherePredicate<'cx> {
 
 /// One represented function-like signature.
 #[derive(Debug)]
-pub struct Signature<'cx> {
+pub struct Signature {
     /// Signature id in the representation.
     pub id: SignatureId,
     /// Source signature.
@@ -396,28 +501,90 @@ pub struct Signature<'cx> {
     /// `params[1..]` are input parameters in source order and have source patterns. Omitted
     /// function returns are represented as unit `()`, which is a tuple type with no element types;
     /// explicitly inferred returns use [`TypeKind::Infer`].
-    pub params: Vec<SignatureParam<'cx>>,
+    pub params: Vec<SignatureParam>,
 }
 
 /// One represented function signature parameter.
 #[derive(Debug)]
-pub struct SignatureParam<'cx> {
+pub struct SignatureParam {
     /// Parameter type.
     pub ty: TypeId,
     /// Source pattern for this parameter.
     ///
     /// This is `None` for the output parameter at `Signature::params[0]` and `Some` for input
     /// parameters at `Signature::params[1..]`.
-    pub pat: Option<Pat<'cx>>,
+    pub pat: Option<PatId>,
 }
 
-/// Pattern representation.
-///
-/// TODO: Represent patterns natively in `ProgramRepr` instead of keeping the AST pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One represented pattern occurrence.
+#[derive(Debug)]
 pub struct Pat<'cx> {
+    /// Pattern id in the representation.
+    pub id: PatId,
     /// Original semantic AST pattern.
     pub pat: &'cx ast::Pat<'cx>,
+    /// Representation-native source pattern shape.
+    pub kind: PatKind<'cx>,
+    /// Scope containing this pattern.
+    pub scope: Option<ScopeId>,
+}
+
+/// Representation-native source pattern shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatKind<'cx> {
+    /// Identifier binding pattern.
+    Ident {
+        /// Bound identifier.
+        name: Name<'cx>,
+        /// Whether the binding uses `ref`.
+        is_ref: bool,
+        /// Whether the binding is mutable.
+        is_mut: bool,
+    },
+    /// Reference pattern.
+    Reference {
+        /// Referenced pattern.
+        pat: PatId,
+        /// Whether the reference pattern is mutable.
+        is_mut: bool,
+    },
+    /// Path pattern.
+    Path(Path<'cx>),
+    /// Struct pattern.
+    Struct {
+        /// Path naming the matched struct.
+        path: Vec<PathSegment<'cx>>,
+        /// Field patterns.
+        fields: Vec<PatStructField<'cx>>,
+        /// Whether the pattern uses a rest marker.
+        has_rest: bool,
+    },
+    /// Tuple pattern.
+    Tuple {
+        /// Element patterns.
+        elems: Vec<PatId>,
+    },
+    /// Type-annotated pattern.
+    Type {
+        /// Inner pattern.
+        pat: PatId,
+        /// Annotated type.
+        ty: TypeId,
+    },
+    /// Pattern form not represented natively yet.
+    ///
+    /// TODO: Add literal, rest, slice, and other unsupported pattern variants when an upper-phase
+    /// consumer needs their structure.
+    Unsupported,
+}
+
+/// One field pattern inside a represented struct pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatStructField<'cx> {
+    /// Field member being matched.
+    pub member: Name<'cx>,
+    /// Pattern for the field value.
+    pub pat: PatId,
 }
 
 /// Source role for a represented signature.
@@ -469,7 +636,7 @@ pub struct Variant<'cx> {
     /// Represented payload fields.
     pub fields: Vec<FieldId>,
     /// Discriminant expression, if present.
-    pub discriminant: Option<Expr>,
+    pub discriminant: Option<ExprId>,
 }
 
 /// One represented associated item declaration.
@@ -493,7 +660,7 @@ pub enum AssocItemKind {
         /// Associated const type.
         ty: TypeId,
         /// Initializer expression.
-        init: Expr,
+        init: ExprId,
     },
     /// Impl associated function.
     ImplFn {
@@ -512,7 +679,7 @@ pub enum AssocItemKind {
         /// Associated const type.
         ty: TypeId,
         /// Optional default expression.
-        default: Option<Expr>,
+        default: Option<ExprId>,
     },
     /// Trait associated function.
     TraitFn {
@@ -592,15 +759,197 @@ pub struct Block<'cx> {
     pub id: BlockId,
     /// Original semantic AST block.
     pub block: &'cx ast::Block<'cx>,
+    /// Represented statements in source order.
+    pub stmts: Vec<StmtId>,
     /// Scope containing block-local bindings, if linked from the current name-resolution data.
     pub scope: Option<ScopeId>,
 }
 
-/// Expression representation.
-///
-/// TODO: Represent expressions natively in `ProgramRepr` instead of using this placeholder.
+/// One represented statement occurrence.
+#[derive(Debug)]
+pub struct Stmt<'cx> {
+    /// Statement id in the representation.
+    pub id: StmtId,
+    /// Original semantic AST statement.
+    pub stmt: &'cx ast::Stmt<'cx>,
+    /// Representation-native source statement shape.
+    pub kind: StmtKind,
+    /// Scope containing this statement.
+    pub scope: Option<ScopeId>,
+}
+
+/// Representation-native source statement shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Expr;
+pub enum StmtKind {
+    /// Local `let` binding statement.
+    Local(LocalId),
+    /// Block-local item statement.
+    Item,
+    /// Expression statement.
+    Expr(ExprId),
+}
+
+/// One represented local `let` binding.
+#[derive(Debug)]
+pub struct Local<'cx> {
+    /// Local id in the representation.
+    pub id: LocalId,
+    /// Original semantic AST local binding.
+    pub local: &'cx ast::Local<'cx>,
+    /// Source pattern for this local binding.
+    pub pat: PatId,
+    /// Optional initializer expression.
+    pub init: Option<ExprId>,
+    /// Scope containing this local binding.
+    pub scope: Option<ScopeId>,
+}
+
+/// One represented expression occurrence.
+#[derive(Debug)]
+pub struct Expr<'cx> {
+    /// Expression id in the representation.
+    pub id: ExprId,
+    /// Original semantic AST expression.
+    pub expr: &'cx ast::Expr<'cx>,
+    /// Representation-native source expression shape.
+    pub kind: ExprKind<'cx>,
+    /// Scope used to resolve paths inside this expression occurrence.
+    pub scope: Option<ScopeId>,
+}
+
+/// Representation-native source expression shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExprKind<'cx> {
+    /// Array literal expression.
+    Array {
+        /// Element expressions.
+        elems: Vec<ExprId>,
+    },
+    /// Assignment expression.
+    Assign {
+        /// Left-hand side expression.
+        left: ExprId,
+        /// Right-hand side expression.
+        right: ExprId,
+    },
+    /// Binary operator expression.
+    Binary {
+        /// Left-hand side expression.
+        left: ExprId,
+        /// Right-hand side expression.
+        right: ExprId,
+    },
+    /// Block expression.
+    Block {
+        /// Block body.
+        block: BlockId,
+    },
+    /// Function call expression.
+    Call {
+        /// Callee expression.
+        func: ExprId,
+        /// Call arguments.
+        args: Vec<ExprId>,
+    },
+    /// Cast expression.
+    Cast {
+        /// Expression being cast.
+        expr: ExprId,
+        /// Target type.
+        ty: TypeId,
+    },
+    /// Closure expression.
+    Closure {
+        /// Closure signature.
+        signature: SignatureId,
+        /// Closure body expression.
+        body: ExprId,
+    },
+    /// Const block expression.
+    Const {
+        /// Const block body.
+        block: BlockId,
+    },
+    /// Field access expression.
+    Field {
+        /// Base expression.
+        base: ExprId,
+        /// Field member name or tuple index.
+        member: Name<'cx>,
+    },
+    /// Indexing expression.
+    Index {
+        /// Indexed expression.
+        expr: ExprId,
+        /// Index expression.
+        index: ExprId,
+    },
+    /// Literal expression.
+    Lit(Lit<'cx>),
+    /// Method call expression.
+    MethodCall {
+        /// Receiver expression.
+        receiver: ExprId,
+        /// Method name.
+        method: Name<'cx>,
+        /// Method arguments.
+        args: Vec<ExprId>,
+    },
+    /// Parenthesized expression.
+    Paren {
+        /// Inner expression.
+        expr: ExprId,
+    },
+    /// Path expression.
+    Path(Path<'cx>),
+    /// Reference expression.
+    Reference {
+        /// Referenced expression.
+        expr: ExprId,
+        /// Whether the reference is mutable.
+        is_mut: bool,
+    },
+    /// Repeated array expression.
+    Repeat {
+        /// Repeated value expression.
+        expr: ExprId,
+        /// Length expression.
+        len: ExprId,
+    },
+    /// Return expression.
+    Return {
+        /// Optional returned expression.
+        expr: Option<ExprId>,
+    },
+    /// Struct literal expression.
+    Struct {
+        /// Path naming the constructed struct.
+        path: Vec<PathSegment<'cx>>,
+        /// Field initializers.
+        fields: Vec<ExprStructField<'cx>>,
+        /// Optional rest expression.
+        rest: Option<ExprId>,
+    },
+    /// Tuple expression.
+    Tuple {
+        /// Element expressions.
+        elems: Vec<ExprId>,
+    },
+    /// Unary operator expression.
+    Unary {
+        /// Operand expression.
+        expr: ExprId,
+    },
+}
+
+/// One field initializer inside a represented struct expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExprStructField<'cx> {
+    /// Field member being initialized.
+    pub member: Name<'cx>,
+    /// Initializer expression.
+    pub expr: ExprId,
+}
 
 /// One represented type occurrence.
 #[derive(Debug)]
@@ -724,8 +1073,8 @@ pub enum GenericArg<'cx> {
 /// Array length represented without owning expression lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayLen {
-    /// Length is still a source expression; expression lowering is a future representation slice.
-    Expr,
+    /// Length expression.
+    Expr(ExprId),
 }
 
 /// Representation-native const argument shape.
@@ -735,8 +1084,8 @@ pub enum ConstArg<'cx> {
     Lit(Lit<'cx>),
     /// Path const argument.
     Path(Path<'cx>),
-    /// Const expression that has not been lowered into representation-native expression shape.
-    Expr,
+    /// Const expression.
+    Expr(ExprId),
 }
 
 /// Representation-native literal shape.

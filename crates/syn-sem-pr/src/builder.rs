@@ -1,11 +1,15 @@
 use crate::desugar::{self, PredicateSubject};
 use crate::repr::{
-    item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr, Field,
-    FieldSource, File, GenericArg, GenericParam, Generics, Item, ItemKind, Lit, Pat, Path,
-    PathSegment, ProgramRepr, QSelf, Signature, SignatureParam, SignatureSource, TraitBound, Type,
-    TypeKind, TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
+    item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr,
+    ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Item,
+    ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, ProgramRepr, QSelf,
+    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind,
+    TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
 };
-use crate::{AssocItemId, BlockId, FieldId, ItemId, SignatureId, TypeId, VariantId};
+use crate::{
+    AssocItemId, BlockId, ExprId, FieldId, ItemId, LocalId, PatId, SignatureId, StmtId, TypeId,
+    VariantId,
+};
 use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
 use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
@@ -96,8 +100,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match item {
             ast::Item::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
-                self.collect_expr(item.init, type_scope);
-                ItemKind::Const { ty, init: Expr }
+                let init = self.collect_expr(item.init, type_scope);
+                ItemKind::Const { ty, init }
             }
             ast::Item::Enum(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
@@ -209,8 +213,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 None,
             ),
             ast::VariantKind::Discriminant(expr) => {
-                self.collect_expr(expr, scope);
-                (Vec::new(), Some(Expr))
+                let discriminant = self.collect_expr(expr, scope);
+                (Vec::new(), Some(discriminant))
             }
             ast::VariantKind::Unit => (Vec::new(), None),
         };
@@ -252,8 +256,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::ImplItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                self.collect_expr(item.init, type_scope);
-                AssocItemKind::ImplConst { ty, init: Expr }
+                let init = self.collect_expr(item.init, type_scope);
+                AssocItemKind::ImplConst { ty, init }
             }
             ast::ImplItem::Fn(item) => {
                 let signature =
@@ -289,10 +293,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         let kind = match item {
             ast::TraitItem::Const(item) => {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
-                let default = item.default.map(|expr| {
-                    self.collect_expr(expr, type_scope);
-                    Expr
-                });
+                let default = item.default.map(|expr| self.collect_expr(expr, type_scope));
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
@@ -341,7 +342,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 let ty =
                     self.collect_type(&param.pat.ty, scope, TypeSource::SignatureParam { index });
                 SignatureParam {
-                    pat: (index != 0).then_some(Pat { pat: param.pat.pat }),
+                    pat: (index != 0).then(|| self.collect_pat(param.pat.pat, scope)),
                     ty,
                 }
             })
@@ -483,7 +484,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         match ty {
             ast::Type::Array(ty) => TypeKind::Array {
                 elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
-                len: ArrayLen::Expr,
+                len: ArrayLen::Expr(self.collect_expr(&ty.len, scope)),
             },
             ast::Type::Infer(_) => TypeKind::Infer,
             ast::Type::Path(ty) => TypeKind::Path(Path {
@@ -612,10 +613,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 qself: None,
                 segments: self.collect_type_path(&arg.path, scope),
             }),
-            _ => {
-                self.collect_expr(arg, scope);
-                ConstArg::Expr
-            }
+            _ => ConstArg::Expr(self.collect_expr(arg, scope)),
         }
     }
 
@@ -634,110 +632,223 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
 
     fn collect_block(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) -> BlockId {
         let id = self.repr.next_block_id();
-        self.repr.add_block(Block { id, block, scope });
-        self.collect_block_contents(block, scope);
+        self.repr.add_block(Block {
+            id,
+            block,
+            stmts: Vec::new(),
+            scope,
+        });
+        let stmts = self.collect_block_contents(block, scope);
+        self.repr[id].stmts = stmts;
         id
     }
 
-    fn collect_block_contents(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) {
-        for stmt in block.stmts {
-            self.collect_stmt_exprs(stmt, scope);
-        }
+    fn collect_block_contents(
+        &mut self,
+        block: &'cx ast::Block<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Vec<StmtId> {
+        block
+            .stmts
+            .iter()
+            .map(|stmt| self.collect_stmt(stmt, scope))
+            .collect()
     }
 
-    fn collect_stmt_exprs(&mut self, stmt: &'cx ast::Stmt<'cx>, scope: Option<ScopeId>) {
-        match stmt {
-            ast::Stmt::Local(local) => {
-                if let Some(init) = &local.init {
-                    self.collect_expr(init.expr, scope);
-                }
-            }
-            ast::Stmt::Item(_) => {}
-            ast::Stmt::Expr(expr) => self.collect_expr(expr, scope),
-        }
+    fn collect_stmt(&mut self, stmt: &'cx ast::Stmt<'cx>, scope: Option<ScopeId>) -> StmtId {
+        let kind = match stmt {
+            ast::Stmt::Local(local) => StmtKind::Local(self.collect_local(local, scope)),
+            ast::Stmt::Item(_) => StmtKind::Item,
+            ast::Stmt::Expr(expr) => StmtKind::Expr(self.collect_expr(expr, scope)),
+        };
+        let id = self.repr.next_stmt_id();
+        self.repr.add_stmt(Stmt {
+            id,
+            stmt,
+            kind,
+            scope,
+        });
+        id
     }
 
-    fn collect_expr(&mut self, expr: &'cx ast::Expr<'cx>, scope: Option<ScopeId>) {
-        match expr {
-            ast::Expr::Array(expr) => {
-                for elem in expr.elems {
-                    self.collect_expr(elem, scope);
-                }
-            }
-            ast::Expr::Assign(expr) => {
-                self.collect_expr(expr.left, scope);
-                self.collect_expr(expr.right, scope);
-            }
-            ast::Expr::Binary(expr) => {
-                self.collect_expr(expr.left, scope);
-                self.collect_expr(expr.right, scope);
-            }
-            ast::Expr::Block(expr) => {
-                self.collect_block(&expr.block, scope);
-            }
-            ast::Expr::Call(expr) => {
-                self.collect_expr(expr.func, scope);
-                for arg in expr.args {
-                    self.collect_expr(arg, scope);
-                }
-            }
-            ast::Expr::Cast(expr) => {
-                self.collect_expr(expr.expr, scope);
-                self.collect_type(expr.ty, scope, TypeSource::Nested);
-            }
-            ast::Expr::Closure(expr) => {
-                self.collect_signature_params(SignatureSource::Closure, expr.params, scope);
-                self.collect_expr(expr.body, scope);
-            }
-            ast::Expr::Const(expr) => {
-                self.collect_block(&expr.block, scope);
-            }
-            ast::Expr::Field(expr) => {
-                self.collect_expr(expr.base, scope);
-            }
-            ast::Expr::Index(expr) => {
-                self.collect_expr(expr.expr, scope);
-                self.collect_expr(expr.index, scope);
-            }
-            ast::Expr::Lit(_) | ast::Expr::Path(_) => {}
-            ast::Expr::MethodCall(expr) => {
-                self.collect_expr(expr.receiver, scope);
-                for arg in expr.args {
-                    self.collect_expr(arg, scope);
-                }
-            }
-            ast::Expr::Paren(expr) => {
-                self.collect_expr(expr.expr, scope);
-            }
-            ast::Expr::Reference(expr) => {
-                self.collect_expr(expr.expr, scope);
-            }
-            ast::Expr::Repeat(expr) => {
-                self.collect_expr(expr.expr, scope);
-                self.collect_expr(expr.len, scope);
-            }
-            ast::Expr::Return(expr) => {
-                if let Some(expr) = expr.expr {
-                    self.collect_expr(expr, scope);
-                }
-            }
-            ast::Expr::Struct(expr) => {
-                for field in expr.fields {
-                    self.collect_expr(field.expr, scope);
-                }
-                if let Some(rest) = expr.rest {
-                    self.collect_expr(rest, scope);
-                }
-            }
-            ast::Expr::Tuple(expr) => {
-                for elem in expr.elems {
-                    self.collect_expr(elem, scope);
-                }
-            }
-            ast::Expr::Unary(expr) => {
-                self.collect_expr(expr.expr, scope);
-            }
-        }
+    fn collect_local(&mut self, local: &'cx ast::Local<'cx>, scope: Option<ScopeId>) -> LocalId {
+        let init = local
+            .init
+            .as_ref()
+            .map(|init| self.collect_expr(init.expr, scope));
+        let pat = self.collect_pat(&local.pat, scope);
+        let id = self.repr.next_local_id();
+        self.repr.add_local(Local {
+            id,
+            local,
+            pat,
+            init,
+            scope,
+        });
+        id
+    }
+
+    fn collect_pat(&mut self, pat: &'cx ast::Pat<'cx>, scope: Option<ScopeId>) -> PatId {
+        let kind = match pat {
+            ast::Pat::Ident(pat) => PatKind::Ident {
+                name: pat.ident.inner,
+                is_ref: pat.is_ref,
+                is_mut: pat.is_mut,
+            },
+            ast::Pat::Reference(pat) => PatKind::Reference {
+                pat: self.collect_pat(pat.pat, scope),
+                is_mut: pat.is_mut,
+            },
+            ast::Pat::Path(pat) => PatKind::Path(Path {
+                qself: None,
+                segments: self.collect_type_path(&pat.path, scope),
+            }),
+            ast::Pat::Struct(pat) => PatKind::Struct {
+                path: self.collect_type_path(&pat.path, scope),
+                fields: pat
+                    .fields
+                    .iter()
+                    .map(|field| PatStructField {
+                        member: field.member.inner,
+                        pat: self.collect_pat(field.pat, scope),
+                    })
+                    .collect(),
+                has_rest: pat.rest.is_some(),
+            },
+            ast::Pat::Tuple(pat) => PatKind::Tuple {
+                elems: pat
+                    .elems
+                    .iter()
+                    .map(|elem| self.collect_pat(elem, scope))
+                    .collect(),
+            },
+            ast::Pat::Type(pat) => PatKind::Type {
+                pat: self.collect_pat(pat.pat, scope),
+                ty: self.collect_type(&pat.ty, scope, TypeSource::Nested),
+            },
+            ast::Pat::Lit(_) | ast::Pat::Rest(_) | ast::Pat::Slice(_) => PatKind::Unsupported,
+        };
+        let id = self.repr.next_pat_id();
+        self.repr.add_pat(Pat {
+            id,
+            pat,
+            kind,
+            scope,
+        });
+        id
+    }
+
+    fn collect_expr(&mut self, expr: &'cx ast::Expr<'cx>, scope: Option<ScopeId>) -> ExprId {
+        let kind = match expr {
+            ast::Expr::Array(expr) => ExprKind::Array {
+                elems: expr
+                    .elems
+                    .iter()
+                    .map(|elem| self.collect_expr(elem, scope))
+                    .collect(),
+            },
+            ast::Expr::Assign(expr) => ExprKind::Assign {
+                left: self.collect_expr(expr.left, scope),
+                right: self.collect_expr(expr.right, scope),
+            },
+            ast::Expr::Binary(expr) => ExprKind::Binary {
+                left: self.collect_expr(expr.left, scope),
+                right: self.collect_expr(expr.right, scope),
+            },
+            ast::Expr::Block(expr) => ExprKind::Block {
+                block: self.collect_block(&expr.block, scope),
+            },
+            ast::Expr::Call(expr) => ExprKind::Call {
+                func: self.collect_expr(expr.func, scope),
+                args: expr
+                    .args
+                    .iter()
+                    .map(|arg| self.collect_expr(arg, scope))
+                    .collect(),
+            },
+            ast::Expr::Cast(expr) => ExprKind::Cast {
+                expr: self.collect_expr(expr.expr, scope),
+                ty: self.collect_type(expr.ty, scope, TypeSource::Nested),
+            },
+            ast::Expr::Closure(expr) => ExprKind::Closure {
+                signature: self.collect_signature_params(
+                    SignatureSource::Closure,
+                    expr.params,
+                    scope,
+                ),
+                body: self.collect_expr(expr.body, scope),
+            },
+            ast::Expr::Const(expr) => ExprKind::Const {
+                block: self.collect_block(&expr.block, scope),
+            },
+            ast::Expr::Field(expr) => ExprKind::Field {
+                base: self.collect_expr(expr.base, scope),
+                member: expr.member.inner,
+            },
+            ast::Expr::Index(expr) => ExprKind::Index {
+                expr: self.collect_expr(expr.expr, scope),
+                index: self.collect_expr(expr.index, scope),
+            },
+            ast::Expr::Lit(expr) => ExprKind::Lit(Self::collect_lit(&expr.lit)),
+            ast::Expr::MethodCall(expr) => ExprKind::MethodCall {
+                receiver: self.collect_expr(expr.receiver, scope),
+                method: expr.method.inner,
+                args: expr
+                    .args
+                    .iter()
+                    .map(|arg| self.collect_expr(arg, scope))
+                    .collect(),
+            },
+            ast::Expr::Paren(expr) => ExprKind::Paren {
+                expr: self.collect_expr(expr.expr, scope),
+            },
+            ast::Expr::Path(expr) => ExprKind::Path(Path {
+                qself: None,
+                segments: self.collect_type_path(&expr.path, scope),
+            }),
+            ast::Expr::Reference(expr) => ExprKind::Reference {
+                expr: self.collect_expr(expr.expr, scope),
+                is_mut: expr.is_mut,
+            },
+            ast::Expr::Repeat(expr) => ExprKind::Repeat {
+                expr: self.collect_expr(expr.expr, scope),
+                len: self.collect_expr(expr.len, scope),
+            },
+            ast::Expr::Return(expr) => ExprKind::Return {
+                expr: expr.expr.map(|expr| self.collect_expr(expr, scope)),
+            },
+            ast::Expr::Struct(expr) => ExprKind::Struct {
+                path: self.collect_type_path(&expr.path, scope),
+                fields: expr
+                    .fields
+                    .iter()
+                    .map(|field| ExprStructField {
+                        member: field.member.inner,
+                        expr: self.collect_expr(field.expr, scope),
+                    })
+                    .collect(),
+                rest: expr.rest.map(|rest| self.collect_expr(rest, scope)),
+            },
+            ast::Expr::Tuple(expr) => ExprKind::Tuple {
+                elems: expr
+                    .elems
+                    .iter()
+                    .map(|elem| self.collect_expr(elem, scope))
+                    .collect(),
+            },
+            ast::Expr::Unary(expr) => ExprKind::Unary {
+                expr: self.collect_expr(expr.expr, scope),
+            },
+        };
+
+        let id = self.repr.next_expr_id();
+        self.repr.add_expr(Expr {
+            id,
+            expr,
+            kind,
+            scope,
+        });
+        id
     }
 
     fn def_for_item(&self, item: &'cx ast::Item<'cx>) -> Option<DefId> {
@@ -857,14 +968,19 @@ mod tests {
             model[model[signature].params[1].ty].kind,
             TypeKind::Path(_)
         ));
-        assert!(matches!(
-            model[signature].params[1]
-                .pat
-                .expect("input should keep source pattern")
-                .pat,
-            ast::Pat::Ident(_)
-        ));
+        let input_pat = model[signature].params[1]
+            .pat
+            .expect("input should keep source pattern");
+        let PatKind::Ident { name, .. } = &model[input_pat].kind else {
+            panic!("expected input ident pattern");
+        };
+        assert_eq!(name.as_ref(), "value");
         assert_eq!(model[block].block.stmts.len(), 1);
+        assert_eq!(model[block].stmts.len(), 1);
+        let StmtKind::Expr(expr) = model[model[block].stmts[0]].kind else {
+            panic!("expected function body expression statement");
+        };
+        assert!(matches!(model[expr].kind, ExprKind::Path(_)));
     }
 
     #[test]
@@ -902,6 +1018,142 @@ mod tests {
             .expect("expected closure with typed input");
         assert!(matches!(model[typed.params[0].ty].kind, TypeKind::Path(_)));
         assert!(matches!(model[typed.params[1].ty].kind, TypeKind::Path(_)));
+    }
+
+    #[test]
+    fn represents_block_statements_and_local_initializers() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let x = 1;
+                struct LocalItem;
+                x
+            }
+            "#,
+        );
+
+        let function = named_item(&model, "f");
+        let ItemKind::Fn { block, .. } = function.kind else {
+            panic!("expected function item");
+        };
+        assert_eq!(model[block].stmts.len(), 3);
+
+        let StmtKind::Local(local) = model[model[block].stmts[0]].kind else {
+            panic!("expected local statement");
+        };
+        assert!(matches!(
+            model[model[local].pat].kind,
+            PatKind::Ident { .. }
+        ));
+        let init = model[local]
+            .init
+            .expect("local initializer should be represented");
+        assert!(matches!(model[init].kind, ExprKind::Lit(_)));
+
+        let StmtKind::Item = model[model[block].stmts[1]].kind else {
+            panic!("expected block-local item statement");
+        };
+
+        let StmtKind::Expr(expr) = model[model[block].stmts[2]].kind else {
+            panic!("expected expression statement");
+        };
+        assert!(matches!(model[expr].kind, ExprKind::Path(_)));
+    }
+
+    #[test]
+    fn represents_nested_patterns_and_pattern_type_annotations() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            fn f((left, ref mut right): (usize, usize), value: &usize) {
+                let (a, b): (usize, usize) = (left, right);
+                let &inner = value;
+            }
+            "#,
+        );
+
+        assert!(model
+            .pats()
+            .iter()
+            .any(|pat| matches!(pat.kind, PatKind::Type { .. })));
+        assert!(model
+            .pats()
+            .iter()
+            .any(|pat| matches!(pat.kind, PatKind::Tuple { .. })));
+        assert!(model
+            .pats()
+            .iter()
+            .any(|pat| matches!(pat.kind, PatKind::Reference { .. })));
+        assert!(model.pats().iter().any(|pat| {
+            matches!(
+                pat.kind,
+                PatKind::Ident {
+                    is_ref: true,
+                    is_mut: true,
+                    ..
+                }
+            )
+        }));
+        assert!(model
+            .types()
+            .iter()
+            .any(|ty| ty.source == TypeSource::Nested));
+    }
+
+    #[test]
+    fn represents_path_and_struct_patterns() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            fn f(value: Point, state: State) {
+                let State::Ready = state;
+                let Point { x, y: ref y_value, .. } = value;
+            }
+            "#,
+        );
+
+        assert!(model.pats().iter().any(|pat| {
+            let PatKind::Path(path) = &pat.kind else {
+                return false;
+            };
+            path.segments[0].name.as_ref() == "State" && path.segments[1].name.as_ref() == "Ready"
+        }));
+
+        let struct_pat = model
+            .pats()
+            .iter()
+            .find(|pat| {
+                matches!(
+                    &pat.kind,
+                    PatKind::Struct { path, .. } if path[0].name.as_ref() == "Point"
+                )
+            })
+            .expect("expected struct pattern");
+        let PatKind::Struct {
+            fields, has_rest, ..
+        } = &struct_pat.kind
+        else {
+            panic!("expected struct pattern");
+        };
+        assert!(*has_rest);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].member.as_ref(), "x");
+        assert!(matches!(model[fields[0].pat].kind, PatKind::Ident { .. }));
+        assert_eq!(fields[1].member.as_ref(), "y");
+        assert!(matches!(
+            model[fields[1].pat].kind,
+            PatKind::Ident { is_ref: true, .. }
+        ));
     }
 
     #[test]
@@ -1114,7 +1366,7 @@ mod tests {
             match item.kind {
                 AssocItemKind::ImplConst { ty, init, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    assert_eq!(init, Expr);
+                    assert!(matches!(model[init].kind, ExprKind::Lit(_)));
                 }
                 AssocItemKind::ImplFn {
                     signature, block, ..
@@ -1127,7 +1379,8 @@ mod tests {
                 }
                 AssocItemKind::TraitConst { ty, default, .. } => {
                     assert_eq!(model[ty].source, TypeSource::AssocConstType);
-                    assert_eq!(default, Some(Expr));
+                    let default = default.expect("trait const should keep default expression");
+                    assert!(matches!(model[default].kind, ExprKind::Lit(_)));
                 }
                 AssocItemKind::TraitFn {
                     signature, default, ..
@@ -1281,7 +1534,7 @@ mod tests {
         };
         assert_eq!(value.as_ref(), "3");
 
-        assert!(matches!(args[1], GenericArg::Const(ConstArg::Expr)));
+        assert!(matches!(args[1], GenericArg::Const(ConstArg::Expr(_))));
     }
 
     #[test]
@@ -1447,7 +1700,7 @@ mod tests {
     }
 
     #[test]
-    fn covers_block_handles_and_source_expr_placeholders() {
+    fn covers_block_handles_and_source_exprs() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1472,24 +1725,28 @@ mod tests {
         assert!(model
             .items()
             .iter()
-            .any(|item| { matches!(item.kind, ItemKind::Const { init: Expr, .. }) }));
+            .any(|item| { matches!(item.kind, ItemKind::Const { .. }) }));
         assert!(model
             .variants()
             .iter()
-            .any(|variant| { variant.discriminant == Some(Expr) }));
+            .any(|variant| { variant.discriminant.is_some() }));
         assert!(model
             .assoc_items()
             .iter()
-            .any(|item| { matches!(item.kind, AssocItemKind::ImplConst { init: Expr, .. }) }));
+            .any(|item| { matches!(item.kind, AssocItemKind::ImplConst { .. }) }));
         assert!(model.assoc_items().iter().any(|item| {
             matches!(
                 item.kind,
                 AssocItemKind::TraitConst {
-                    default: Some(Expr),
+                    default: Some(_),
                     ..
                 }
             )
         }));
+        assert!(model
+            .exprs()
+            .iter()
+            .any(|expr| matches!(expr.kind, ExprKind::Lit(_))));
     }
 
     #[test]
@@ -1552,7 +1809,7 @@ mod tests {
         assert!(model
             .variants()
             .iter()
-            .any(|variant| { variant.discriminant == Some(Expr) }));
+            .any(|variant| { variant.discriminant.is_some() }));
     }
 
     #[test]
