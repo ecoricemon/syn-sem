@@ -35,6 +35,26 @@ syn_sem_macros::define_id! {
     }
 
     {
+        /// Stable identity for one source statement occurrence.
+        StmtId
+    }
+
+    {
+        /// Stable identity for one local `let` binding.
+        LocalId
+    }
+
+    {
+        /// Stable identity for one source pattern occurrence.
+        PatId
+    }
+
+    {
+        /// Stable identity for one source expression occurrence.
+        ExprId
+    }
+
+    {
         /// Stable identity for one source type occurrence.
         TypeId
     }

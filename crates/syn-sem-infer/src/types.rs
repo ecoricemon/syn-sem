@@ -622,7 +622,7 @@ pub enum ArrayLen {
 impl ArrayLen {
     pub(crate) fn from_repr(len: pr::ArrayLen) -> Self {
         match len {
-            pr::ArrayLen::Expr => Self::Expr,
+            pr::ArrayLen::Expr(_) => Self::Expr,
         }
     }
 }
