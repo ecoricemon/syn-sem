@@ -1,8 +1,8 @@
 //! Declaration type inference.
 //!
-//! This module lowers explicit source type occurrences from `syn-sem-pr` into inference
-//! [`TypeId`](crate::TypeId)s, collects declaration-level facts such as trait bounds and impl
-//! associated type assignments, and then invokes logic-backed derivation for projection solving.
+//! This module lowers explicit HIR type occurrences into inference [`TypeId`](crate::TypeId)s,
+//! collects declaration-level facts such as trait bounds and impl associated type assignments,
+//! and then invokes logic-backed derivation for projection solving.
 
 use crate::{
     ArrayLen, ConstArg, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
@@ -10,29 +10,29 @@ use crate::{
     TypeId,
 };
 use syn_sem_common::CommonCx;
+use syn_sem_hir as hir;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
-use syn_sem_pr as pr;
 
 pub(crate) fn analyze<'cx>(
     ccx: &'cx CommonCx,
-    repr: &pr::ProgramRepr<'cx>,
+    hir: &hir::Hir<'cx>,
     names: &NameDb<'cx>,
 ) -> InferDb<'cx> {
-    let mut db = InferCx::new(repr, names).lower();
+    let mut db = InferCx::new(hir, names).lower();
     crate::logic::derive(ccx, &mut db, names);
     db
 }
 
 struct InferCx<'a, 'cx> {
-    repr: &'a pr::ProgramRepr<'cx>,
+    hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
     db: InferDb<'cx>,
 }
 
 impl<'a, 'cx> InferCx<'a, 'cx> {
-    fn new(repr: &'a pr::ProgramRepr<'cx>, names: &'a NameDb<'cx>) -> Self {
+    fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
         Self {
-            repr,
+            hir,
             names,
             db: InferDb::default(),
         }
@@ -40,21 +40,23 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
 
     fn lower(mut self) -> InferDb<'cx> {
         self.lower_trait_bound_facts();
-        self.lower_repr_types();
+        self.lower_hir_types();
         self.lower_assoc_type_impl_facts();
         self.db
     }
 
     fn lower_trait_bound_facts(&mut self) {
-        for item in self.repr.items() {
+        for item in self.hir.items() {
             let generics = match &item.kind {
-                pr::ItemKind::Enum { generics, .. }
-                | pr::ItemKind::Fn { generics, .. }
-                | pr::ItemKind::Impl { generics, .. }
-                | pr::ItemKind::Struct { generics, .. }
-                | pr::ItemKind::Trait { generics, .. }
-                | pr::ItemKind::Type { generics, .. } => Some(generics.clone()),
-                pr::ItemKind::Const { .. } | pr::ItemKind::Mod { .. } | pr::ItemKind::Use => None,
+                hir::ItemKind::Enum { generics, .. }
+                | hir::ItemKind::Fn { generics, .. }
+                | hir::ItemKind::Impl { generics, .. }
+                | hir::ItemKind::Struct { generics, .. }
+                | hir::ItemKind::Trait { generics, .. }
+                | hir::ItemKind::Type { generics, .. } => Some(generics.clone()),
+                hir::ItemKind::Const { .. } | hir::ItemKind::Mod { .. } | hir::ItemKind::Use => {
+                    None
+                }
             };
             let Some(generics) = generics else {
                 continue;
@@ -63,14 +65,14 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_generics(&mut self, generics: &pr::Generics<'cx>) {
+    fn lower_generics(&mut self, generics: &hir::Generics<'cx>) {
         for predicate in &generics.predicates {
-            let pr::WherePredicate::TypeBound { subject, bounds } = predicate else {
+            let hir::WherePredicate::TypeBound { subject, bounds } = predicate else {
                 continue;
             };
-            let subject = self.lower_repr_type(*subject);
+            let subject = self.lower_hir_type(*subject);
             for bound in bounds {
-                let pr::TypeParamBound::Trait(bound) = bound else {
+                let hir::TypeParamBound::Trait(bound) = bound else {
                     continue;
                 };
                 let trait_ty = self.lower_path_value_as_type(&bound.path, generics.scope);
@@ -81,15 +83,15 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_repr_types(&mut self) {
-        for ty in self.repr.types() {
-            self.lower_repr_type(ty.id);
+    fn lower_hir_types(&mut self) {
+        for ty in self.hir.types() {
+            self.lower_hir_type(ty.id);
         }
     }
 
     fn lower_assoc_type_impl_facts(&mut self) {
-        for item in self.repr.items() {
-            let pr::ItemKind::Impl {
+        for item in self.hir.items() {
+            let hir::ItemKind::Impl {
                 trait_,
                 self_ty,
                 items,
@@ -101,13 +103,13 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
             let Some(trait_) = trait_ else {
                 continue;
             };
-            let impl_self_ty = self.lower_repr_type(*self_ty);
+            let impl_self_ty = self.lower_hir_type(*self_ty);
             let trait_ty = self.lower_path_value_as_type(trait_, item.parent_scope);
             let Some(trait_def) = self.trait_def_for_type(trait_ty) else {
                 continue;
             };
-            for assoc_item in items.iter().map(|id| &self.repr[*id]) {
-                let pr::AssocItemKind::ImplType { ty } = assoc_item.kind else {
+            for assoc_item in items.iter().map(|id| &self.hir[*id]) {
+                let hir::AssocItemKind::ImplType { ty } = assoc_item.kind else {
                     continue;
                 };
                 let ResolveResult::Found(assoc_type) =
@@ -116,7 +118,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
                 else {
                     continue;
                 };
-                let value_ty = self.lower_repr_type(ty);
+                let value_ty = self.lower_hir_type(ty);
                 self.db
                     .assoc_type_impl_facts
                     .push(crate::AssocTypeImplFact {
@@ -142,49 +144,49 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         Some(def)
     }
 
-    fn lower_repr_type(&mut self, repr_type: pr::TypeId) -> TypeId {
-        if let Some(id) = self.db.type_for_repr_type(repr_type) {
+    fn lower_hir_type(&mut self, hir_type: hir::TypeId) -> TypeId {
+        if let Some(id) = self.db.type_for_hir_type(hir_type) {
             return id;
         }
 
-        let ty = self.lower_type(repr_type, &self.repr[repr_type].kind);
+        let ty = self.lower_type(hir_type, &self.hir[hir_type].kind);
         let id = self.push_type(ty);
-        self.db.repr_types.insert(repr_type, id);
+        self.db.hir_types.insert(hir_type, id);
         id
     }
 
-    fn lower_type(&mut self, repr_type: pr::TypeId, kind: &pr::TypeKind<'cx>) -> Type<'cx> {
+    fn lower_type(&mut self, hir_type: hir::TypeId, kind: &hir::TypeKind<'cx>) -> Type<'cx> {
         match kind {
-            pr::TypeKind::Array { elem, len } => Type::Array {
-                elem: self.lower_repr_type(*elem),
-                len: ArrayLen::from_repr(*len),
+            hir::TypeKind::Array { elem, len } => Type::Array {
+                elem: self.lower_hir_type(*elem),
+                len: ArrayLen::from_hir(*len),
             },
-            pr::TypeKind::Infer => Type::Infer,
-            pr::TypeKind::Path(path) => self.lower_path_type(repr_type, path),
-            pr::TypeKind::Reference { elem, is_mut } => Type::Reference {
-                elem: self.lower_repr_type(*elem),
+            hir::TypeKind::Infer => Type::Infer,
+            hir::TypeKind::Path(path) => self.lower_path_type(hir_type, path),
+            hir::TypeKind::Reference { elem, is_mut } => Type::Reference {
+                elem: self.lower_hir_type(*elem),
                 is_mut: *is_mut,
             },
-            pr::TypeKind::Slice { elem } => Type::Slice {
-                elem: self.lower_repr_type(*elem),
+            hir::TypeKind::Slice { elem } => Type::Slice {
+                elem: self.lower_hir_type(*elem),
             },
-            pr::TypeKind::Tuple { elems } => Type::Tuple {
+            hir::TypeKind::Tuple { elems } => Type::Tuple {
                 elems: elems
                     .iter()
-                    .map(|elem| self.lower_repr_type(*elem))
+                    .map(|elem| self.lower_hir_type(*elem))
                     .collect(),
             },
         }
     }
 
-    fn lower_path_type(&mut self, repr_type: pr::TypeId, path: &pr::Path<'cx>) -> Type<'cx> {
+    fn lower_path_type(&mut self, hir_type: hir::TypeId, path: &hir::Path<'cx>) -> Type<'cx> {
         if path.qself.is_none() {
-            if let Some(primitive) = PrimitiveType::from_repr_path(&path.segments) {
+            if let Some(primitive) = PrimitiveType::from_hir_path(&path.segments) {
                 return Type::Primitive(primitive);
             }
         }
 
-        let scope = self.repr[repr_type].scope;
+        let scope = self.hir[hir_type].scope;
         let qself = self.lower_qself(path.qself.as_ref(), scope);
         let resolution = self.resolve_path_value(scope, &path.segments, qself.as_ref());
 
@@ -197,21 +199,21 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
 
     fn lower_qself(
         &mut self,
-        qself: Option<&pr::QSelf<'cx>>,
+        qself: Option<&hir::QSelf<'cx>>,
         scope: Option<ScopeId>,
     ) -> Option<QSelf> {
         let qself = qself?;
         let trait_ty = (!qself.trait_path.is_empty())
             .then(|| self.lower_path_value_as_type(&qself.trait_path, scope));
         Some(QSelf {
-            self_ty: self.lower_repr_type(qself.self_ty),
+            self_ty: self.lower_hir_type(qself.self_ty),
             trait_ty,
         })
     }
 
     fn lower_path_value_as_type(
         &mut self,
-        path: &[pr::PathSegment<'cx>],
+        path: &[hir::PathSegment<'cx>],
         scope: Option<ScopeId>,
     ) -> TypeId {
         let ty = Type::Path(PathType {
@@ -225,7 +227,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn resolve_path_value(
         &self,
         scope: Option<ScopeId>,
-        path: &[pr::PathSegment<'cx>],
+        path: &[hir::PathSegment<'cx>],
         qself: Option<&QSelf>,
     ) -> PathTypeResolution {
         if let Some(projection) = self.resolve_qself_trait_member(path, qself) {
@@ -249,7 +251,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
 
     fn resolve_qself_trait_member(
         &self,
-        path: &[pr::PathSegment<'cx>],
+        path: &[hir::PathSegment<'cx>],
         qself: Option<&QSelf>,
     ) -> Option<PathTypeResolution> {
         let qself = qself?;
@@ -288,7 +290,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_path_value(&mut self, path: &[pr::PathSegment<'cx>]) -> Path<'cx> {
+    fn lower_path_value(&mut self, path: &[hir::PathSegment<'cx>]) -> Path<'cx> {
         Path {
             segments: path
                 .iter()
@@ -297,7 +299,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_path_segment(&mut self, segment: &pr::PathSegment<'cx>) -> PathSegment<'cx> {
+    fn lower_path_segment(&mut self, segment: &hir::PathSegment<'cx>) -> PathSegment<'cx> {
         PathSegment {
             name: segment.name,
             args: segment
@@ -308,23 +310,23 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         }
     }
 
-    fn lower_generic_arg(&mut self, arg: &pr::GenericArg<'cx>) -> GenericArgument<'cx> {
+    fn lower_generic_arg(&mut self, arg: &hir::GenericArg<'cx>) -> GenericArgument<'cx> {
         match arg {
-            pr::GenericArg::Type(ty) => GenericArgument::Type(self.lower_repr_type(*ty)),
-            pr::GenericArg::Const(_) => GenericArgument::Const(ConstArg),
-            pr::GenericArg::AssocType { name, ty } => GenericArgument::AssocType {
+            hir::GenericArg::Type(ty) => GenericArgument::Type(self.lower_hir_type(*ty)),
+            hir::GenericArg::Const(_) => GenericArgument::Const(ConstArg),
+            hir::GenericArg::AssocType { name, ty } => GenericArgument::AssocType {
                 name: *name,
-                ty: self.lower_repr_type(*ty),
+                ty: self.lower_hir_type(*ty),
             },
-            pr::GenericArg::AssocConst { name, .. } => GenericArgument::AssocConst {
+            hir::GenericArg::AssocConst { name, .. } => GenericArgument::AssocConst {
                 name: *name,
                 value: ConstArg,
             },
-            pr::GenericArg::Constraint { name, .. } => GenericArgument::Constraint {
+            hir::GenericArg::Constraint { name, .. } => GenericArgument::Constraint {
                 name: *name,
                 bounds: TypeBounds,
             },
-            pr::GenericArg::Unsupported => GenericArgument::Unsupported,
+            hir::GenericArg::Unsupported => GenericArgument::Unsupported,
         }
     }
 
@@ -360,25 +362,25 @@ mod tests {
     use crate::*;
     use syn_sem_ast::{self as ast, SyntaxCx};
     use syn_sem_common::CommonCx;
+    use syn_sem_hir as hir;
     use syn_sem_name::{
         collect::{collect_names, FileInput},
         AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
     };
-    use syn_sem_pr as pr;
 
     fn infer_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
         code: &str,
-    ) -> (pr::ProgramRepr<'cx>, InferDb<'cx>) {
+    ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
-        let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &repr, &names);
-        (repr, infer)
+        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let infer = InferDb::analyze(ccx, &hir, &names);
+        (hir, infer)
     }
 
     fn infer_types_with_names<'cx>(
@@ -386,87 +388,84 @@ mod tests {
         scx: &'cx SyntaxCx<'cx>,
         code: &str,
         names: &NameDb<'cx>,
-    ) -> (pr::ProgramRepr<'cx>, InferDb<'cx>) {
+    ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let repr = pr::ProgramReprBuilder::new(names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &repr, names);
-        (repr, infer)
+        let hir = hir::HirBuilder::new(names).build(file_path, file);
+        let infer = InferDb::analyze(ccx, &hir, names);
+        (hir, infer)
     }
 
     fn infer_collected_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
         code: &str,
-    ) -> (pr::ProgramRepr<'cx>, NameDb<'cx>, InferDb<'cx>) {
+    ) -> (hir::Hir<'cx>, NameDb<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = collect_names([FileInput { file_path, file }], file_path).unwrap();
-        let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &repr, &names);
-        (repr, names, infer)
+        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let infer = InferDb::analyze(ccx, &hir, &names);
+        (hir, names, infer)
     }
 
     fn struct_field_path_type<'a, 'cx>(
-        repr: &'a pr::ProgramRepr<'cx>,
+        hir: &'a hir::Hir<'cx>,
         infer: &'a InferDb<'cx>,
     ) -> &'a PathType<'cx> {
-        let id = struct_field_type_id(repr, infer);
+        let id = struct_field_type_id(hir, infer);
         let Type::Path(path) = &infer[id] else {
             panic!("struct field type should lower to path type");
         };
         path
     }
 
-    fn struct_field_type_id<'cx>(repr: &pr::ProgramRepr<'cx>, infer: &InferDb<'cx>) -> TypeId {
-        let repr_type = repr
+    fn struct_field_type_id<'cx>(hir: &hir::Hir<'cx>, infer: &InferDb<'cx>) -> TypeId {
+        let hir_type = hir
             .types()
             .iter()
-            .find(|source| matches!(source.source, pr::TypeSource::StructField))
+            .find(|source| matches!(source.source, hir::TypeSource::StructField))
             .unwrap();
-        infer.type_for_repr_type(repr_type.id).unwrap()
+        infer.type_for_hir_type(hir_type.id).unwrap()
     }
 
-    fn struct_field_repr_types<'cx>(
-        repr: &pr::ProgramRepr<'cx>,
-        struct_name: &str,
-    ) -> Vec<pr::TypeId> {
-        let item = repr
+    fn struct_field_hir_types<'cx>(hir: &hir::Hir<'cx>, struct_name: &str) -> Vec<hir::TypeId> {
+        let item = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == struct_name))
             .expect("struct item should be represented");
-        let pr::ItemKind::Struct { fields, .. } = &item.kind else {
+        let hir::ItemKind::Struct { fields, .. } = &item.kind else {
             panic!("item should be represented as a struct");
         };
-        fields.iter().map(|field| repr[*field].ty).collect()
+        fields.iter().map(|field| hir[*field].ty).collect()
     }
 
     fn struct_field_path_resolution<'cx>(
-        repr: &pr::ProgramRepr<'cx>,
+        hir: &hir::Hir<'cx>,
         infer: &InferDb<'cx>,
     ) -> PathTypeResolution {
-        struct_field_path_type(repr, infer).resolution.clone()
+        struct_field_path_type(hir, infer).resolution.clone()
     }
 
     #[test]
     fn lowers_single_segment_primitives_to_primitive_types() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, infer) = infer_types(
+        let (hir, infer) = infer_types(
             &ccx,
             &scx,
             "fn f(a: bool, b: char, c: str, d: i32, e: usize, f: f64) {}",
         );
 
-        let lowered: Vec<_> = repr
+        let lowered: Vec<_> = hir
             .types()
             .iter()
-            .filter_map(|repr_type| infer.type_for_repr_type(repr_type.id))
+            .filter_map(|hir_type| infer.type_for_hir_type(hir_type.id))
             .map(|id| &infer[id])
             .filter_map(|ty| match ty {
                 Type::Primitive(primitive) => Some(*primitive),
@@ -486,14 +485,14 @@ mod tests {
     fn keeps_non_primitive_paths_as_paths() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, infer) = infer_types(&ccx, &scx, "struct S { field: crate::usize }");
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: crate::usize }");
 
-        let repr_type = repr
+        let hir_type = hir
             .types()
             .iter()
-            .find(|source| matches!(source.source, pr::TypeSource::StructField))
+            .find(|source| matches!(source.source, hir::TypeSource::StructField))
             .unwrap();
-        let id = infer.type_for_repr_type(repr_type.id).unwrap();
+        let id = infer.type_for_hir_type(hir_type.id).unwrap();
         let Type::Path(path) = &infer[id] else {
             panic!("qualified primitive-looking path should remain a path");
         };
@@ -517,10 +516,10 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Local }", &names);
+        let (hir, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Local }", &names);
 
         assert_eq!(
-            struct_field_path_resolution(&repr, &infer),
+            struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::Nominal(local_def)
         );
     }
@@ -538,10 +537,10 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: T }", &names);
+        let (hir, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: T }", &names);
 
         assert_eq!(
-            struct_field_path_resolution(&repr, &infer),
+            struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::GenericParam(t_def)
         );
     }
@@ -559,10 +558,10 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Item }", &names);
+        let (hir, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Item }", &names);
 
         assert_eq!(
-            struct_field_path_resolution(&repr, &infer),
+            struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::Projection(ProjectionType {
                 assoc_type: item_def,
                 self_ty: None,
@@ -623,15 +622,15 @@ mod tests {
             Visibility::Public,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(
+        let (hir, infer) = infer_types_with_names(
             &ccx,
             &scx,
             "struct S { field: <T as a::b::Trait>::Item }",
             &names,
         );
 
-        let path = struct_field_path_type(&repr, &infer);
-        let projection = struct_field_type_id(&repr, &infer);
+        let path = struct_field_path_type(&hir, &infer);
+        let projection = struct_field_type_id(&hir, &infer);
         let qself = path.qself.expect("qualified path should lower qself");
         let trait_ty = qself
             .trait_ty
@@ -730,15 +729,15 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(
+        let (hir, infer) = infer_types_with_names(
             &ccx,
             &scx,
             "struct S<T: Iterator> { field: <T>::Item }",
             &names,
         );
 
-        let path = struct_field_path_type(&repr, &infer);
-        let projection = struct_field_type_id(&repr, &infer);
+        let path = struct_field_path_type(&hir, &infer);
+        let projection = struct_field_type_id(&hir, &infer);
         let qself = path
             .qself
             .expect("traitless qualified path should lower qself");
@@ -839,15 +838,15 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(
+        let (hir, infer) = infer_types_with_names(
             &ccx,
             &scx,
             "struct S<T: Display> { field: <T>::Item }",
             &names,
         );
 
-        let projection = struct_field_type_id(&repr, &infer);
-        let path = struct_field_path_type(&repr, &infer);
+        let projection = struct_field_type_id(&hir, &infer);
+        let path = struct_field_path_type(&hir, &infer);
         let qself = path
             .qself
             .expect("traitless qualified path should lower qself");
@@ -944,18 +943,18 @@ mod tests {
         };
         names.set_def_ast_node(impl_item_def, AstNodeId::from_ref(&impl_item.items[0]));
 
-        let repr = pr::ProgramReprBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(&ccx, &repr, &names);
+        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let infer = InferDb::analyze(&ccx, &hir, &names);
         let [fact] = infer.assoc_type_impl_facts() else {
             panic!("expected one impl associated type fact");
         };
 
-        let pr::ItemKind::Impl {
+        let hir::ItemKind::Impl {
             trait_,
             self_ty,
             items,
             ..
-        } = &repr.items()[2].kind
+        } = &hir.items()[2].kind
         else {
             panic!("expected represented impl");
         };
@@ -964,14 +963,14 @@ mod tests {
             panic!("expected one represented impl item");
         };
         assert!(matches!(
-            repr[*assoc_item].kind,
-            pr::AssocItemKind::ImplType { .. }
+            hir[*assoc_item].kind,
+            hir::AssocItemKind::ImplType { .. }
         ));
-        assert_eq!(repr[*assoc_item].def, Some(impl_item_def));
+        assert_eq!(hir[*assoc_item].def, Some(impl_item_def));
         assert_eq!(fact.assoc_type, trait_assoc_def);
         assert_eq!(
             fact.impl_self_ty,
-            infer.type_for_repr_type(*self_ty).unwrap()
+            infer.type_for_hir_type(*self_ty).unwrap()
         );
         assert!(matches!(
             infer[fact.impl_self_ty],
@@ -989,11 +988,11 @@ mod tests {
         ));
         assert_eq!(infer[fact.value_ty], Type::Primitive(PrimitiveType::U32));
 
-        let projection_path = struct_field_path_type(&repr, &infer);
+        let projection_path = struct_field_path_type(&hir, &infer);
         let qself = projection_path
             .qself
             .expect("projection field should lower qself");
-        let projection = struct_field_type_id(&repr, &infer);
+        let projection = struct_field_type_id(&hir, &infer);
         assert_eq!(
             infer.projection_normalizations(),
             &[ProjectionNormalization {
@@ -1018,7 +1017,7 @@ mod tests {
     fn derives_generic_impl_self_binding_and_substitution() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, infer) = infer_collected_types(
+        let (hir, _names, infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1038,11 +1037,11 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Output");
+        let fields = struct_field_hir_types(&hir, "Output");
         let [field_ty] = fields.as_slice() else {
             panic!("Output should have one field type");
         };
-        let projection = infer.type_for_repr_type(*field_ty).unwrap();
+        let projection = infer.type_for_hir_type(*field_ty).unwrap();
         let [impl_self_match] = infer.impl_self_matches() else {
             panic!("generic impl self should match projection self once");
         };
@@ -1081,7 +1080,7 @@ mod tests {
     fn classifies_projection_normalization_query_results() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, mut infer) = infer_collected_types(
+        let (hir, _names, mut infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1102,12 +1101,12 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [projected_ty, plain_ty] = fields.as_slice() else {
             panic!("Result should have two field types");
         };
-        let projection = infer.type_for_repr_type(*projected_ty).unwrap();
-        let plain = infer.type_for_repr_type(*plain_ty).unwrap();
+        let projection = infer.type_for_hir_type(*projected_ty).unwrap();
+        let plain = infer.type_for_hir_type(*plain_ty).unwrap();
         let known = infer
             .normalized_projection_type(projection)
             .expect("projection should have one normalization");
@@ -1145,7 +1144,7 @@ mod tests {
     fn reports_projection_without_known_normalization() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, mut infer) = infer_collected_types(
+        let (hir, _names, mut infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1161,11 +1160,11 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [field_ty] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let projection = infer.type_for_repr_type(*field_ty).unwrap();
+        let projection = infer.type_for_hir_type(*field_ty).unwrap();
 
         assert_eq!(
             infer.projection_normalization(projection),
@@ -1179,7 +1178,7 @@ mod tests {
     fn derives_selected_substitution_from_multiple_generic_bindings() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, infer) = infer_collected_types(
+        let (hir, _names, infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1199,7 +1198,7 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [field_ty] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
@@ -1217,7 +1216,7 @@ mod tests {
                 && substitution.arg_ty == binding.arg_ty
         }));
         assert_eq!(
-            infer.normalized_projection_type_for_repr_type(*field_ty),
+            infer.normalized_projection_type_for_hir_type(*field_ty),
             Some(substitution.substituted_ty)
         );
         assert_eq!(
@@ -1230,7 +1229,7 @@ mod tests {
     fn derives_nested_generic_value_substitution() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, infer) = infer_collected_types(
+        let (hir, _names, infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1251,7 +1250,7 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [field_ty] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
@@ -1271,7 +1270,7 @@ mod tests {
             infer.type_binding_facts()[0].impl_self_ty
         );
         assert_eq!(
-            infer.normalized_projection_type_for_repr_type(*field_ty),
+            infer.normalized_projection_type_for_hir_type(*field_ty),
             Some(substitution.substituted_ty)
         );
         assert_option_of(&infer, substitution.substituted_ty, PrimitiveType::U32);
@@ -1281,7 +1280,7 @@ mod tests {
     fn recursively_normalizes_projection_inside_generic_argument() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, mut infer) = infer_collected_types(
+        let (hir, _names, mut infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1302,15 +1301,15 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [field_ty] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let shallow = infer
-            .shallow_normalized_type_for_repr_type(*field_ty)
+            .shallow_normalized_type_for_hir_type(*field_ty)
             .expect("Result.field type should be lowered");
         let normalized = infer
-            .normalized_type_for_repr_type(*field_ty)
+            .normalized_type_for_hir_type(*field_ty)
             .expect("Result.field type should be lowered");
 
         assert_ne!(shallow, normalized);
@@ -1321,7 +1320,7 @@ mod tests {
     fn recursively_normalizes_projection_inside_type_containers() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, mut infer) = infer_collected_types(
+        let (hir, _names, mut infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1344,19 +1343,19 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [reference_ty, tuple_ty, array_ty, slice_ref_ty] = fields.as_slice() else {
             panic!("Result should have four field types");
         };
 
-        let reference = infer.normalized_type_for_repr_type(*reference_ty).unwrap();
+        let reference = infer.normalized_type_for_hir_type(*reference_ty).unwrap();
         let Type::Reference { elem, is_mut } = infer[reference] else {
             panic!("reference field should normalize to a reference type");
         };
         assert!(!is_mut);
         assert_primitive_type(&infer, elem, PrimitiveType::U32);
 
-        let tuple = infer.normalized_type_for_repr_type(*tuple_ty).unwrap();
+        let tuple = infer.normalized_type_for_hir_type(*tuple_ty).unwrap();
         let Type::Tuple { elems } = &infer[tuple] else {
             panic!("tuple field should normalize to a tuple type");
         };
@@ -1366,13 +1365,13 @@ mod tests {
         assert_primitive_type(&infer, *first, PrimitiveType::U32);
         assert_primitive_type(&infer, *second, PrimitiveType::Bool);
 
-        let array = infer.normalized_type_for_repr_type(*array_ty).unwrap();
+        let array = infer.normalized_type_for_hir_type(*array_ty).unwrap();
         let Type::Array { elem, .. } = infer[array] else {
             panic!("array field should normalize to an array type");
         };
         assert_primitive_type(&infer, elem, PrimitiveType::U32);
 
-        let slice_ref = infer.normalized_type_for_repr_type(*slice_ref_ty).unwrap();
+        let slice_ref = infer.normalized_type_for_hir_type(*slice_ref_ty).unwrap();
         let Type::Reference { elem: slice, .. } = infer[slice_ref] else {
             panic!("slice_ref field should normalize to a reference type");
         };
@@ -1386,7 +1385,7 @@ mod tests {
     fn caches_recursive_normalization_results() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, mut infer) = infer_collected_types(
+        let (hir, _names, mut infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1407,14 +1406,14 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [field_ty] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let before = infer.types().len();
-        let first = infer.normalized_type_for_repr_type(*field_ty).unwrap();
+        let first = infer.normalized_type_for_hir_type(*field_ty).unwrap();
         let after_first = infer.types().len();
-        let second = infer.normalized_type_for_repr_type(*field_ty).unwrap();
+        let second = infer.normalized_type_for_hir_type(*field_ty).unwrap();
         let after_second = infer.types().len();
 
         assert_eq!(first, second);
@@ -1426,7 +1425,7 @@ mod tests {
     fn keeps_generic_substitutions_tied_to_impl_self_match() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (repr, _names, infer) = infer_collected_types(
+        let (hir, _names, infer) = infer_collected_types(
             &ccx,
             &scx,
             r#"
@@ -1453,7 +1452,7 @@ mod tests {
             "#,
         );
 
-        let fields = struct_field_repr_types(&repr, "Result");
+        let fields = struct_field_hir_types(&hir, "Result");
         let [vec_field_ty, box_field_ty] = fields.as_slice() else {
             panic!("Result should have two field types");
         };
@@ -1470,10 +1469,10 @@ mod tests {
             }));
         }
         let vec_normalized_ty = infer
-            .normalized_projection_type_for_repr_type(*vec_field_ty)
+            .normalized_projection_type_for_hir_type(*vec_field_ty)
             .expect("Vec projection should have one context-matched normalization");
         let box_normalized_ty = infer
-            .normalized_projection_type_for_repr_type(*box_field_ty)
+            .normalized_projection_type_for_hir_type(*box_field_ty)
             .expect("Box projection should have one context-matched normalization");
         assert_option_of(&infer, vec_normalized_ty, PrimitiveType::U32);
         assert_option_of(&infer, box_normalized_ty, PrimitiveType::Bool);
@@ -1517,17 +1516,17 @@ mod tests {
             Visibility::Private,
             Origin::Untracked,
         );
-        let (repr, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Maybe }", &names);
+        let (hir, infer) = infer_types_with_names(&ccx, &scx, "struct S { field: Maybe }", &names);
 
         assert_eq!(
-            struct_field_path_resolution(&repr, &infer),
+            struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::Ambiguous(vec![first, second])
         );
 
-        let (repr, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");
 
         assert_eq!(
-            struct_field_path_resolution(&repr, &infer),
+            struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::Unresolved
         );
     }

@@ -5,14 +5,14 @@ use crate::{
 };
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map};
+use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb};
-use syn_sem_pr as pr;
 
 /// Type information collected for upper semantic inference.
 #[derive(Debug, Default)]
 pub struct InferDb<'cx> {
     pub(crate) types: Vec<Type<'cx>>,
-    pub(crate) repr_types: Map<pr::TypeId, TypeId>,
+    pub(crate) hir_types: Map<hir::TypeId, TypeId>,
     pub(crate) projection_obligations: Vec<ProjectionObligation>,
     pub(crate) trait_bound_facts: Vec<TraitBoundFact>,
     pub(crate) assoc_type_impl_facts: Vec<AssocTypeImplFact>,
@@ -26,9 +26,9 @@ pub struct InferDb<'cx> {
 }
 
 impl<'cx> InferDb<'cx> {
-    /// Builds inference type facts from program representation and name-resolution data.
-    pub fn analyze(ccx: &'cx CommonCx, repr: &pr::ProgramRepr<'cx>, names: &NameDb<'cx>) -> Self {
-        crate::inference::analyze(ccx, repr, names)
+    /// Builds inference type facts from HIR and name-resolution data.
+    pub fn analyze(ccx: &'cx CommonCx, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) -> Self {
+        crate::inference::analyze(ccx, hir, names)
     }
 
     /// Returns all collected inference types.
@@ -37,41 +37,41 @@ impl<'cx> InferDb<'cx> {
         &self.types
     }
 
-    /// Returns the inference type linked to a represented type occurrence.
-    pub fn type_for_repr_type(&self, repr_type: pr::TypeId) -> Option<TypeId> {
-        self.repr_types.get(&repr_type).copied()
+    /// Returns the inference type linked to a HIR type occurrence.
+    pub fn type_for_hir_type(&self, hir_type: hir::TypeId) -> Option<TypeId> {
+        self.hir_types.get(&hir_type).copied()
     }
 
-    /// Returns the shallow normalized inference type linked to a represented type occurrence.
+    /// Returns the shallow normalized inference type linked to a HIR type occurrence.
     ///
-    /// This returns `None` when the represented type occurrence was not lowered.
+    /// This returns `None` when the HIR type occurrence was not lowered.
     #[cfg(test)]
-    pub(crate) fn shallow_normalized_type_for_repr_type(
+    pub(crate) fn shallow_normalized_type_for_hir_type(
         &self,
-        repr_type: pr::TypeId,
+        hir_type: hir::TypeId,
     ) -> Option<TypeId> {
-        self.type_for_repr_type(repr_type)
+        self.type_for_hir_type(hir_type)
             .map(|ty| self.shallow_normalized_type(ty))
     }
 
-    /// Returns the unique normalized projection value linked to a represented type occurrence.
+    /// Returns the unique normalized projection value linked to a HIR type occurrence.
     ///
-    /// This returns `None` when the represented type occurrence was not lowered, is not a
+    /// This returns `None` when the HIR type occurrence was not lowered, is not a
     /// projection with a known normalization, or currently has multiple possible normalizations.
     #[cfg(test)]
-    pub(crate) fn normalized_projection_type_for_repr_type(
+    pub(crate) fn normalized_projection_type_for_hir_type(
         &self,
-        repr_type: pr::TypeId,
+        hir_type: hir::TypeId,
     ) -> Option<TypeId> {
-        let ty = self.type_for_repr_type(repr_type)?;
+        let ty = self.type_for_hir_type(hir_type)?;
         self.normalized_projection_type(ty)
     }
 
-    /// Returns the recursively normalized inference type linked to a represented type occurrence.
+    /// Returns the recursively normalized inference type linked to a HIR type occurrence.
     ///
-    /// This returns `None` when the represented type occurrence was not lowered.
-    pub fn normalized_type_for_repr_type(&mut self, repr_type: pr::TypeId) -> Option<TypeId> {
-        let ty = self.type_for_repr_type(repr_type)?;
+    /// This returns `None` when the HIR type occurrence was not lowered.
+    pub fn normalized_type_for_hir_type(&mut self, hir_type: hir::TypeId) -> Option<TypeId> {
+        let ty = self.type_for_hir_type(hir_type)?;
         Some(self.normalized_type(ty))
     }
 
@@ -478,7 +478,7 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub(crate) fn from_repr_path(path: &[pr::PathSegment<'_>]) -> Option<Self> {
+    pub(crate) fn from_hir_path(path: &[hir::PathSegment<'_>]) -> Option<Self> {
         let [segment] = path else {
             return None;
         };
@@ -610,9 +610,9 @@ pub enum GenericArgument<'cx> {
     Unsupported,
 }
 
-/// Array length represented before expression lowering exists.
-// TODO: Replace this with expression-backed or evaluated array length facts once const
-// expression representation is available.
+/// Array length represented before HIR exposes lowered const-expression facts.
+// TODO: Replace this with expression-backed or evaluated array length facts once HIR exposes
+// lowered const-expression input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayLen {
     /// Length is still a source expression.
@@ -620,20 +620,20 @@ pub enum ArrayLen {
 }
 
 impl ArrayLen {
-    pub(crate) fn from_repr(len: pr::ArrayLen) -> Self {
+    pub(crate) fn from_hir(len: hir::ArrayLen) -> Self {
         match len {
-            pr::ArrayLen::Expr(_) => Self::Expr,
+            hir::ArrayLen::Expr(_) => Self::Expr,
         }
     }
 }
 
-/// Const argument represented before expression lowering exists.
-// TODO: Replace this with expression-backed const argument facts once const expression
-// representation is available.
+/// Const argument represented before HIR exposes lowered const-expression facts.
+// TODO: Replace this with expression-backed const argument facts once HIR exposes lowered
+// const-expression input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConstArg;
 
-/// Type bounds represented before bound lowering exists.
-// TODO: Replace this with bound-backed facts once type bound representation is available.
+/// Type bounds represented before HIR exposes lowered bound facts.
+// TODO: Replace this with bound-backed facts once HIR exposes lowered type-bound input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypeBounds;

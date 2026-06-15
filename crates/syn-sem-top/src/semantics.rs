@@ -1,7 +1,7 @@
 use crate::TopCx;
 use std::fmt;
+use syn_sem_hir::Hir;
 use syn_sem_name::NameDb;
-use syn_sem_pr::ProgramRepr;
 
 /// Semantic analysis output for one entry file.
 ///
@@ -11,17 +11,13 @@ use syn_sem_pr::ProgramRepr;
 pub struct Semantics<'tcx> {
     tcx: &'tcx TopCx<'tcx>,
     names: NameDb<'tcx>,
-    repr: ProgramRepr<'tcx>,
+    hir: Hir<'tcx>,
 }
 
 impl<'tcx> Semantics<'tcx> {
     /// Creates semantic output from its current phase products.
-    pub(crate) fn new(
-        tcx: &'tcx TopCx<'tcx>,
-        names: NameDb<'tcx>,
-        repr: ProgramRepr<'tcx>,
-    ) -> Self {
-        Self { tcx, names, repr }
+    pub(crate) fn new(tcx: &'tcx TopCx<'tcx>, names: NameDb<'tcx>, hir: Hir<'tcx>) -> Self {
+        Self { tcx, names, hir }
     }
 
     /// Returns the top-level context that owns this semantic output's interned data.
@@ -34,9 +30,9 @@ impl<'tcx> Semantics<'tcx> {
         &self.names
     }
 
-    /// Returns the Rust source program representation.
-    pub fn repr(&self) -> &ProgramRepr<'tcx> {
-        &self.repr
+    /// Returns the current HIR container.
+    pub fn hir(&self) -> &Hir<'tcx> {
+        &self.hir
     }
 
     /// Consumes this semantic output and returns the collected name-resolution database.
@@ -45,8 +41,8 @@ impl<'tcx> Semantics<'tcx> {
     }
 
     /// Consumes this semantic output and returns the phase products.
-    pub fn into_parts(self) -> (NameDb<'tcx>, ProgramRepr<'tcx>) {
-        (self.names, self.repr)
+    pub fn into_parts(self) -> (NameDb<'tcx>, Hir<'tcx>) {
+        (self.names, self.hir)
     }
 }
 
@@ -54,7 +50,7 @@ impl fmt::Debug for Semantics<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Semantics")
             .field("names", &self.names)
-            .field("repr", &self.repr)
+            .field("hir", &self.hir)
             .finish_non_exhaustive()
     }
 }

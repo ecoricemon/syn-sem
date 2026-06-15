@@ -5,7 +5,7 @@
 - Own the reusable name-resolution model.
 - Model definitions, scopes, namespaces, bindings, imports, lookup results, and
   semantic visibility.
-- Provide the name facts that upper semantic phases query from representation ids.
+- Provide the name facts that upper semantic phases query from HIR ids.
 
 ## Boundaries
 

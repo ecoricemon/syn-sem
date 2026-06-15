@@ -2,8 +2,8 @@ use crate::{NameInputBuilder, Semantics};
 use std::{fs, path::Path};
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
+use syn_sem_hir::HirBuilder;
 use syn_sem_name::collect::collect_names;
-use syn_sem_pr::ProgramReprBuilder;
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -34,8 +34,8 @@ impl<'tcx> TopCx<'tcx> {
         let name_inputs = NameInputBuilder::new(self).collect(entry_path)?;
         let names = collect_names(name_inputs, entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
-        let repr = ProgramReprBuilder::new(&names).build(entry_path, file);
-        Ok(Semantics::new(self, names, repr))
+        let hir = HirBuilder::new(&names).build(entry_path, file);
+        Ok(Semantics::new(self, names, hir))
     }
 
     pub(crate) fn has_parsed(&'tcx self, file_path: &Path) -> Option<FilePath<'tcx>> {

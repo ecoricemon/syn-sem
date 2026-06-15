@@ -1,11 +1,11 @@
-use crate::desugar::{self, PredicateSubject};
-use crate::repr::{
+use crate::hir::{
     item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr,
-    ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Item,
-    ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, ProgramRepr, QSelf,
-    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind,
-    TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
+    ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Hir,
+    Item, ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, QSelf, Signature,
+    SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind, TypeParam,
+    TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
 };
+use crate::lower::{self, PredicateSubject};
 use crate::{
     AssocItemId, BlockId, ExprId, FieldId, ItemId, LocalId, PatId, SignatureId, StmtId, TypeId,
     VariantId,
@@ -14,35 +14,31 @@ use syn_sem_ast as ast;
 use syn_sem_common::FilePath;
 use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
 
-/// Builder for [`ProgramRepr`].
-pub struct ProgramReprBuilder<'a, 'cx> {
+/// Builder for [`Hir`].
+pub struct HirBuilder<'a, 'cx> {
     names: &'a NameDb<'cx>,
-    repr: ProgramRepr<'cx>,
+    hir: Hir<'cx>,
 }
 
-impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
+impl<'a, 'cx> HirBuilder<'a, 'cx> {
     /// Creates a builder using the currently available name-resolution data.
     pub fn new(names: &'a NameDb<'cx>) -> Self {
         Self {
             names,
-            repr: ProgramRepr::default(),
+            hir: Hir::default(),
         }
     }
 
-    /// Builds a program representation for one entry file.
-    pub fn build(
-        mut self,
-        file_path: FilePath<'cx>,
-        file: &'cx ast::File<'cx>,
-    ) -> ProgramRepr<'cx> {
+    /// Builds HIR for one entry file.
+    pub fn build(mut self, file_path: FilePath<'cx>, file: &'cx ast::File<'cx>) -> Hir<'cx> {
         let root = Some(self.names.root_scope());
         let items = self.collect_items(file.items, root);
-        self.repr.add_file(File {
-            id: self.repr.next_file_id(),
+        self.hir.add_file(File {
+            id: self.hir.next_file_id(),
             file_path,
             items,
         });
-        self.repr
+        self.hir
     }
 
     fn collect_items(
@@ -57,13 +53,13 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
     }
 
     fn collect_item(&mut self, item: &'cx ast::Item<'cx>, parent_scope: Option<ScopeId>) -> ItemId {
-        let id = self.repr.next_item_id();
+        let id = self.hir.next_item_id();
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
         let visibility = item_visibility(item);
         let kind = self.collect_item_kind(item, parent_scope, def);
 
-        self.repr.add_item(Item {
+        self.hir.add_item(Item {
             id,
             name,
             visibility,
@@ -81,7 +77,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             if let ItemKind::Mod {
                 items: module_items,
                 ..
-            } = &mut self.repr[id].kind
+            } = &mut self.hir[id].kind
             {
                 *module_items = items;
             }
@@ -185,9 +181,9 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         field: &'cx ast::Field<'cx>,
         scope: Option<ScopeId>,
     ) -> FieldId {
-        let id = self.repr.next_field_id();
+        let id = self.hir.next_field_id();
         let ty = self.collect_type(&field.ty, scope, TypeSource::StructField);
-        self.repr.add_field(Field {
+        self.hir.add_field(Field {
             id,
             name: field.ident.inner,
             visibility: Visibility::from_ast(&field.vis),
@@ -202,7 +198,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         variant: &'cx ast::Variant<'cx>,
         scope: Option<ScopeId>,
     ) -> VariantId {
-        let id = self.repr.next_variant_id();
+        let id = self.hir.next_variant_id();
         let def = self.def_for_variant(variant);
         let (fields, discriminant) = match &variant.kind {
             ast::VariantKind::Fields(fields) => (
@@ -218,7 +214,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             }
             ast::VariantKind::Unit => (Vec::new(), None),
         };
-        self.repr.add_variant(Variant {
+        self.hir.add_variant(Variant {
             id,
             def,
             name: variant.ident.inner,
@@ -233,9 +229,9 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         field: &'cx ast::VariantField<'cx>,
         scope: Option<ScopeId>,
     ) -> FieldId {
-        let id = self.repr.next_field_id();
+        let id = self.hir.next_field_id();
         let ty = self.collect_type(&field.ty, scope, TypeSource::VariantField);
-        self.repr.add_field(Field {
+        self.hir.add_field(Field {
             id,
             name: field.ident.inner,
             visibility: Visibility::Private,
@@ -250,7 +246,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         item: &'cx ast::ImplItem<'cx>,
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
-        let id = self.repr.next_assoc_item_id();
+        let id = self.hir.next_assoc_item_id();
         let def = self.def_for_impl_item(item);
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
@@ -273,7 +269,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 AssocItemKind::ImplType { ty }
             }
         };
-        self.repr.add_assoc_item(AssocItem {
+        self.hir.add_assoc_item(AssocItem {
             id,
             name: item.ident().inner,
             def,
@@ -287,7 +283,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         item: &'cx ast::TraitItem<'cx>,
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
-        let id = self.repr.next_assoc_item_id();
+        let id = self.hir.next_assoc_item_id();
         let def = self.def_for_trait_item(item);
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
@@ -311,7 +307,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                 AssocItemKind::TraitType { default }
             }
         };
-        self.repr.add_assoc_item(AssocItem {
+        self.hir.add_assoc_item(AssocItem {
             id,
             name: item.ident().inner,
             def,
@@ -351,8 +347,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             !params.is_empty(),
             "semantic AST signatures must include a synthesized return parameter"
         );
-        let id = self.repr.next_signature_id();
-        self.repr.add_signature(Signature { id, source, params });
+        let id = self.hir.next_signature_id();
+        self.hir.add_signature(Signature { id, source, params });
         id
     }
 
@@ -366,9 +362,9 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             .iter()
             .map(|param| self.collect_generic_param(param, scope))
             .collect();
-        let predicates = desugar::generic_predicates(generics)
+        let predicates = lower::generic_predicates(generics)
             .into_iter()
-            .map(|predicate| self.collect_desugared_where_predicate(predicate, scope))
+            .map(|predicate| self.collect_lowered_where_predicate(predicate, scope))
             .collect();
         Generics {
             scope,
@@ -397,13 +393,13 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         }
     }
 
-    fn collect_desugared_where_predicate(
+    fn collect_lowered_where_predicate(
         &mut self,
-        predicate: desugar::WherePredicate<'cx>,
+        predicate: lower::WherePredicate<'cx>,
         scope: Option<ScopeId>,
     ) -> WherePredicate<'cx> {
         match predicate {
-            desugar::WherePredicate::TypeBound(predicate) => WherePredicate::TypeBound {
+            lower::WherePredicate::TypeBound(predicate) => WherePredicate::TypeBound {
                 subject: match predicate.subject {
                     PredicateSubject::TypeParam(name) => {
                         self.collect_name_type(name, scope, TypeSource::WherePredicateSubject)
@@ -418,7 +414,7 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
                     .map(|bound| self.collect_type_param_bound(bound, scope))
                     .collect(),
             },
-            desugar::WherePredicate::Unsupported => WherePredicate::Unsupported,
+            lower::WherePredicate::Unsupported => WherePredicate::Unsupported,
         }
     }
 
@@ -442,8 +438,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         source: TypeSource,
     ) -> TypeId {
         let kind = self.collect_type_kind(ty, scope);
-        let id = self.repr.next_type_id();
-        self.repr.add_type(Type {
+        let id = self.hir.next_type_id();
+        self.hir.add_type(Type {
             id,
             ty: Some(ty),
             kind,
@@ -459,8 +455,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {
-        let id = self.repr.next_type_id();
-        self.repr.add_type(Type {
+        let id = self.hir.next_type_id();
+        self.hir.add_type(Type {
             id,
             ty: None,
             kind: TypeKind::Path(Path {
@@ -631,15 +627,15 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
     }
 
     fn collect_block(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) -> BlockId {
-        let id = self.repr.next_block_id();
-        self.repr.add_block(Block {
+        let id = self.hir.next_block_id();
+        self.hir.add_block(Block {
             id,
             block,
             stmts: Vec::new(),
             scope,
         });
         let stmts = self.collect_block_contents(block, scope);
-        self.repr[id].stmts = stmts;
+        self.hir[id].stmts = stmts;
         id
     }
 
@@ -661,8 +657,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             ast::Stmt::Item(_) => StmtKind::Item,
             ast::Stmt::Expr(expr) => StmtKind::Expr(self.collect_expr(expr, scope)),
         };
-        let id = self.repr.next_stmt_id();
-        self.repr.add_stmt(Stmt {
+        let id = self.hir.next_stmt_id();
+        self.hir.add_stmt(Stmt {
             id,
             stmt,
             kind,
@@ -677,8 +673,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             .as_ref()
             .map(|init| self.collect_expr(init.expr, scope));
         let pat = self.collect_pat(&local.pat, scope);
-        let id = self.repr.next_local_id();
-        self.repr.add_local(Local {
+        let id = self.hir.next_local_id();
+        self.hir.add_local(Local {
             id,
             local,
             pat,
@@ -728,8 +724,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             },
             ast::Pat::Lit(_) | ast::Pat::Rest(_) | ast::Pat::Slice(_) => PatKind::Unsupported,
         };
-        let id = self.repr.next_pat_id();
-        self.repr.add_pat(Pat {
+        let id = self.hir.next_pat_id();
+        self.hir.add_pat(Pat {
             id,
             pat,
             kind,
@@ -841,8 +837,8 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
             },
         };
 
-        let id = self.repr.next_expr_id();
-        self.repr.add_expr(Expr {
+        let id = self.hir.next_expr_id();
+        self.hir.add_expr(Expr {
             id,
             expr,
             kind,
@@ -878,25 +874,21 @@ impl<'a, 'cx> ProgramReprBuilder<'a, 'cx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProgramReprBuilder;
+    use crate::{Hir, HirBuilder};
     use syn_sem_ast::SyntaxCx;
     use syn_sem_common::CommonCx;
     use syn_sem_name::{AstNodeId, DefKind, NameDb, Origin, Visibility as NameVisibility};
 
-    fn parsed_model<'cx>(
-        ccx: &'cx CommonCx,
-        scx: &'cx SyntaxCx<'cx>,
-        code: &str,
-    ) -> ProgramRepr<'cx> {
+    fn parsed_model<'cx>(ccx: &'cx CommonCx, scx: &'cx SyntaxCx<'cx>, code: &str) -> Hir<'cx> {
         let file_path = ccx.intern("test.rs");
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
-        ProgramReprBuilder::new(&names).build(file_path, file)
+        HirBuilder::new(&names).build(file_path, file)
     }
 
-    fn type_sources(model: &ProgramRepr<'_>) -> Vec<TypeSource> {
+    fn type_sources(model: &Hir<'_>) -> Vec<TypeSource> {
         model.types().iter().map(|ty| ty.source).collect()
     }
 
@@ -925,7 +917,7 @@ mod tests {
         }
     }
 
-    fn named_item<'m, 'cx>(model: &'m ProgramRepr<'cx>, name: &str) -> &'m Item<'cx> {
+    fn named_item<'m, 'cx>(model: &'m Hir<'cx>, name: &str) -> &'m Item<'cx> {
         model
             .items()
             .iter()
@@ -1225,7 +1217,7 @@ mod tests {
     }
 
     #[test]
-    fn covers_repr_native_names_visibility_and_paths() {
+    fn covers_hir_native_names_visibility_and_paths() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1835,7 +1827,7 @@ mod tests {
         };
         names.set_def_ast_node(def, AstNodeId::from_ref(item));
 
-        let model = ProgramReprBuilder::new(&names).build(file_path, file);
+        let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[0].def, Some(def));
     }
 
@@ -1918,17 +1910,17 @@ mod tests {
         );
         names.set_def_ast_node(second_fn_def, AstNodeId::from_ref(second_fn_item));
 
-        let model = ProgramReprBuilder::new(&names).build(file_path, file);
+        let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[1].def, Some(first_impl_def));
         assert_eq!(model.items()[2].def, Some(second_impl_def));
 
         let ItemKind::Impl { items, .. } = &model.items()[1].kind else {
-            panic!("expected first repr impl");
+            panic!("expected first HIR impl");
         };
         assert_eq!(model[items[0]].def, Some(first_fn_def));
 
         let ItemKind::Impl { items, .. } = &model.items()[2].kind else {
-            panic!("expected second repr impl");
+            panic!("expected second HIR impl");
         };
         assert_eq!(model[items[0]].def, Some(second_fn_def));
     }

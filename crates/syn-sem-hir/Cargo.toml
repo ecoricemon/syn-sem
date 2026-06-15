@@ -1,10 +1,10 @@
 [package]
-name = "syn-sem-pr"
+name = "syn-sem-hir"
 publish = false
 version = "0.0.0"
 edition = "2021"
 rust-version = "1.66.1"
-description = "Program representation for syn-sem"
+description = "HIR construction for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 
 [dependencies]
