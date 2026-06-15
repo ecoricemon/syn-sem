@@ -141,7 +141,7 @@ impl<'cx> AstNameCollector<'cx> {
     }
 }
 
-fn collect_names<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: SourceText<'cx>) -> NameDb<'cx> {
+fn collect_ast_names<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: SourceText<'cx>) -> NameDb<'cx> {
     let file = parse_file(scx, text);
     AstNameCollector::default().collect_file(&file)
 }
@@ -210,7 +210,7 @@ fn resolves_function_generics_params_and_locals_from_ast() {
         }
         "#,
     );
-    let db = collect_names(&scx, text);
+    let db = collect_ast_names(&scx, text);
 
     let generic_scope = scope(&db, ScopeKind::Generic, 0);
     let block_scope = scope(&db, ScopeKind::Block, 0);
@@ -267,7 +267,7 @@ fn resolves_local_item_declared_inside_function_from_ast() {
         }
         "#,
     );
-    let db = collect_names(&scx, text);
+    let db = collect_ast_names(&scx, text);
 
     let block_scope = scope(&db, ScopeKind::Block, 0);
 
@@ -312,7 +312,7 @@ fn keeps_type_and_value_namespaces_separate_from_ast() {
         }
         "#,
     );
-    let db = collect_names(&scx, text);
+    let db = collect_ast_names(&scx, text);
 
     let block_scope = scope(&db, ScopeKind::Block, 0);
 

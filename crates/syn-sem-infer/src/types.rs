@@ -368,9 +368,64 @@ impl<'cx> InferDb<'cx> {
                 GenericArgument::AssocConst { name, value }
             }
             GenericArgument::Constraint { name, bounds } => {
+                let bounds = self.normalized_type_bounds(bounds, active, changed);
                 GenericArgument::Constraint { name, bounds }
             }
             GenericArgument::Unsupported => GenericArgument::Unsupported,
+        }
+    }
+
+    fn normalized_type_bounds(
+        &mut self,
+        bounds: TypeBounds<'cx>,
+        active: &mut Vec<TypeId>,
+        changed: &mut bool,
+    ) -> TypeBounds<'cx> {
+        TypeBounds {
+            bounds: bounds
+                .bounds
+                .into_iter()
+                .map(|bound| self.normalized_type_param_bound(bound, active, changed))
+                .collect(),
+        }
+    }
+
+    fn normalized_type_param_bound(
+        &mut self,
+        bound: TypeParamBound<'cx>,
+        active: &mut Vec<TypeId>,
+        changed: &mut bool,
+    ) -> TypeParamBound<'cx> {
+        match bound {
+            TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
+                path: self.normalized_path(bound.path, active, changed),
+            }),
+            TypeParamBound::Unsupported => TypeParamBound::Unsupported,
+        }
+    }
+
+    fn normalized_path(
+        &mut self,
+        path: Path<'cx>,
+        active: &mut Vec<TypeId>,
+        changed: &mut bool,
+    ) -> Path<'cx> {
+        Path {
+            segments: path
+                .segments
+                .into_iter()
+                .map(|segment| {
+                    let args = segment
+                        .args
+                        .into_iter()
+                        .map(|arg| self.normalized_generic_argument(arg, active, changed))
+                        .collect();
+                    PathSegment {
+                        name: segment.name,
+                        args,
+                    }
+                })
+                .collect(),
         }
     }
 }
@@ -584,7 +639,7 @@ pub enum GenericArgument<'cx> {
     /// Type argument.
     Type(TypeId),
     /// Const expression argument.
-    Const(ConstArg),
+    Const(ConstArg<'cx>),
     /// Associated type equality.
     AssocType {
         /// Associated type name.
@@ -597,43 +652,85 @@ pub enum GenericArgument<'cx> {
         /// Associated const name.
         name: syn_sem_name::Name<'cx>,
         /// Assigned const value.
-        value: ConstArg,
+        value: ConstArg<'cx>,
     },
     /// Associated type constraint.
     Constraint {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Source bounds.
-        bounds: TypeBounds,
+        bounds: TypeBounds<'cx>,
     },
     /// Unsupported argument form.
     Unsupported,
 }
 
-/// Array length represented before HIR exposes lowered const-expression facts.
-// TODO: Replace this with expression-backed or evaluated array length facts once HIR exposes
-// lowered const-expression input.
+/// Array length expression shape used by inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayLen {
-    /// Length is still a source expression.
-    Expr,
+    /// Length is still a HIR expression.
+    Expr(hir::ExprId),
 }
 
 impl ArrayLen {
     pub(crate) fn from_hir(len: hir::ArrayLen) -> Self {
         match len {
-            hir::ArrayLen::Expr(_) => Self::Expr,
+            hir::ArrayLen::Expr(expr) => Self::Expr(expr),
         }
     }
 }
 
-/// Const argument represented before HIR exposes lowered const-expression facts.
-// TODO: Replace this with expression-backed const argument facts once HIR exposes lowered
-// const-expression input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConstArg;
+/// Const argument shape used by inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstArg<'cx> {
+    /// Literal const argument.
+    Lit(Lit<'cx>),
+    /// Path const argument.
+    Path(Path<'cx>),
+    /// Const expression argument.
+    Expr(hir::ExprId),
+}
 
-/// Type bounds represented before HIR exposes lowered bound facts.
-// TODO: Replace this with bound-backed facts once HIR exposes lowered type-bound input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TypeBounds;
+/// Literal shape used by inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lit<'cx> {
+    /// Integer literal stored as normalized base-10 digits.
+    Int(syn_sem_common::InternedStr<'cx>),
+    /// Floating-point literal stored as normalized base-10 digits.
+    Float(syn_sem_common::InternedStr<'cx>),
+    /// Boolean literal.
+    Bool(bool),
+}
+
+impl<'cx> Lit<'cx> {
+    pub(crate) fn from_hir(lit: &hir::Lit<'cx>) -> Self {
+        match lit {
+            hir::Lit::Int(value) => Self::Int(*value),
+            hir::Lit::Float(value) => Self::Float(*value),
+            hir::Lit::Bool(value) => Self::Bool(*value),
+        }
+    }
+}
+
+/// Type bounds attached to an associated type constraint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeBounds<'cx> {
+    /// Bounds in source order.
+    pub bounds: Vec<TypeParamBound<'cx>>,
+}
+
+/// Type parameter bound shape used by inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeParamBound<'cx> {
+    /// Trait bound.
+    Trait(TraitBound<'cx>),
+    /// Unsupported bound form.
+    Unsupported,
+}
+
+/// Trait bound shape used by inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitBound<'cx> {
+    /// Trait path.
+    pub path: Path<'cx>,
+}

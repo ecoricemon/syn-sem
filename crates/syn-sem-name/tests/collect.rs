@@ -1,7 +1,7 @@
 use syn_sem_ast as ast;
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
-    collect::{collect_names, FileInput},
+    collect::{FileInput, NameCollector},
     DefId, DefKind, Import, ImportKind, ImportStatus, Name, NameDb, Namespace, ResolveResult,
     ScopeId, ScopeKind,
 };
@@ -31,7 +31,7 @@ fn collect<'cx>(
     files: impl IntoIterator<Item = FileInput<'cx>>,
     entry_path: FilePath<'cx>,
 ) -> NameDb<'cx> {
-    collect_names(files, entry_path).unwrap()
+    NameCollector::new(files).collect(entry_path).unwrap()
 }
 
 fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {

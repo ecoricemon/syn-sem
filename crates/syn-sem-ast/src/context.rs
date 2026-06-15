@@ -1,9 +1,9 @@
-use crate::{AppendOnlyMap, File as AstFile, FromSyn, InputDesc};
+use crate::{File as AstFile, FromSyn, InputDesc};
 use any_intern::Interned;
 use bumpalo::Bump;
 use std::{fmt::Display, io, mem};
 use syn_locator::{LocateEntry, Locator};
-use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
+use syn_sem_common::{CommonCx, FilePath, FrozenMap, Result, SourceText};
 
 /// Allocation and interning context used by the semantic AST.
 ///
@@ -14,7 +14,7 @@ pub struct SyntaxCx<'cx> {
     pub common: &'cx CommonCx,
     /// Arena used for dropless AST allocation.
     pub bump: Bump,
-    files: AppendOnlyMap<FilePath<'cx>, Box<Source<'cx>>>,
+    files: FrozenMap<FilePath<'cx>, Box<Source<'cx>>>,
 }
 
 impl<'cx> SyntaxCx<'cx> {
@@ -23,7 +23,7 @@ impl<'cx> SyntaxCx<'cx> {
         Self {
             common,
             bump: Bump::new(),
-            files: AppendOnlyMap::default(),
+            files: FrozenMap::default(),
         }
     }
 

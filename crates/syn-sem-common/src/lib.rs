@@ -11,7 +11,10 @@ pub use ast_node::*;
 pub use context::*;
 
 use any_intern::Interned;
-use std::{collections::HashMap, error::Error as StdError};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error as StdError,
+};
 
 /// Error type shared by internal `syn-sem` crates.
 pub type Error = Box<dyn StdError + Send + Sync>;
@@ -21,6 +24,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Hash map type used by internal `syn-sem` crates.
 pub type Map<K, V> = HashMap<K, V, fxhash::FxBuildHasher>;
+
+/// Append-only map type used by internal `syn-sem` crates.
+pub type FrozenMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
+
+/// Hash set type used by internal `syn-sem` crates.
+pub type Set<T> = HashSet<T, fxhash::FxBuildHasher>;
 
 /// String interned in [`CommonCx`].
 ///

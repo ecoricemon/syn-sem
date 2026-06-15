@@ -11,6 +11,7 @@ mod file;
 mod generics;
 mod item;
 mod lit;
+mod module_tree;
 mod pat;
 mod path;
 mod restriction;
@@ -25,14 +26,12 @@ pub use file::*;
 pub use generics::*;
 pub use item::*;
 pub use lit::*;
+pub use module_tree::*;
 pub use pat::*;
 pub use path::*;
 pub use restriction::*;
 pub use stmt::*;
 pub use ty::*;
-
-//pub(crate) type Map<K, V> = fxhash::FxHashMap<K, V>;
-pub(crate) type AppendOnlyMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
 
 #[cfg(test)]
 pub(crate) mod test_util {

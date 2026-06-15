@@ -6,8 +6,8 @@
 
 use crate::{
     ArrayLen, ConstArg, GenericArgument, InferDb, Path, PathSegment, PathType, PathTypeResolution,
-    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, TraitBoundFact, Type, TypeBounds,
-    TypeId,
+    PrimitiveType, ProjectionObligation, ProjectionType, QSelf, TraitBound, TraitBoundFact, Type,
+    TypeBounds, TypeId, TypeParamBound,
 };
 use syn_sem_common::CommonCx;
 use syn_sem_hir as hir;
@@ -313,20 +313,46 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
     fn lower_generic_arg(&mut self, arg: &hir::GenericArg<'cx>) -> GenericArgument<'cx> {
         match arg {
             hir::GenericArg::Type(ty) => GenericArgument::Type(self.lower_hir_type(*ty)),
-            hir::GenericArg::Const(_) => GenericArgument::Const(ConstArg),
+            hir::GenericArg::Const(value) => GenericArgument::Const(self.lower_const_arg(value)),
             hir::GenericArg::AssocType { name, ty } => GenericArgument::AssocType {
                 name: *name,
                 ty: self.lower_hir_type(*ty),
             },
-            hir::GenericArg::AssocConst { name, .. } => GenericArgument::AssocConst {
+            hir::GenericArg::AssocConst { name, value } => GenericArgument::AssocConst {
                 name: *name,
-                value: ConstArg,
+                value: self.lower_const_arg(value),
             },
-            hir::GenericArg::Constraint { name, .. } => GenericArgument::Constraint {
+            hir::GenericArg::Constraint { name, bounds } => GenericArgument::Constraint {
                 name: *name,
-                bounds: TypeBounds,
+                bounds: self.lower_type_bounds(bounds),
             },
             hir::GenericArg::Unsupported => GenericArgument::Unsupported,
+        }
+    }
+
+    fn lower_const_arg(&mut self, arg: &hir::ConstArg<'cx>) -> ConstArg<'cx> {
+        match arg {
+            hir::ConstArg::Lit(lit) => ConstArg::Lit(crate::Lit::from_hir(lit)),
+            hir::ConstArg::Path(path) => ConstArg::Path(self.lower_path_value(&path.segments)),
+            hir::ConstArg::Expr(expr) => ConstArg::Expr(*expr),
+        }
+    }
+
+    fn lower_type_bounds(&mut self, bounds: &[hir::TypeParamBound<'cx>]) -> TypeBounds<'cx> {
+        TypeBounds {
+            bounds: bounds
+                .iter()
+                .map(|bound| self.lower_type_param_bound(bound))
+                .collect(),
+        }
+    }
+
+    fn lower_type_param_bound(&mut self, bound: &hir::TypeParamBound<'cx>) -> TypeParamBound<'cx> {
+        match bound {
+            hir::TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
+                path: self.lower_path_value(&bound.path),
+            }),
+            hir::TypeParamBound::Unsupported => TypeParamBound::Unsupported,
         }
     }
 
@@ -364,7 +390,7 @@ mod tests {
     use syn_sem_common::CommonCx;
     use syn_sem_hir as hir;
     use syn_sem_name::{
-        collect::{collect_names, FileInput},
+        collect::{FileInput, NameCollector},
         AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
     };
 
@@ -407,7 +433,9 @@ mod tests {
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = collect_names([FileInput { file_path, file }], file_path).unwrap();
+        let names = NameCollector::new([FileInput { file_path, file }])
+            .collect(file_path)
+            .unwrap();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(ccx, &hir, &names);
         (hir, names, infer)
@@ -1494,6 +1522,115 @@ mod tests {
 
     fn assert_primitive_type(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
         assert_eq!(infer[ty], Type::Primitive(expected));
+    }
+
+    #[test]
+    fn preserves_array_length_expression_id() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: [u8; 3] }");
+        let hir_type = struct_field_hir_types(&hir, "S")[0];
+        let infer_type = infer.type_for_hir_type(hir_type).unwrap();
+
+        let Type::Array { len, .. } = &infer[infer_type] else {
+            panic!("array field should lower to an array type");
+        };
+        let ArrayLen::Expr(expr) = len;
+        let hir::TypeKind::Array {
+            len: hir::ArrayLen::Expr(hir_expr),
+            ..
+        } = hir[hir_type].kind
+        else {
+            panic!("HIR field should be an array type");
+        };
+        assert_eq!(*expr, hir_expr);
+    }
+
+    #[test]
+    fn preserves_const_generic_arguments() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, infer) = infer_types(
+            &ccx,
+            &scx,
+            "struct Array<T, const N: usize> { field: T } struct S { field: Array<u8, 3> }",
+        );
+        let hir_type = struct_field_hir_types(&hir, "S")[0];
+        let infer_type = infer.type_for_hir_type(hir_type).unwrap();
+
+        let Type::Path(path) = &infer[infer_type] else {
+            panic!("field should lower to a path type");
+        };
+        let [segment] = path.path.segments.as_slice() else {
+            panic!("Array<u8, 3> should have one path segment");
+        };
+        let [GenericArgument::Type(_), GenericArgument::Const(ConstArg::Lit(crate::Lit::Int(value)))] =
+            segment.args.as_slice()
+        else {
+            panic!("Array<u8, 3> should preserve its type and const arguments");
+        };
+        assert_eq!(value.as_ref(), "3");
+    }
+
+    #[test]
+    fn preserves_associated_const_arguments() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_hir, infer) = infer_types(
+            &ccx,
+            &scx,
+            r#"
+            trait Trait {
+                const PANIC: bool;
+            }
+
+            struct S<T: Trait<PANIC = false>> {
+                field: T,
+            }
+            "#,
+        );
+        let fact = infer.trait_bound_facts().first().unwrap();
+        let Type::Path(trait_ty) = &infer[fact.trait_ty] else {
+            panic!("trait bound should lower to a path type");
+        };
+        let [GenericArgument::AssocConst { name, value }] =
+            trait_ty.path.segments[0].args.as_slice()
+        else {
+            panic!("trait bound should preserve associated const argument");
+        };
+        assert_eq!(name.as_ref(), "PANIC");
+        assert_eq!(*value, ConstArg::Lit(crate::Lit::Bool(false)));
+    }
+
+    #[test]
+    fn preserves_associated_type_constraint_bounds() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_hir, infer) = infer_types(
+            &ccx,
+            &scx,
+            r#"
+            struct S<T: Iterator<Item: std::fmt::Display>> {
+                field: T,
+            }
+            "#,
+        );
+        let fact = infer.trait_bound_facts().first().unwrap();
+        let Type::Path(trait_ty) = &infer[fact.trait_ty] else {
+            panic!("trait bound should lower to a path type");
+        };
+        let [GenericArgument::Constraint { name, bounds }] =
+            trait_ty.path.segments[0].args.as_slice()
+        else {
+            panic!("trait bound should preserve associated type constraint");
+        };
+        assert_eq!(name.as_ref(), "Item");
+        let [TypeParamBound::Trait(bound)] = bounds.bounds.as_slice() else {
+            panic!("constraint should preserve its trait bound");
+        };
+        assert_eq!(bound.path.segments[0].name.as_ref(), "std");
+        assert_eq!(bound.path.segments[1].name.as_ref(), "fmt");
+        assert_eq!(bound.path.segments[2].name.as_ref(), "Display");
     }
 
     #[test]

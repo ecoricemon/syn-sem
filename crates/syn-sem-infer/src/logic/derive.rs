@@ -412,10 +412,76 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 GenericArgument::AssocConst { name, value }
             }
             GenericArgument::Constraint { name, bounds } => {
+                let (bounds, bounds_used) = self.substitute_type_bounds(bounds, bindings);
+                used.extend(bounds_used);
                 GenericArgument::Constraint { name, bounds }
             }
             GenericArgument::Unsupported => GenericArgument::Unsupported,
         }
+    }
+
+    fn substitute_type_bounds(
+        &self,
+        bounds: crate::TypeBounds<'cx>,
+        bindings: &[TypeBindingFact],
+    ) -> (crate::TypeBounds<'cx>, Vec<TypeBindingFact>) {
+        let mut used = Vec::new();
+        let bounds = bounds
+            .bounds
+            .into_iter()
+            .map(|bound| {
+                let (bound, bound_used) = self.substitute_type_param_bound(bound, bindings);
+                used.extend(bound_used);
+                bound
+            })
+            .collect();
+        (crate::TypeBounds { bounds }, Self::unique_bindings(used))
+    }
+
+    fn substitute_type_param_bound(
+        &self,
+        bound: crate::TypeParamBound<'cx>,
+        bindings: &[TypeBindingFact],
+    ) -> (crate::TypeParamBound<'cx>, Vec<TypeBindingFact>) {
+        match bound {
+            crate::TypeParamBound::Trait(bound) => {
+                let (path, used) = self.substitute_path(bound.path, bindings);
+                (
+                    crate::TypeParamBound::Trait(crate::TraitBound { path }),
+                    used,
+                )
+            }
+            crate::TypeParamBound::Unsupported => (crate::TypeParamBound::Unsupported, Vec::new()),
+        }
+    }
+
+    fn substitute_path(
+        &self,
+        path: crate::Path<'cx>,
+        bindings: &[TypeBindingFact],
+    ) -> (crate::Path<'cx>, Vec<TypeBindingFact>) {
+        let mut used = Vec::new();
+        let segments = path
+            .segments
+            .into_iter()
+            .map(|segment| {
+                let args = segment
+                    .args
+                    .into_iter()
+                    .map(|arg| {
+                        let mut arg_used = Vec::new();
+                        let arg = self.substitute_generic_argument(arg, bindings, &mut arg_used);
+                        used.extend(arg_used);
+                        arg
+                    })
+                    .collect();
+                crate::PathSegment {
+                    name: segment.name,
+                    args,
+                }
+            })
+            .collect();
+        (crate::Path { segments }, Self::unique_bindings(used))
     }
 
     fn substitute_type_ids(
