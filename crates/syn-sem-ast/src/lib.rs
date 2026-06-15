@@ -11,6 +11,7 @@ mod file;
 mod generics;
 mod item;
 mod lit;
+mod module_tree;
 mod pat;
 mod path;
 mod restriction;
@@ -25,14 +26,12 @@ pub use file::*;
 pub use generics::*;
 pub use item::*;
 pub use lit::*;
+pub use module_tree::*;
 pub use pat::*;
 pub use path::*;
 pub use restriction::*;
 pub use stmt::*;
 pub use ty::*;
-
-//pub(crate) type Map<K, V> = fxhash::FxHashMap<K, V>;
-pub(crate) type AppendOnlyMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
 
 #[cfg(test)]
 pub(crate) mod test_util {
@@ -57,7 +56,7 @@ pub(crate) mod test_util {
 
     pub(crate) fn parse<'cx, T: Parse + LocateEntry + 'static, U: FromSyn<'cx, T>>(
         scx: &'cx SyntaxCx<'cx>,
-        text: &str,
+        source_text: &str,
     ) -> Parsed<U, T> {
         // Creates a unique file path.
         static ID: AtomicU32 = AtomicU32::new(0);
@@ -66,15 +65,15 @@ pub(crate) mod test_util {
 
         // Parses `T` and generates `U`.
         let file_path = scx.common.intern(&file_path);
-        let text = scx.common.intern(text);
-        let syntax = Box::new(syn::parse_str::<T>(text.as_ref()).unwrap());
-        let mut locator = Locator::new(file_path.as_ref(), text.as_ref());
+        let source_text = scx.common.intern(source_text);
+        let syntax = Box::new(syn::parse_str::<T>(source_text.as_ref()).unwrap());
+        let mut locator = Locator::new(file_path.as_ref(), source_text.as_ref());
         syntax.locate_as_entry(&mut locator).unwrap();
         let value = U::from_syn(
             scx,
             InputDesc {
                 file_path,
-                source_code: text,
+                source_text,
                 locator: &locator,
                 input: syntax.as_ref(),
             },

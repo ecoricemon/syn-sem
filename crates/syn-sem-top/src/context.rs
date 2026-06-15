@@ -1,9 +1,9 @@
-use crate::{NameInputBuilder, Semantics};
-use std::{fs, path::Path};
+use crate::Semantics;
+use std::path::Path;
 use syn_sem_ast::SyntaxCx;
-use syn_sem_common::{CommonCx, FilePath, Result, SourceText};
+use syn_sem_common::{CommonCx, FilePath, Result};
 use syn_sem_hir::HirBuilder;
-use syn_sem_name::collect::collect_names;
+use syn_sem_name::collect::NameCollector;
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -20,41 +20,33 @@ pub struct TopCx<'tcx> {
 }
 
 impl<'tcx> TopCx<'tcx> {
-    /// Parses and stores a virtual Rust file, returning its interned file path.
-    pub fn insert_virtual_file(
-        &'tcx self,
-        file_path: FilePath<'tcx>,
-        text: SourceText<'tcx>,
-    ) -> Result<()> {
-        self.syntax.parse_virtual_file(file_path, text)
+    /// Reads a physical entry file and analyzes its connected module tree.
+    pub fn analyze_file(&'tcx self, entry_path: impl AsRef<Path>) -> Result<Semantics<'tcx>> {
+        let entry_path = self.syntax.read_physical_file(entry_path)?;
+        self.analyze_entry(entry_path)
     }
 
-    /// Analyzes a previously inserted or read entry file.
-    pub fn analyze(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
-        let name_inputs = NameInputBuilder::new(self).collect(entry_path)?;
-        let names = collect_names(name_inputs, entry_path)?;
+    /// Parses a virtual entry file and analyzes its connected module tree.
+    pub fn analyze_virtual_file(
+        &'tcx self,
+        entry_path: &str,
+        source_text: &str,
+    ) -> Result<Semantics<'tcx>> {
+        let entry_path = self.common.insert_virtual_file(entry_path, source_text)?;
+        let source_text = self
+            .common
+            .source_text(entry_path)
+            .ok_or_else(|| format!("source file is not stored: {entry_path}"))?;
+        self.syntax.parse_virtual_file(entry_path, source_text)?;
+        self.analyze_entry(entry_path)
+    }
+
+    fn analyze_entry(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
+        let name_inputs = self.syntax.collect_module_tree(entry_path)?;
+        let names = NameCollector::new(name_inputs).collect(entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
         let hir = HirBuilder::new(&names).build(entry_path, file);
         Ok(Semantics::new(self, names, hir))
-    }
-
-    pub(crate) fn has_parsed(&'tcx self, file_path: &Path) -> Option<FilePath<'tcx>> {
-        let file_path = self.common.intern_path(file_path);
-        self.syntax.has_source(file_path).then_some(file_path)
-    }
-
-    pub(crate) fn read_physical_file(&'tcx self, file_path: &Path) -> Result<FilePath<'tcx>> {
-        let file_path = file_path.canonicalize()?;
-        let file_path = self.common.intern_path(&file_path);
-        if self.syntax.has_source(file_path) {
-            return Ok(file_path);
-        }
-
-        let text = fs::read_to_string(&*file_path)?;
-        let text = self.common.intern(&text);
-        self.syntax
-            .parse_physical_file(file_path, text)
-            .map(|()| file_path)
     }
 }
 

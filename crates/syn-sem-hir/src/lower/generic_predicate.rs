@@ -56,11 +56,11 @@ mod tests {
     fn parse_struct_generics<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
-        code: &str,
+        source_text: &str,
     ) -> &'cx ast::Generics<'cx> {
         let file_path = ccx.intern("lower_test.rs");
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text)
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
         let Some(ast::Item::Struct(item)) = file.items.first() else {

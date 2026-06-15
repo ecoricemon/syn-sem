@@ -25,7 +25,7 @@ impl<'cx> Path<'cx> {
     {
         let len = iter.clone().count();
         let segments = scx.alloc_slice(len, |_| {
-            PathSegment::from_str(scx, iter.next().unwrap(), Span::empty())
+            PathSegment::from_str(scx, iter.next().unwrap(), Span::new_empty(scx))
         });
         Self { segments, span }
     }

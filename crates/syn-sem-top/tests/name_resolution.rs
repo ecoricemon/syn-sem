@@ -1,5 +1,3 @@
-use std::fs;
-
 use syn_sem_hir::ItemKind;
 use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
 use syn_sem_top::TopCx;
@@ -11,12 +9,8 @@ fn resolves_imports_from_physical_module_files() {
     let tcx = TopCx::default();
 
     let entry_path = fixture("a1.rs");
-    let entry_path = tcx.common.intern_path(&entry_path);
-    let text = fs::read_to_string(&*entry_path).unwrap();
-    let text = tcx.common.intern(&text);
-    tcx.insert_virtual_file(entry_path, text).unwrap();
 
-    let semantics = tcx.analyze(entry_path).unwrap();
+    let semantics = tcx.analyze_file(entry_path).unwrap();
     assert!(!semantics.hir().files().is_empty());
     assert!(!semantics.hir().items().is_empty());
 
@@ -169,9 +163,10 @@ mod upper_phase_integration {
     #[test]
     fn consumes_hir_and_name_facts_together() {
         let tcx = TopCx::default();
-        let entry_path = tcx.common.intern("upper_phase.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "upper_phase.rs",
+                r#"
             pub(crate) mod inner {
                 pub fn helper() {}
             }
@@ -186,10 +181,8 @@ mod upper_phase_integration {
                 x
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
         let infer = InferDb::analyze(&tcx.common, hir, names);
@@ -294,9 +287,10 @@ mod upper_phase_integration {
     #[test]
     fn consumes_projection_normalization_query_from_hir() {
         let tcx = TopCx::default();
-        let entry_path = tcx.common.intern("projection_normalization.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "projection_normalization.rs",
+                r#"
             struct Vec;
 
             trait Iterator {
@@ -311,10 +305,8 @@ mod upper_phase_integration {
                 field: <Vec as Iterator>::Item,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
         let infer = InferDb::analyze(&tcx.common, hir, names);
@@ -361,9 +353,10 @@ mod upper_phase_integration {
     #[test]
     fn consumes_generic_projection_normalization_query_from_hir() {
         let tcx = TopCx::default();
-        let entry_path = tcx.common.intern("generic_projection_normalization.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "generic_projection_normalization.rs",
+                r#"
             struct Vec<T>;
 
             trait Iterator {
@@ -378,10 +371,8 @@ mod upper_phase_integration {
                 field: <Vec<u32> as Iterator>::Item,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
@@ -416,11 +407,10 @@ mod upper_phase_integration {
     #[test]
     fn normalizes_projection_with_multiple_generic_bindings() {
         let tcx = TopCx::default();
-        let entry_path = tcx
-            .common
-            .intern("multi_generic_projection_normalization.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "multi_generic_projection_normalization.rs",
+                r#"
             struct Pair<K, V>;
 
             trait Select {
@@ -435,10 +425,8 @@ mod upper_phase_integration {
                 field: <Pair<u32, bool> as Select>::Output,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
@@ -472,11 +460,10 @@ mod upper_phase_integration {
     #[test]
     fn normalizes_nested_generic_projection_values() {
         let tcx = TopCx::default();
-        let entry_path = tcx
-            .common
-            .intern("nested_generic_projection_normalization.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "nested_generic_projection_normalization.rs",
+                r#"
             struct Vec<T>;
             struct Option<T>;
 
@@ -492,10 +479,8 @@ mod upper_phase_integration {
                 field: <Vec<u32> as Wrap>::Output,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
@@ -539,9 +524,10 @@ mod upper_phase_integration {
     #[test]
     fn consumes_recursive_normalization_query_from_hir() {
         let tcx = TopCx::default();
-        let entry_path = tcx.common.intern("recursive_projection_normalization.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "recursive_projection_normalization.rs",
+                r#"
             struct Vec<T>;
             struct Option<T>;
 
@@ -557,10 +543,8 @@ mod upper_phase_integration {
                 field: Option<<Vec<u32> as Iterator>::Item>,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let mut infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
@@ -586,9 +570,10 @@ mod upper_phase_integration {
     #[test]
     fn keeps_generic_substitutions_tied_to_impl_self_match() {
         let tcx = TopCx::default();
-        let entry_path = tcx.common.intern("contextual_projection_substitution.rs");
-        let text = tcx.common.intern(
-            r#"
+        let semantics = tcx
+            .analyze_virtual_file(
+                "contextual_projection_substitution.rs",
+                r#"
             struct Vec<T>;
             struct Box<T>;
             struct Option<T>;
@@ -610,10 +595,8 @@ mod upper_phase_integration {
                 box_field: <Box<bool> as Wrap>::Output,
             }
             "#,
-        );
-
-        tcx.insert_virtual_file(entry_path, text).unwrap();
-        let semantics = tcx.analyze(entry_path).unwrap();
+            )
+            .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 

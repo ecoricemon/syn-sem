@@ -13,22 +13,15 @@ use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
 
-/// Already parsed source file used as input to name collection.
-#[derive(Clone, Copy)]
-pub struct FileInput<'cx> {
-    /// Interned source path for this parsed file.
-    pub file_path: FilePath<'cx>,
-    /// Parsed semantic AST for this file.
-    pub file: &'cx ast::File<'cx>,
-}
-
-struct NameCollector<'cx> {
-    files: BTreeMap<PathBuf, FileInput<'cx>>,
+/// Collects name-resolution facts from prepared AST inputs.
+pub struct NameCollector<'cx> {
+    files: BTreeMap<PathBuf, ast::SourceInput<'cx>>,
     db: NameDb<'cx>,
 }
 
 impl<'cx> NameCollector<'cx> {
-    fn new(files: impl IntoIterator<Item = FileInput<'cx>>) -> Self {
+    /// Creates a collector from already parsed source inputs.
+    pub fn new(files: impl IntoIterator<Item = ast::SourceInput<'cx>>) -> Self {
         Self {
             files: files
                 .into_iter()
@@ -38,7 +31,8 @@ impl<'cx> NameCollector<'cx> {
         }
     }
 
-    fn collect(mut self, entry_path: FilePath<'cx>) -> Result<NameDb<'cx>> {
+    /// Collects names from prepared AST inputs starting at `entry_path`.
+    pub fn collect(mut self, entry_path: FilePath<'cx>) -> Result<NameDb<'cx>> {
         let file = self
             .files
             .get(Path::new(entry_path.as_ref()))
@@ -50,7 +44,7 @@ impl<'cx> NameCollector<'cx> {
             })?
             .file;
         let root = self.db.root_scope();
-        let path = ModulePath::from_entry_file(PathBuf::from(entry_path.as_ref()));
+        let path = ast::ModulePath::from_entry_file(PathBuf::from(entry_path.as_ref()));
         for item in file.items {
             self.collect_item_from_module_tree(root, item, &path)?;
         }
@@ -58,7 +52,11 @@ impl<'cx> NameCollector<'cx> {
         Ok(self.db)
     }
 
-    fn child_file(&self, path: &ModulePath, module: &ast::ItemMod<'cx>) -> Option<FileInput<'cx>> {
+    fn child_file(
+        &self,
+        path: &ast::ModulePath,
+        module: &ast::ItemMod<'cx>,
+    ) -> Option<ast::SourceInput<'cx>> {
         path.child_file_candidates(module)
             .into_iter()
             .find_map(|candidate| self.files.get(&candidate).copied())
@@ -72,7 +70,7 @@ impl<'cx> NameCollector<'cx> {
         &mut self,
         scope: ScopeId,
         item: &'cx ast::Item<'cx>,
-        path: &ModulePath,
+        path: &ast::ModulePath,
     ) -> Result<()> {
         let ast_node = AstNodeId::from_ref(item);
         match item {
@@ -107,7 +105,7 @@ impl<'cx> NameCollector<'cx> {
         &mut self,
         parent_scope: ScopeId,
         item: &'cx ast::ItemMod<'cx>,
-        path: &ModulePath,
+        path: &ast::ModulePath,
         ast_node: AstNodeId<'cx>,
     ) -> Result<()> {
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
@@ -854,115 +852,5 @@ impl<'cx> NameCollector<'cx> {
             }
             scope = self.db[scope].parent?;
         }
-    }
-}
-
-/// Collects names from prepared AST inputs starting at `entry_path`.
-pub fn collect_names<'cx>(
-    files: impl IntoIterator<Item = FileInput<'cx>>,
-    entry_path: FilePath<'cx>,
-) -> Result<NameDb<'cx>> {
-    NameCollector::new(files).collect(entry_path)
-}
-
-fn path_attr(item: &ast::ItemMod<'_>) -> Option<PathBuf> {
-    let item = syn::parse_str::<syn::ItemMod>(item.span.source_text()).ok()?;
-
-    item.attrs.into_iter().find_map(|attr| {
-        if !attr.path().is_ident("path") {
-            return None;
-        }
-
-        let syn::Meta::NameValue(meta) = attr.meta else {
-            return None;
-        };
-        let syn::Expr::Lit(expr) = meta.value else {
-            return None;
-        };
-        let syn::Lit::Str(path) = expr.lit else {
-            return None;
-        };
-        Some(PathBuf::from(path.value()))
-    })
-}
-
-/// Tracks Rust module source locations while walking a module tree.
-///
-/// It records both the file currently being visited and the directory used to search for that
-/// module's out-of-line child files, such as `foo.rs` or `foo/mod.rs`. This helper only computes
-/// paths; callers decide whether those paths have already been parsed or should be read.
-#[derive(Clone, Debug)]
-pub struct ModulePath {
-    source_file: PathBuf,
-    module_dir: PathBuf,
-}
-
-impl ModulePath {
-    /// Creates module path state for a crate entry file.
-    pub fn from_entry_file(file_path: PathBuf) -> Self {
-        let source_dir = file_path.parent().unwrap_or_else(|| Path::new(""));
-        let stem = file_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .expect("root module path must be a Rust source file path");
-        let module_dir = match stem {
-            "lib" | "main" | "mod" => source_dir.to_path_buf(),
-            stem => source_dir.join(stem),
-        };
-
-        Self {
-            source_file: file_path,
-            module_dir,
-        }
-    }
-
-    fn source_dir(&self) -> &Path {
-        self.source_file.parent().unwrap_or_else(|| Path::new(""))
-    }
-
-    /// Returns path state for an inline child module.
-    pub fn enter_inline_module(&self, module: &ast::ItemMod<'_>) -> Self {
-        Self {
-            source_file: self.source_file.clone(),
-            module_dir: self.child_dir(module),
-        }
-    }
-
-    /// Returns path state for an out-of-line child module stored in `file_path`.
-    pub fn enter_external_module(&self, module: &ast::ItemMod<'_>, file_path: PathBuf) -> Self {
-        Self {
-            source_file: file_path,
-            module_dir: self.child_dir(module),
-        }
-    }
-
-    /// Returns candidate source files for an out-of-line child module.
-    pub fn child_file_candidates(&self, module: &ast::ItemMod<'_>) -> Vec<PathBuf> {
-        if let Some(path) = path_attr(module) {
-            return vec![self.module_dir.join(&path), self.source_dir().join(path)];
-        }
-
-        let name = module.ident.inner.as_ref();
-        vec![
-            self.module_dir.join(format!("{name}.rs")),
-            self.module_dir.join(name).join("mod.rs"),
-        ]
-    }
-
-    fn child_dir(&self, module: &ast::ItemMod<'_>) -> PathBuf {
-        if let Some(path) = path_attr(module) {
-            return self.resolve_attr_path(path);
-        }
-
-        self.module_dir.join(module.ident.inner.as_ref())
-    }
-
-    fn resolve_attr_path(&self, path: PathBuf) -> PathBuf {
-        let module_relative = self.module_dir.join(&path);
-        if module_relative.exists() {
-            return module_relative;
-        }
-
-        self.source_dir().join(path)
     }
 }

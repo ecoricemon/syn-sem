@@ -26,8 +26,7 @@
 
 - `CommonCx`: shared infrastructure context.
 - `StringInterner`: string-only interner used by `CommonCx`.
-- `AbstractFiles`: abstract source-file table keyed by interned file paths.
-- `Source`: source metadata for physical or virtual files.
+- `AbstractFiles`: interner-independent source-file table keyed by owned paths.
 - `InternedStr`, `FilePath`, `SourceText`, `LibraryName`: lifetime-bearing
   interned string aliases.
 - `Result`, `Error`, `Map`: shared utility aliases for internal crates.

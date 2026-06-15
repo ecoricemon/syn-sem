@@ -10,8 +10,11 @@ mod context;
 pub use ast_node::*;
 pub use context::*;
 
-use any_intern::Interned;
-use std::{collections::HashMap, error::Error as StdError};
+use any_intern::{Interned, RawInterned};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error as StdError,
+};
 
 /// Error type shared by internal `syn-sem` crates.
 pub type Error = Box<dyn StdError + Send + Sync>;
@@ -21,6 +24,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Hash map type used by internal `syn-sem` crates.
 pub type Map<K, V> = HashMap<K, V, fxhash::FxBuildHasher>;
+
+/// Append-only map type used by internal `syn-sem` crates.
+pub type FrozenMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
+
+/// Hash set type used by internal `syn-sem` crates.
+pub type Set<T> = HashSet<T, fxhash::FxBuildHasher>;
 
 /// String interned in [`CommonCx`].
 ///
@@ -32,6 +41,9 @@ pub type FilePath<'ccx> = InternedStr<'ccx>;
 
 /// Interned source text.
 pub type SourceText<'ccx> = InternedStr<'ccx>;
+
+/// Lifetime-erased interned source text.
+pub type RawSourceText = RawInterned<str>;
 
 /// Interned known library name, such as `core` or `std`.
 pub type LibraryName<'ccx> = InternedStr<'ccx>;

@@ -845,7 +845,7 @@ impl<'cx> Parameter<'cx> {
             },
             syn::ReturnType::Type(_, ty) => Type::from_syn(scx, desc.with_input(ty)),
         };
-        let pat_ident = Pat::Ident(PatIdent::from_number(scx, IDENT, Span::empty()));
+        let pat_ident = Pat::Ident(PatIdent::from_number(scx, IDENT, Span::new_empty(scx)));
         let pat = PatType {
             pat: scx.alloc(pat_ident),
             ty,

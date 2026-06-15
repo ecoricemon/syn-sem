@@ -151,7 +151,7 @@ impl<'cx> FromSyn<'cx, syn::FieldsUnnamed> for &'cx [VariantField<'cx>] {
         scx.alloc_slice(len, |i| {
             let field = iter.next().unwrap();
             VariantField {
-                ident: Ident::from_number(scx, i, Span::empty()),
+                ident: Ident::from_number(scx, i, Span::new_empty(scx)),
                 ty: Type::from_syn(scx, desc.with_input(&field.ty)),
                 span: desc.span(field),
             }

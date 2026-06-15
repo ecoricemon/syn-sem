@@ -879,10 +879,14 @@ mod tests {
     use syn_sem_common::CommonCx;
     use syn_sem_name::{AstNodeId, DefKind, NameDb, Origin, Visibility as NameVisibility};
 
-    fn parsed_model<'cx>(ccx: &'cx CommonCx, scx: &'cx SyntaxCx<'cx>, code: &str) -> Hir<'cx> {
+    fn parsed_model<'cx>(
+        ccx: &'cx CommonCx,
+        scx: &'cx SyntaxCx<'cx>,
+        source_text: &str,
+    ) -> Hir<'cx> {
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         HirBuilder::new(&names).build(file_path, file)
@@ -1809,8 +1813,8 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern("struct S;");
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern("struct S;");
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let mut names = NameDb::default();
@@ -1836,8 +1840,8 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern("struct S;");
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern("struct S;");
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let item = &file.items[0];
@@ -1853,8 +1857,8 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern("struct S; impl S { fn a() {} } impl S { fn b() {} }");
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern("struct S; impl S { fn a() {} } impl S { fn b() {} }");
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let first_impl_item = &file.items[1];
