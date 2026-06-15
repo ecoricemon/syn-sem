@@ -12,7 +12,7 @@ logic-eval = { workspace = true }
 syn-sem-common = { workspace = true }
 syn-sem-macros = { workspace = true }
 syn-sem-name = { workspace = true }
-syn-sem-pr = { workspace = true }
+syn-sem-hir = { workspace = true }
 
 [dev-dependencies]
 syn-sem-ast = { workspace = true }

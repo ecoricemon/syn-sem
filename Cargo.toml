@@ -6,7 +6,7 @@ members = ["crates/*"]
 syn-sem-common = { path = "crates/syn-sem-common" }
 syn-sem-ast = { path = "crates/syn-sem-ast" }
 syn-sem-name = { path = "crates/syn-sem-name" }
-syn-sem-pr = { path = "crates/syn-sem-pr" }
+syn-sem-hir = { path = "crates/syn-sem-hir" }
 syn-sem-infer = { path = "crates/syn-sem-infer" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }
 syn-locator = "0.2.0"

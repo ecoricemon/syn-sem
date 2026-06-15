@@ -9,7 +9,7 @@
 
 - Wire extracted crates together.
 - Own top-level orchestration for parsing, preparing name-collection inputs,
-  invoking name collection, and program representation construction.
+  invoking name collection, and HIR construction.
 
 ## Boundaries
 
@@ -21,7 +21,8 @@
 
 - Prefer simple top-level orchestration.
 - Prefer incremental migration.
-- Keep `Semantics` as the aggregate that exposes `NameDb` and `ProgramRepr`.
+- Keep `Semantics` as the aggregate that exposes `NameDb` and the current HIR
+  container.
 
 ## Primary Public Items
 

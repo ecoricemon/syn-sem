@@ -1,7 +1,7 @@
 use std::fs;
 
+use syn_sem_hir::ItemKind;
 use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
-use syn_sem_pr::ItemKind;
 use syn_sem_top::TopCx;
 
 /// Verifies physical module files are loaded from the filesystem and `use` declarations across
@@ -17,8 +17,8 @@ fn resolves_imports_from_physical_module_files() {
     tcx.insert_virtual_file(entry_path, text).unwrap();
 
     let semantics = tcx.analyze(entry_path).unwrap();
-    assert!(!semantics.repr().files().is_empty());
-    assert!(!semantics.repr().items().is_empty());
+    assert!(!semantics.hir().files().is_empty());
+    assert!(!semantics.hir().items().is_empty());
 
     let db = semantics.names();
     let root = db.root_scope();
@@ -157,17 +157,17 @@ fn resolve_lexical<'cx>(
 
 mod upper_phase_integration {
     use super::*;
+    use syn_sem_hir::TypeSource;
     use syn_sem_infer::{
         GenericArgument, InferDb, PrimitiveType, ProjectionNormalizationResult, ProjectionType,
         Type, TypeId,
     };
-    use syn_sem_pr::TypeSource;
 
     // Validates the intended upper-phase consumption pattern:
-    // traverse source program shape through syn-sem-pr and query definition/scope facts through
+    // traverse HIR source spine through syn-sem-hir and query definition/scope facts through
     // syn-sem-name, without depending on syn-sem-ast directly.
     #[test]
-    fn consumes_program_repr_and_name_facts_together() {
+    fn consumes_hir_and_name_facts_together() {
         let tcx = TopCx::default();
         let entry_path = tcx.common.intern("upper_phase.rs");
         let text = tcx.common.intern(
@@ -190,11 +190,11 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
+        let hir = semantics.hir();
         let names = semantics.names();
-        let infer = InferDb::analyze(&tcx.common, repr, names);
+        let infer = InferDb::analyze(&tcx.common, hir, names);
 
-        let entry = repr
+        let entry = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "entry"))
@@ -210,14 +210,14 @@ mod upper_phase_integration {
             .expect("function item should link to a definition");
 
         assert_eq!(names[entry_def].kind, DefKind::Fn);
-        assert_eq!(repr[block].scope, names[entry_def].scopes.body);
-        assert!(repr[signature]
+        assert_eq!(hir[block].scope, names[entry_def].scopes.body);
+        assert!(hir[signature]
             .params
             .iter()
             .map(|param| param.ty)
-            .all(|ty| infer.type_for_repr_type(ty).is_some()));
+            .all(|ty| infer.type_for_hir_type(ty).is_some()));
 
-        let inner = repr
+        let inner = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "inner"))
@@ -235,31 +235,31 @@ mod upper_phase_integration {
         assert_eq!(names[inner_def].kind, DefKind::Module);
         assert_eq!(*scope, names[inner_def].scopes.path);
         assert_eq!(inner_items.len(), 1);
-        assert!(matches!(repr[inner_items[0]].kind, ItemKind::Fn { .. }));
+        assert!(matches!(hir[inner_items[0]].kind, ItemKind::Fn { .. }));
 
-        let local_def = repr
+        let local_def = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Local"))
             .and_then(|item| item.def)
             .expect("Local struct should link to a definition");
 
-        let local_ty = repr[signature].params[0].ty;
+        let local_ty = hir[signature].params[0].ty;
         let infer_local_ty = infer
-            .type_for_repr_type(local_ty)
+            .type_for_hir_type(local_ty)
             .expect("signature return type should be lowered");
         assert_eq!(infer.nominal_def(infer_local_ty), Some(local_def));
 
-        let usize_ty = repr[signature].params[2].ty;
+        let usize_ty = hir[signature].params[2].ty;
         let infer_usize_ty = infer
-            .type_for_repr_type(usize_ty)
+            .type_for_hir_type(usize_ty)
             .expect("signature parameter type should be lowered");
         let Type::Primitive(primitive) = infer[infer_usize_ty] else {
             panic!("usize signature parameter should lower to primitive type");
         };
         assert_eq!(primitive, PrimitiveType::Usize);
 
-        let generic = repr
+        let generic = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "generic"))
@@ -284,15 +284,15 @@ mod upper_phase_integration {
             .and_then(|binding| binding.single())
             .expect("T should bind to one generic type parameter");
 
-        let t_return_ty = repr[generic_signature].params[0].ty;
+        let t_return_ty = hir[generic_signature].params[0].ty;
         let infer_t_return_ty = infer
-            .type_for_repr_type(t_return_ty)
+            .type_for_hir_type(t_return_ty)
             .expect("generic return type should be lowered");
         assert_eq!(infer.generic_param_def(infer_t_return_ty), Some(t_def));
     }
 
     #[test]
-    fn consumes_projection_normalization_query_from_program_repr() {
+    fn consumes_projection_normalization_query_from_hir() {
         let tcx = TopCx::default();
         let entry_path = tcx.common.intern("projection_normalization.rs");
         let text = tcx.common.intern(
@@ -315,11 +315,11 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
+        let hir = semantics.hir();
         let names = semantics.names();
-        let infer = InferDb::analyze(&tcx.common, repr, names);
+        let infer = InferDb::analyze(&tcx.common, hir, names);
 
-        let output = repr
+        let output = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Output"))
@@ -330,11 +330,11 @@ mod upper_phase_integration {
         let [field] = fields.as_slice() else {
             panic!("Output should have one field");
         };
-        let field_ty = repr[*field].ty;
-        assert_eq!(repr[field_ty].source, TypeSource::StructField);
+        let field_ty = hir[*field].ty;
+        assert_eq!(hir[field_ty].source, TypeSource::StructField);
 
         let projection = infer
-            .type_for_repr_type(field_ty)
+            .type_for_hir_type(field_ty)
             .expect("Output.field type should be lowered");
         let ProjectionType {
             assoc_type,
@@ -359,7 +359,7 @@ mod upper_phase_integration {
     }
 
     #[test]
-    fn consumes_generic_projection_normalization_query_from_program_repr() {
+    fn consumes_generic_projection_normalization_query_from_hir() {
         let tcx = TopCx::default();
         let entry_path = tcx.common.intern("generic_projection_normalization.rs");
         let text = tcx.common.intern(
@@ -382,10 +382,10 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
-        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+        let hir = semantics.hir();
+        let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
-        let output = repr
+        let output = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Output"))
@@ -396,9 +396,9 @@ mod upper_phase_integration {
         let [field] = fields.as_slice() else {
             panic!("Output should have one field");
         };
-        let field_ty = repr[*field].ty;
+        let field_ty = hir[*field].ty;
         let projection = infer
-            .type_for_repr_type(field_ty)
+            .type_for_hir_type(field_ty)
             .expect("Output.field type should be lowered");
         assert!(infer.projection(projection).is_some());
 
@@ -439,10 +439,10 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
-        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+        let hir = semantics.hir();
+        let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
-        let result = repr
+        let result = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
@@ -453,10 +453,10 @@ mod upper_phase_integration {
         let [field] = fields.as_slice() else {
             panic!("Result should have one field");
         };
-        let field_ty = repr[*field].ty;
+        let field_ty = hir[*field].ty;
 
         let projection = infer
-            .type_for_repr_type(field_ty)
+            .type_for_hir_type(field_ty)
             .expect("Result.field type should be lowered");
         let ProjectionNormalizationResult::Known(normalized_ty) =
             infer.projection_normalization(projection)
@@ -496,10 +496,10 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
-        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+        let hir = semantics.hir();
+        let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
-        let result = repr
+        let result = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
@@ -510,10 +510,10 @@ mod upper_phase_integration {
         let [field] = fields.as_slice() else {
             panic!("Result should have one field");
         };
-        let field_ty = repr[*field].ty;
+        let field_ty = hir[*field].ty;
 
         let projection = infer
-            .type_for_repr_type(field_ty)
+            .type_for_hir_type(field_ty)
             .expect("Result.field type should be lowered");
         let ProjectionNormalizationResult::Known(normalized_ty) =
             infer.projection_normalization(projection)
@@ -537,7 +537,7 @@ mod upper_phase_integration {
     }
 
     #[test]
-    fn consumes_recursive_normalization_query_from_program_repr() {
+    fn consumes_recursive_normalization_query_from_hir() {
         let tcx = TopCx::default();
         let entry_path = tcx.common.intern("recursive_projection_normalization.rs");
         let text = tcx.common.intern(
@@ -561,10 +561,10 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
-        let mut infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+        let hir = semantics.hir();
+        let mut infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
-        let result = repr
+        let result = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
@@ -575,10 +575,10 @@ mod upper_phase_integration {
         let [field] = fields.as_slice() else {
             panic!("Result should have one field");
         };
-        let field_ty = repr[*field].ty;
+        let field_ty = hir[*field].ty;
 
         let normalized_ty = infer
-            .normalized_type_for_repr_type(field_ty)
+            .normalized_type_for_hir_type(field_ty)
             .expect("Result.field type should be lowered");
         assert_option_of(&infer, normalized_ty, PrimitiveType::U32);
     }
@@ -614,10 +614,10 @@ mod upper_phase_integration {
 
         tcx.insert_virtual_file(entry_path, text).unwrap();
         let semantics = tcx.analyze(entry_path).unwrap();
-        let repr = semantics.repr();
-        let infer = InferDb::analyze(&tcx.common, repr, semantics.names());
+        let hir = semantics.hir();
+        let infer = InferDb::analyze(&tcx.common, hir, semantics.names());
 
-        let result = repr
+        let result = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == "Result"))
@@ -629,11 +629,11 @@ mod upper_phase_integration {
             panic!("Result should have two fields");
         };
 
-        let vec_field_ty = repr[*vec_field].ty;
-        let box_field_ty = repr[*box_field].ty;
+        let vec_field_ty = hir[*vec_field].ty;
+        let box_field_ty = hir[*box_field].ty;
 
         let vec_projection = infer
-            .type_for_repr_type(vec_field_ty)
+            .type_for_hir_type(vec_field_ty)
             .expect("Result.vec_field type should be lowered");
         let ProjectionNormalizationResult::Known(vec_normalized_ty) =
             infer.projection_normalization(vec_projection)
@@ -643,7 +643,7 @@ mod upper_phase_integration {
         assert_option_of(&infer, vec_normalized_ty, PrimitiveType::U32);
 
         let box_projection = infer
-            .type_for_repr_type(box_field_ty)
+            .type_for_hir_type(box_field_ty)
             .expect("Result.box_field type should be lowered");
         let ProjectionNormalizationResult::Known(box_normalized_ty) =
             infer.projection_normalization(box_projection)

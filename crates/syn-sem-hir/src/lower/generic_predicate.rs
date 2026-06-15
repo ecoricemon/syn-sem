@@ -58,7 +58,7 @@ mod tests {
         scx: &'cx SyntaxCx<'cx>,
         code: &str,
     ) -> &'cx ast::Generics<'cx> {
-        let file_path = ccx.intern("desugar_test.rs");
+        let file_path = ccx.intern("lower_test.rs");
         let text = ccx.intern(code);
         scx.parse_virtual_file(file_path, text)
             .expect("test input should parse");
@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn desugars_inline_type_param_bounds_into_predicates() {
+    fn lowers_inline_type_param_bounds_into_predicates() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let generics = parse_struct_generics(&ccx, &scx, "struct S<T: Clone>;");

@@ -5,7 +5,7 @@
 - Own the lifetime-bearing semantic AST wrapper over `syn` syntax trees.
 - Parse and store source files through `SyntaxCx`.
 - Convert raw `syn` nodes into construction-layer AST nodes for `syn-sem-top`
-  and extracted representation builders.
+  and extracted HIR builders.
 
 ## Boundaries
 

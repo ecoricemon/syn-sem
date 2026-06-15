@@ -42,16 +42,16 @@
 - Make higher phases ask owning crates for definition, source, scope, and resolution facts.
 - Treat `syn-sem-ast` as the syntax/source construction layer; upper semantic
   phases should not depend on it directly.
-- Treat `syn-sem-pr` as the upper-phase-facing Rust program representation:
-  source program shape plus ids that connect to name facts.
+- Treat `syn-sem-hir` as the HIR crate: HIR source spine plus lowered semantic
+  input for upper phases.
 - Treat `syn-sem-name` as the owner of definition, scope, import, resolution,
   and semantic visibility facts.
 - Keep the `syn-sem-name` core model syntax-agnostic, but allow its collection
   layer to consume already parsed `syn-sem-ast` inputs.
 - Do not make `syn-sem-name` read files or depend on `TopCx`.
-- Let upper semantic phases depend on both `syn-sem-pr` and `syn-sem-name`:
-  traverse program shape through `ProgramRepr`, then query name facts through
-  focused `NameDb` APIs using ids stored in the representation.
+- Let upper semantic phases depend on both HIR and `syn-sem-name`: traverse HIR
+  source spine and lowered facts, then query name facts through focused
+  `NameDb` APIs using ids stored in HIR.
 - Extract reusable infrastructure before wiring it deeply into `syn-sem`.
 - Let `PathTree` remain temporarily, but move new name-resolution work toward `syn-sem-name`.
 

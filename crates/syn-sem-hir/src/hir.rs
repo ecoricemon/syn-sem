@@ -8,9 +8,9 @@ use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, InternedStr};
 use syn_sem_name::{DefId, Name, ScopeId};
 
-/// Rust source program representation produced for semantic phases.
+/// HIR container produced for upper semantic phases.
 #[derive(Debug, Default)]
-pub struct ProgramRepr<'cx> {
+pub struct Hir<'cx> {
     files: Vec<File<'cx>>,
     items: Vec<Item<'cx>>,
     signatures: Vec<Signature>,
@@ -25,63 +25,63 @@ pub struct ProgramRepr<'cx> {
     types: Vec<Type<'cx>>,
 }
 
-impl<'cx> ProgramRepr<'cx> {
-    /// Returns all represented files.
+impl<'cx> Hir<'cx> {
+    /// Returns all HIR files.
     pub fn files(&self) -> &[File<'cx>] {
         &self.files
     }
 
-    /// Returns all represented item declarations.
+    /// Returns all HIR item declarations.
     pub fn items(&self) -> &[Item<'cx>] {
         &self.items
     }
 
-    /// Returns all represented function-like signatures.
+    /// Returns all HIR function-like signatures.
     pub fn signatures(&self) -> &[Signature] {
         &self.signatures
     }
 
-    /// Returns all represented fields.
+    /// Returns all HIR fields.
     pub fn fields(&self) -> &[Field<'cx>] {
         &self.fields
     }
 
-    /// Returns all represented enum variants.
+    /// Returns all HIR enum variants.
     pub fn variants(&self) -> &[Variant<'cx>] {
         &self.variants
     }
 
-    /// Returns all represented associated items.
+    /// Returns all HIR associated items.
     pub fn assoc_items(&self) -> &[AssocItem<'cx>] {
         &self.assoc_items
     }
 
-    /// Returns all represented braced source blocks.
+    /// Returns all HIR braced source blocks.
     pub fn blocks(&self) -> &[Block<'cx>] {
         &self.blocks
     }
 
-    /// Returns all represented source statements.
+    /// Returns all HIR source statements.
     pub fn stmts(&self) -> &[Stmt<'cx>] {
         &self.stmts
     }
 
-    /// Returns all represented local `let` bindings.
+    /// Returns all HIR local `let` bindings.
     pub fn locals(&self) -> &[Local<'cx>] {
         &self.locals
     }
 
-    /// Returns all represented source patterns.
+    /// Returns all HIR source patterns.
     pub fn pats(&self) -> &[Pat<'cx>] {
         &self.pats
     }
 
-    /// Returns all represented source expressions.
+    /// Returns all HIR source expressions.
     pub fn exprs(&self) -> &[Expr<'cx>] {
         &self.exprs
     }
 
-    /// Returns all represented source types.
+    /// Returns all HIR source types.
     pub fn types(&self) -> &[Type<'cx>] {
         &self.types
     }
@@ -207,7 +207,7 @@ impl<'cx> ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<FileId> for ProgramRepr<'cx> {
+impl<'cx> Index<FileId> for Hir<'cx> {
     type Output = File<'cx>;
 
     fn index(&self, id: FileId) -> &Self::Output {
@@ -215,7 +215,7 @@ impl<'cx> Index<FileId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<ItemId> for ProgramRepr<'cx> {
+impl<'cx> Index<ItemId> for Hir<'cx> {
     type Output = Item<'cx>;
 
     fn index(&self, id: ItemId) -> &Self::Output {
@@ -223,13 +223,13 @@ impl<'cx> Index<ItemId> for ProgramRepr<'cx> {
     }
 }
 
-impl IndexMut<ItemId> for ProgramRepr<'_> {
+impl IndexMut<ItemId> for Hir<'_> {
     fn index_mut(&mut self, id: ItemId) -> &mut Self::Output {
         &mut self.items[id.index()]
     }
 }
 
-impl<'cx> Index<SignatureId> for ProgramRepr<'cx> {
+impl<'cx> Index<SignatureId> for Hir<'cx> {
     type Output = Signature;
 
     fn index(&self, id: SignatureId) -> &Self::Output {
@@ -237,7 +237,7 @@ impl<'cx> Index<SignatureId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<FieldId> for ProgramRepr<'cx> {
+impl<'cx> Index<FieldId> for Hir<'cx> {
     type Output = Field<'cx>;
 
     fn index(&self, id: FieldId) -> &Self::Output {
@@ -245,7 +245,7 @@ impl<'cx> Index<FieldId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<VariantId> for ProgramRepr<'cx> {
+impl<'cx> Index<VariantId> for Hir<'cx> {
     type Output = Variant<'cx>;
 
     fn index(&self, id: VariantId) -> &Self::Output {
@@ -253,7 +253,7 @@ impl<'cx> Index<VariantId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<AssocItemId> for ProgramRepr<'cx> {
+impl<'cx> Index<AssocItemId> for Hir<'cx> {
     type Output = AssocItem<'cx>;
 
     fn index(&self, id: AssocItemId) -> &Self::Output {
@@ -261,7 +261,7 @@ impl<'cx> Index<AssocItemId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<BlockId> for ProgramRepr<'cx> {
+impl<'cx> Index<BlockId> for Hir<'cx> {
     type Output = Block<'cx>;
 
     fn index(&self, id: BlockId) -> &Self::Output {
@@ -269,13 +269,13 @@ impl<'cx> Index<BlockId> for ProgramRepr<'cx> {
     }
 }
 
-impl IndexMut<BlockId> for ProgramRepr<'_> {
+impl IndexMut<BlockId> for Hir<'_> {
     fn index_mut(&mut self, id: BlockId) -> &mut Self::Output {
         &mut self.blocks[id.index()]
     }
 }
 
-impl<'cx> Index<StmtId> for ProgramRepr<'cx> {
+impl<'cx> Index<StmtId> for Hir<'cx> {
     type Output = Stmt<'cx>;
 
     fn index(&self, id: StmtId) -> &Self::Output {
@@ -283,7 +283,7 @@ impl<'cx> Index<StmtId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<LocalId> for ProgramRepr<'cx> {
+impl<'cx> Index<LocalId> for Hir<'cx> {
     type Output = Local<'cx>;
 
     fn index(&self, id: LocalId) -> &Self::Output {
@@ -291,7 +291,7 @@ impl<'cx> Index<LocalId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<PatId> for ProgramRepr<'cx> {
+impl<'cx> Index<PatId> for Hir<'cx> {
     type Output = Pat<'cx>;
 
     fn index(&self, id: PatId) -> &Self::Output {
@@ -299,7 +299,7 @@ impl<'cx> Index<PatId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<ExprId> for ProgramRepr<'cx> {
+impl<'cx> Index<ExprId> for Hir<'cx> {
     type Output = Expr<'cx>;
 
     fn index(&self, id: ExprId) -> &Self::Output {
@@ -307,7 +307,7 @@ impl<'cx> Index<ExprId> for ProgramRepr<'cx> {
     }
 }
 
-impl<'cx> Index<TypeId> for ProgramRepr<'cx> {
+impl<'cx> Index<TypeId> for Hir<'cx> {
     type Output = Type<'cx>;
 
     fn index(&self, id: TypeId) -> &Self::Output {
@@ -318,7 +318,7 @@ impl<'cx> Index<TypeId> for ProgramRepr<'cx> {
 /// One represented source file.
 #[derive(Debug)]
 pub struct File<'cx> {
-    /// File id in the representation.
+    /// File id in HIR.
     pub id: FileId,
     /// Interned file path.
     pub file_path: FilePath<'cx>,
@@ -329,7 +329,7 @@ pub struct File<'cx> {
 /// One represented item declaration.
 #[derive(Debug)]
 pub struct Item<'cx> {
-    /// Item id in the representation.
+    /// Item id in HIR.
     pub id: ItemId,
     /// Item name, when the item has one source-level name.
     pub name: Option<Name<'cx>>,
@@ -414,7 +414,7 @@ pub enum ItemKind<'cx> {
     Use,
 }
 
-/// Representation-native item generics.
+/// HIR-native item generics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Generics<'cx> {
     /// Scope where generic parameters and bounds should be resolved.
@@ -425,7 +425,7 @@ pub struct Generics<'cx> {
     pub predicates: Vec<WherePredicate<'cx>>,
 }
 
-/// Representation-native generic parameter declared by an item.
+/// HIR-native generic parameter declared by an item.
 ///
 /// A parameter introduces a generic slot on a declaration, such as `T` or `const N: usize` in
 /// `struct Array<T, const N: usize>;`. Use-site values supplied to those slots are represented by
@@ -440,7 +440,7 @@ pub enum GenericParam<'cx> {
     Unsupported,
 }
 
-/// Representation-native type generic parameter.
+/// HIR-native type generic parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParam<'cx> {
     /// Parameter name.
@@ -449,7 +449,7 @@ pub struct TypeParam<'cx> {
     pub default: Option<TypeId>,
 }
 
-/// Representation-native const generic parameter.
+/// HIR-native const generic parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstParam<'cx> {
     /// Parameter name.
@@ -458,7 +458,7 @@ pub struct ConstParam<'cx> {
     pub ty: TypeId,
 }
 
-/// Representation-native type parameter bound.
+/// HIR-native type parameter bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
@@ -467,14 +467,14 @@ pub enum TypeParamBound<'cx> {
     Unsupported,
 }
 
-/// Representation-native trait bound.
+/// HIR-native trait bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitBound<'cx> {
     /// Trait path.
     pub path: Vec<PathSegment<'cx>>,
 }
 
-/// Representation-native generic predicate.
+/// HIR-native generic predicate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WherePredicate<'cx> {
     /// Type bound predicate.
@@ -491,7 +491,7 @@ pub enum WherePredicate<'cx> {
 /// One represented function-like signature.
 #[derive(Debug)]
 pub struct Signature {
-    /// Signature id in the representation.
+    /// Signature id in HIR.
     pub id: SignatureId,
     /// Source signature.
     pub source: SignatureSource,
@@ -519,17 +519,17 @@ pub struct SignatureParam {
 /// One represented pattern occurrence.
 #[derive(Debug)]
 pub struct Pat<'cx> {
-    /// Pattern id in the representation.
+    /// Pattern id in HIR.
     pub id: PatId,
     /// Original semantic AST pattern.
     pub pat: &'cx ast::Pat<'cx>,
-    /// Representation-native source pattern shape.
+    /// HIR-native source pattern shape.
     pub kind: PatKind<'cx>,
     /// Scope containing this pattern.
     pub scope: Option<ScopeId>,
 }
 
-/// Representation-native source pattern shape.
+/// HIR-native source pattern shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatKind<'cx> {
     /// Identifier binding pattern.
@@ -603,7 +603,7 @@ pub enum SignatureSource {
 /// One represented field declaration.
 #[derive(Debug)]
 pub struct Field<'cx> {
-    /// Field id in the representation.
+    /// Field id in HIR.
     pub id: FieldId,
     /// Field name.
     pub name: Name<'cx>,
@@ -627,7 +627,7 @@ pub enum FieldSource {
 /// One represented enum variant declaration.
 #[derive(Debug)]
 pub struct Variant<'cx> {
-    /// Variant id in the representation.
+    /// Variant id in HIR.
     pub id: VariantId,
     /// Definition linked from the current name-resolution data, if available.
     pub def: Option<DefId>,
@@ -642,7 +642,7 @@ pub struct Variant<'cx> {
 /// One represented associated item declaration.
 #[derive(Debug)]
 pub struct AssocItem<'cx> {
-    /// Associated item id in the representation.
+    /// Associated item id in HIR.
     pub id: AssocItemId,
     /// Associated item name.
     pub name: Name<'cx>,
@@ -755,7 +755,7 @@ pub(crate) fn item_visibility<'cx>(item: &'cx ast::Item<'cx>) -> Visibility<'cx>
 /// One braced source block.
 #[derive(Debug)]
 pub struct Block<'cx> {
-    /// Block id in the representation.
+    /// Block id in HIR.
     pub id: BlockId,
     /// Original semantic AST block.
     pub block: &'cx ast::Block<'cx>,
@@ -768,17 +768,17 @@ pub struct Block<'cx> {
 /// One represented statement occurrence.
 #[derive(Debug)]
 pub struct Stmt<'cx> {
-    /// Statement id in the representation.
+    /// Statement id in HIR.
     pub id: StmtId,
     /// Original semantic AST statement.
     pub stmt: &'cx ast::Stmt<'cx>,
-    /// Representation-native source statement shape.
+    /// HIR-native source statement shape.
     pub kind: StmtKind,
     /// Scope containing this statement.
     pub scope: Option<ScopeId>,
 }
 
-/// Representation-native source statement shape.
+/// HIR-native source statement shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StmtKind {
     /// Local `let` binding statement.
@@ -792,7 +792,7 @@ pub enum StmtKind {
 /// One represented local `let` binding.
 #[derive(Debug)]
 pub struct Local<'cx> {
-    /// Local id in the representation.
+    /// Local id in HIR.
     pub id: LocalId,
     /// Original semantic AST local binding.
     pub local: &'cx ast::Local<'cx>,
@@ -807,17 +807,17 @@ pub struct Local<'cx> {
 /// One represented expression occurrence.
 #[derive(Debug)]
 pub struct Expr<'cx> {
-    /// Expression id in the representation.
+    /// Expression id in HIR.
     pub id: ExprId,
     /// Original semantic AST expression.
     pub expr: &'cx ast::Expr<'cx>,
-    /// Representation-native source expression shape.
+    /// HIR-native source expression shape.
     pub kind: ExprKind<'cx>,
     /// Scope used to resolve paths inside this expression occurrence.
     pub scope: Option<ScopeId>,
 }
 
-/// Representation-native source expression shape.
+/// HIR-native source expression shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind<'cx> {
     /// Array literal expression.
@@ -951,16 +951,16 @@ pub struct ExprStructField<'cx> {
     pub expr: ExprId,
 }
 
-/// One represented type occurrence.
+/// One HIR type occurrence.
 #[derive(Debug)]
 pub struct Type<'cx> {
-    /// Type id in the representation.
+    /// Type id in HIR.
     pub id: TypeId,
     /// Original semantic AST type, when this type came directly from source syntax.
     ///
-    /// This is `None` for synthetic types introduced by representation desugaring.
+    /// This is `None` for synthetic types introduced by HIR lowering.
     pub ty: Option<&'cx ast::Type<'cx>>,
-    /// Representation-native source type shape.
+    /// HIR-native source type shape.
     pub kind: TypeKind<'cx>,
     /// Scope used to resolve paths inside this type occurrence.
     pub scope: Option<ScopeId>,
@@ -968,7 +968,7 @@ pub struct Type<'cx> {
     pub source: TypeSource,
 }
 
-/// Representation-native source type shape.
+/// HIR-native source type shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind<'cx> {
     /// Fixed-length array type.
@@ -1001,7 +1001,7 @@ pub enum TypeKind<'cx> {
     },
 }
 
-/// Representation-native source path in type position.
+/// HIR-native source path in type position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path<'cx> {
     /// Qualified self type, when the source type used qualified path syntax.
@@ -1014,7 +1014,7 @@ pub struct Path<'cx> {
     pub segments: Vec<PathSegment<'cx>>,
 }
 
-/// Representation-native qualified self type.
+/// HIR-native qualified self type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QSelf<'cx> {
     /// Self type: `T` in `<T as a::b::Trait>::Assoc`.
@@ -1025,7 +1025,7 @@ pub struct QSelf<'cx> {
     pub trait_path: Vec<PathSegment<'cx>>,
 }
 
-/// One representation-native type path segment.
+/// One HIR-native type path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathSegment<'cx> {
     /// Segment name.
@@ -1034,7 +1034,7 @@ pub struct PathSegment<'cx> {
     pub args: Vec<GenericArg<'cx>>,
 }
 
-/// Representation-native generic argument supplied at a use site.
+/// HIR-native generic argument supplied at a use site.
 ///
 /// An argument fills a generic slot declared by [`GenericParam`], such as `u8` or `3` in `Array<u8,
 /// 3>`. Associated type and const constraints inside path arguments, such as `Iterator<Item = T>`
@@ -1077,7 +1077,7 @@ pub enum ArrayLen {
     Expr(ExprId),
 }
 
-/// Representation-native const argument shape.
+/// HIR-native const argument shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstArg<'cx> {
     /// Literal const argument.
@@ -1088,7 +1088,7 @@ pub enum ConstArg<'cx> {
     Expr(ExprId),
 }
 
-/// Representation-native literal shape.
+/// HIR-native literal shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lit<'cx> {
     /// Integer literal stored as normalized base-10 digits.
@@ -1099,7 +1099,7 @@ pub enum Lit<'cx> {
     Bool(bool),
 }
 
-/// Source role for a represented type occurrence.
+/// Source role for a HIR type occurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeSource {
     /// Constant item type, for example `T` in `const C: T = value;`.
@@ -1130,6 +1130,6 @@ pub enum TypeSource {
     ConstGenericParam,
     /// Where-predicate subject, for example `T` in `where T: Trait`.
     WherePredicateSubject,
-    /// Nested type inside another represented type occurrence, for example `T` in `Vec<T>`.
+    /// Nested type inside another HIR type occurrence, for example `T` in `Vec<T>`.
     Nested,
 }
