@@ -24,7 +24,7 @@ pub struct InputDesc<'cx, 'syn, Input: ?Sized> {
     /// Interned path of the source file that owns `input`.
     pub file_path: FilePath<'cx>,
     /// Interned source text that owns `input`.
-    pub source_code: SourceText<'cx>,
+    pub source_text: SourceText<'cx>,
     /// Locator populated for the parsed source that owns `input`.
     pub locator: &'syn Locator,
     /// Borrowed syntax node being converted.
@@ -47,7 +47,7 @@ impl<'cx, 'syn, Input: ?Sized> InputDesc<'cx, 'syn, Input> {
     ) -> InputDesc<'cx, 'syn, NewInput> {
         InputDesc {
             file_path: self.file_path,
-            source_code: self.source_code,
+            source_text: self.source_text,
             locator: self.locator,
             input,
         }
@@ -55,7 +55,7 @@ impl<'cx, 'syn, Input: ?Sized> InputDesc<'cx, 'syn, Input> {
 
     /// Creates a span for `item` in this descriptor's source.
     pub fn span<T: Locate + ?Sized>(self, item: &T) -> Span<'cx> {
-        Span::from_locatable(self.source_code, self.locator, item)
+        Span::from_locatable(self.source_text, self.locator, item)
     }
 }
 
@@ -109,7 +109,7 @@ pub struct Ident<'cx> {
 impl<'cx> Ident<'cx> {
     /// Creates an empty synthesized identifier.
     pub fn empty(scx: &'cx SyntaxCx<'cx>) -> Self {
-        Self::from_str(scx, "", Span::empty())
+        Self::from_str(scx, "", Span::new_empty(scx))
     }
 
     /// Creates an identifier by interning `value`.
@@ -181,18 +181,16 @@ pub struct Isize<'cx> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Span<'cx> {
     /// The whole source text.
-    //
-    // We do not intern about the whole text.
-    source: Option<SourceText<'cx>>,
+    source_text: SourceText<'cx>,
     start: u32,
     end: u32,
 }
 
 impl<'cx> Span<'cx> {
-    /// Creates an empty span.
-    pub fn empty() -> Self {
+    /// Creates an empty span in `scx`.
+    pub fn new_empty(scx: &'cx SyntaxCx<'cx>) -> Self {
         Self {
-            source: None,
+            source_text: scx.intern(""),
             start: 0,
             end: 0,
         }
@@ -200,14 +198,14 @@ impl<'cx> Span<'cx> {
 
     /// Creates a span for a `syn_locator` node in the given file.
     pub fn from_locatable<T: Locate + ?Sized>(
-        source: SourceText<'cx>,
+        source_text: SourceText<'cx>,
         locator: &Locator,
         item: &T,
     ) -> Self {
         let loc = item.location(locator);
 
         Self {
-            source: Some(source),
+            source_text,
             start: loc.start as u32,
             end: loc.end as u32,
         }
@@ -215,16 +213,7 @@ impl<'cx> Span<'cx> {
 
     /// Returns the source text covered by this span.
     pub fn source_text(&self) -> &str {
-        let Some(source) = self.source.as_ref() else {
-            return "";
-        };
-        &source.as_ref()[self.start as usize..self.end as usize]
-    }
-}
-
-impl Default for Span<'_> {
-    fn default() -> Self {
-        Self::empty()
+        &self.source_text.as_ref()[self.start as usize..self.end as usize]
     }
 }
 

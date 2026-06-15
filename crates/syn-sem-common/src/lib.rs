@@ -10,7 +10,7 @@ mod context;
 pub use ast_node::*;
 pub use context::*;
 
-use any_intern::Interned;
+use any_intern::{Interned, RawInterned};
 use std::{
     collections::{HashMap, HashSet},
     error::Error as StdError,
@@ -41,6 +41,9 @@ pub type FilePath<'ccx> = InternedStr<'ccx>;
 
 /// Interned source text.
 pub type SourceText<'ccx> = InternedStr<'ccx>;
+
+/// Lifetime-erased interned source text.
+pub type RawSourceText = RawInterned<str>;
 
 /// Interned known library name, such as `core` or `std`.
 pub type LibraryName<'ccx> = InternedStr<'ccx>;

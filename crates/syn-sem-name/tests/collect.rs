@@ -1,9 +1,8 @@
 use syn_sem_ast as ast;
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
-    collect::{FileInput, NameCollector},
-    DefId, DefKind, Import, ImportKind, ImportStatus, Name, NameDb, Namespace, ResolveResult,
-    ScopeId, ScopeKind,
+    collect::NameCollector, DefId, DefKind, Import, ImportKind, ImportStatus, Name, NameDb,
+    Namespace, ResolveResult, ScopeId, ScopeKind,
 };
 
 struct TestCx {
@@ -15,12 +14,12 @@ impl TestCx {
         &'cx self,
         scx: &'cx ast::SyntaxCx<'cx>,
         file_path: &str,
-        text: &str,
-    ) -> FileInput<'cx> {
+        source_text: &str,
+    ) -> ast::SourceInput<'cx> {
         let file_path = self.common.intern(file_path);
-        let text = self.common.intern(text);
-        scx.parse_virtual_file(file_path, text).unwrap();
-        FileInput {
+        let source_text = self.common.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
+        ast::SourceInput {
             file_path,
             file: scx.lookup_source(file_path).unwrap().ast(),
         }
@@ -28,7 +27,7 @@ impl TestCx {
 }
 
 fn collect<'cx>(
-    files: impl IntoIterator<Item = FileInput<'cx>>,
+    files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
     entry_path: FilePath<'cx>,
 ) -> NameDb<'cx> {
     NameCollector::new(files).collect(entry_path).unwrap()

@@ -390,18 +390,17 @@ mod tests {
     use syn_sem_common::CommonCx;
     use syn_sem_hir as hir;
     use syn_sem_name::{
-        collect::{FileInput, NameCollector},
-        AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
+        collect::NameCollector, AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
     };
 
     fn infer_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
-        code: &str,
+        source_text: &str,
     ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
@@ -412,12 +411,12 @@ mod tests {
     fn infer_types_with_names<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
-        code: &str,
+        source_text: &str,
         names: &NameDb<'cx>,
     ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let hir = hir::HirBuilder::new(names).build(file_path, file);
         let infer = InferDb::analyze(ccx, &hir, names);
@@ -427,13 +426,13 @@ mod tests {
     fn infer_collected_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
-        code: &str,
+        source_text: &str,
     ) -> (hir::Hir<'cx>, NameDb<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameCollector::new([FileInput { file_path, file }])
+        let names = NameCollector::new([ast::SourceInput { file_path, file }])
             .collect(file_path)
             .unwrap();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
@@ -912,9 +911,9 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
-        let code = "struct Vec; trait Iterator { type Item; } impl Iterator for Vec { type Item = u32; } struct Output { field: <Vec as Iterator>::Item }";
-        let text = ccx.intern(code);
-        scx.parse_virtual_file(file_path, text).unwrap();
+        let source_text = "struct Vec; trait Iterator { type Item; } impl Iterator for Vec { type Item = u32; } struct Output { field: <Vec as Iterator>::Item }";
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let iterator = ccx.intern("Iterator");

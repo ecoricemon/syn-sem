@@ -13,24 +13,15 @@ use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, Result};
 
-/// Already parsed source file used as input to name collection.
-#[derive(Clone, Copy)]
-pub struct FileInput<'cx> {
-    /// Interned source path for this parsed file.
-    pub file_path: FilePath<'cx>,
-    /// Parsed semantic AST for this file.
-    pub file: &'cx ast::File<'cx>,
-}
-
 /// Collects name-resolution facts from prepared AST inputs.
 pub struct NameCollector<'cx> {
-    files: BTreeMap<PathBuf, FileInput<'cx>>,
+    files: BTreeMap<PathBuf, ast::SourceInput<'cx>>,
     db: NameDb<'cx>,
 }
 
 impl<'cx> NameCollector<'cx> {
     /// Creates a collector from already parsed source inputs.
-    pub fn new(files: impl IntoIterator<Item = FileInput<'cx>>) -> Self {
+    pub fn new(files: impl IntoIterator<Item = ast::SourceInput<'cx>>) -> Self {
         Self {
             files: files
                 .into_iter()
@@ -65,7 +56,7 @@ impl<'cx> NameCollector<'cx> {
         &self,
         path: &ast::ModulePath,
         module: &ast::ItemMod<'cx>,
-    ) -> Option<FileInput<'cx>> {
+    ) -> Option<ast::SourceInput<'cx>> {
         path.child_file_candidates(module)
             .into_iter()
             .find_map(|candidate| self.files.get(&candidate).copied())

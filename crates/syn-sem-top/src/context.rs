@@ -3,7 +3,7 @@ use std::path::Path;
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result};
 use syn_sem_hir::HirBuilder;
-use syn_sem_name::collect::{FileInput, NameCollector};
+use syn_sem_name::collect::NameCollector;
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -30,26 +30,19 @@ impl<'tcx> TopCx<'tcx> {
     pub fn analyze_virtual_file(
         &'tcx self,
         entry_path: &str,
-        text: &str,
+        source_text: &str,
     ) -> Result<Semantics<'tcx>> {
-        let entry_path = self.common.insert_virtual_file(entry_path, text)?;
-        let text = self
+        let entry_path = self.common.insert_virtual_file(entry_path, source_text)?;
+        let source_text = self
             .common
             .source_text(entry_path)
             .ok_or_else(|| format!("source file is not stored: {entry_path}"))?;
-        self.syntax.parse_virtual_file(entry_path, text)?;
+        self.syntax.parse_virtual_file(entry_path, source_text)?;
         self.analyze_entry(entry_path)
     }
 
     fn analyze_entry(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
-        let name_inputs = self
-            .syntax
-            .collect_module_tree(entry_path)?
-            .into_iter()
-            .map(|input| FileInput {
-                file_path: input.file_path,
-                file: input.file,
-            });
+        let name_inputs = self.syntax.collect_module_tree(entry_path)?;
         let names = NameCollector::new(name_inputs).collect(entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
         let hir = HirBuilder::new(&names).build(entry_path, file);

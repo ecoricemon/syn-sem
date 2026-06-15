@@ -1,4 +1,4 @@
-use crate::{FilePath, FrozenMap, InternedStr, Result, SourceText};
+use crate::{FilePath, FrozenMap, InternedStr, RawSourceText, Result, SourceText};
 use any_intern::DroplessInterner;
 use std::{
     fmt::{self, Display},
@@ -12,8 +12,10 @@ use std::{
 /// [`FilePath`] and [`SourceText`], are valid for the lifetime of this context's interner.
 #[derive(Debug, Default)]
 pub struct CommonCx {
-    interner: StringInterner,
+    // `files` stores raw handles into `interner`. Keep it declared first so it is dropped before
+    // the interner that owns those allocations.
     files: AbstractFiles,
+    interner: StringInterner,
 }
 
 impl CommonCx {
@@ -42,14 +44,17 @@ impl CommonCx {
         self.intern(path)
     }
 
-    /// Returns the source-file table owned by this context.
-    pub fn files(&self) -> &AbstractFiles {
-        &self.files
+    /// Returns whether `file_path` has source in this context.
+    pub fn has_source(&self, file_path: FilePath<'_>) -> bool {
+        self.files.contains(file_path.as_ref())
     }
 
     /// Stores virtual source text and returns its interned file path.
-    pub fn insert_virtual_file(&self, file_path: &str, code: &str) -> Result<FilePath<'_>> {
-        let file_path = self.files.insert_virtual_file(file_path, code)?;
+    pub fn insert_virtual_file(&self, file_path: &str, source_text: &str) -> Result<FilePath<'_>> {
+        let source_text = self.intern(source_text);
+        let file_path = self
+            .files
+            .insert_virtual_file(file_path, source_text.raw())?;
         Ok(self.intern_path(&file_path))
     }
 
@@ -57,29 +62,41 @@ impl CommonCx {
     pub fn insert_virtual_source(
         &self,
         file_path: FilePath<'_>,
-        code: SourceText<'_>,
+        source_text: SourceText<'_>,
     ) -> Result<()> {
         self.files
-            .insert_virtual_file(file_path.as_ref(), code.as_ref())?;
+            .insert_virtual_file(file_path.as_ref(), source_text.raw())?;
         Ok(())
     }
 
     /// Stores physical source text and returns its interned file path.
-    pub fn insert_physical_file(&self, file_path: &str, code: &str) -> Result<FilePath<'_>> {
-        let file_path = self.files.insert_physical_file(file_path, code)?;
+    pub fn insert_physical_file(&self, file_path: &str, source_text: &str) -> Result<FilePath<'_>> {
+        let source_text = self.intern(source_text);
+        let file_path = self
+            .files
+            .insert_physical_file(file_path, source_text.raw())?;
         Ok(self.intern_path(&file_path))
     }
 
     /// Reads a physical source file and returns its interned canonical file path.
     pub fn read_physical_file(&self, file_path: impl AsRef<Path>) -> Result<FilePath<'_>> {
-        let file_path = self.files.read_physical_file(file_path)?;
+        let file_path = absolute_file_path(file_path.as_ref())?;
+        if self.files.contains(&file_path) {
+            return Ok(self.intern_path(&file_path));
+        }
+
+        let source_text = fs::read_to_string(&file_path)?;
+        let source_text = self.intern(&source_text);
+        let file_path = self
+            .files
+            .insert_physical_file(&file_path, source_text.raw())?;
         Ok(self.intern_path(&file_path))
     }
 
     /// Returns interned source text for `file_path`.
     pub fn source_text(&self, file_path: FilePath<'_>) -> Option<SourceText<'_>> {
-        let code = self.files.code(file_path.as_ref())?;
-        Some(self.intern(code))
+        let raw_source_text = self.files.raw_source_text(file_path.as_ref())?;
+        Some(self.source_text_from_raw(raw_source_text))
     }
 
     /// Associates a known library name with an interned file path.
@@ -96,6 +113,13 @@ impl CommonCx {
     pub fn known_library(&self, name: &str) -> Option<FilePath<'_>> {
         let path = self.files.known_library(name)?;
         Some(self.intern_path(path))
+    }
+
+    fn source_text_from_raw(&self, raw_source_text: RawSourceText) -> SourceText<'_> {
+        // Safety: `AbstractFiles` is private to this module, and every source-text raw handle
+        // stored there is created from `self.interner` by `CommonCx` insertion methods. The
+        // returned `SourceText` is tied to `&self`, so it cannot outlive the owning interner.
+        unsafe { SourceText::from_raw(raw_source_text) }
     }
 }
 
@@ -148,14 +172,10 @@ impl std::fmt::Debug for StringInterner {
     }
 }
 
-/// Abstract source-file table keyed by owned paths.
-///
-/// This type is independent from the string interner. [`CommonCx`] owns one table and exposes
-/// interned [`FilePath`] and [`SourceText`] values for phase crates that need lifetime-bearing
-/// handles.
 #[derive(Default)]
-pub struct AbstractFiles {
-    files: FrozenMap<PathBuf, Box<str>>,
+struct AbstractFiles {
+    // Every raw source-text handle stored here is created by the owning `CommonCx`.
+    files: FrozenMap<PathBuf, Box<RawSourceText>>,
     known_libraries: FrozenMap<String, Box<Path>>,
 }
 
@@ -166,48 +186,32 @@ impl fmt::Debug for AbstractFiles {
 }
 
 impl AbstractFiles {
-    /// Returns whether `file_path` has source in this table.
-    pub fn contains(&self, file_path: impl AsRef<Path>) -> bool {
+    fn contains(&self, file_path: impl AsRef<Path>) -> bool {
         self.files.get(file_path.as_ref()).is_some()
     }
 
-    /// Returns source text for `file_path`.
-    pub fn code(&self, file_path: impl AsRef<Path>) -> Option<&str> {
-        self.files.get(file_path.as_ref())
+    fn raw_source_text(&self, file_path: impl AsRef<Path>) -> Option<RawSourceText> {
+        self.files.get(file_path.as_ref()).copied()
     }
 
-    /// Inserts caller-provided virtual source text under `file_path`.
-    ///
-    /// Virtual paths are source identifiers and are not checked against the filesystem.
-    pub fn insert_virtual_file(&self, file_path: impl AsRef<Path>, code: &str) -> Result<PathBuf> {
-        self.insert_source(file_path.as_ref().to_path_buf(), code)
+    fn insert_virtual_file(
+        &self,
+        file_path: impl AsRef<Path>,
+        raw_source_text: RawSourceText,
+    ) -> Result<PathBuf> {
+        self.insert_source(file_path.as_ref().to_path_buf(), raw_source_text)
     }
 
-    /// Inserts caller-provided source text for an absolute physical file path.
-    ///
-    /// This validates that `file_path` is absolute, but does not check whether it exists.
-    pub fn insert_physical_file(&self, file_path: impl AsRef<Path>, code: &str) -> Result<PathBuf> {
+    fn insert_physical_file(
+        &self,
+        file_path: impl AsRef<Path>,
+        raw_source_text: RawSourceText,
+    ) -> Result<PathBuf> {
         validate_absolute_file_path(file_path.as_ref())?;
-        self.insert_source(file_path.as_ref().to_path_buf(), code)
+        self.insert_source(file_path.as_ref().to_path_buf(), raw_source_text)
     }
 
-    /// Reads an absolute physical file path from disk and stores its source text.
-    ///
-    /// The returned path is canonicalized before it is interned.
-    pub fn read_physical_file(&self, file_path: impl AsRef<Path>) -> Result<PathBuf> {
-        let file_path = absolute_file_path(file_path.as_ref())?;
-        if self.contains(&file_path) {
-            return Ok(file_path);
-        }
-
-        let code = fs::read_to_string(&file_path)?;
-        self.insert_physical_file(&file_path, &code)
-    }
-
-    /// Associates a known library name with a file path.
-    ///
-    /// Names are library identifiers such as `core` or `std`, not paths.
-    pub fn set_known_library(
+    fn set_known_library(
         &self,
         name: &str,
         file_path: impl AsRef<Path>,
@@ -234,14 +238,13 @@ impl AbstractFiles {
         Ok(None)
     }
 
-    /// Returns the file path associated with a known library name.
-    pub fn known_library(&self, name: &str) -> Option<&Path> {
+    fn known_library(&self, name: &str) -> Option<&Path> {
         self.known_libraries.get(name)
     }
 
-    fn insert_source(&self, file_path: PathBuf, code: &str) -> Result<PathBuf> {
-        if let Some(existing) = self.code(&file_path) {
-            if existing != code {
+    fn insert_source(&self, file_path: PathBuf, raw_source_text: RawSourceText) -> Result<PathBuf> {
+        if let Some(existing) = self.raw_source_text(&file_path) {
+            if existing != raw_source_text {
                 return Err(format!(
                     "source file `{}` already has different text",
                     file_path.display()
@@ -251,7 +254,8 @@ impl AbstractFiles {
             return Ok(file_path);
         }
 
-        self.files.insert(file_path.clone(), code.into());
+        self.files
+            .insert(file_path.clone(), Box::new(raw_source_text));
         Ok(file_path)
     }
 }
@@ -309,28 +313,32 @@ mod tests {
     }
 
     #[test]
-    fn abstract_files_stores_virtual_file_code() {
+    fn abstract_files_stores_virtual_source_text() {
         let files = AbstractFiles::default();
+        let interner = StringInterner::default();
+        let source_text = interner.intern("fn main() {}");
 
         let file_path = files
-            .insert_virtual_file("/virtual/main.rs", "fn main() {}")
+            .insert_virtual_file("/virtual/main.rs", source_text.raw())
             .unwrap();
 
         assert_eq!(file_path, PathBuf::from("/virtual/main.rs"));
         assert!(files.contains(&file_path));
-        assert_eq!(files.code(&file_path), Some("fn main() {}"));
+        assert_eq!(files.raw_source_text(&file_path), Some(source_text.raw()));
     }
 
     #[test]
-    fn abstract_files_stores_physical_file_code_without_reading_disk() {
+    fn abstract_files_stores_physical_source_text_without_reading_disk() {
         let files = AbstractFiles::default();
+        let interner = StringInterner::default();
+        let source_text = interner.intern("fn main() {}");
 
         let file_path = files
-            .insert_physical_file("/virtual/main.rs", "fn main() {}")
+            .insert_physical_file("/virtual/main.rs", source_text.raw())
             .unwrap();
 
         assert_eq!(file_path, PathBuf::from("/virtual/main.rs"));
-        assert_eq!(files.code(&file_path), Some("fn main() {}"));
+        assert_eq!(files.raw_source_text(&file_path), Some(source_text.raw()));
     }
 
     #[test]
@@ -341,39 +349,52 @@ mod tests {
             .unwrap();
 
         assert_eq!(file_path.as_ref(), "/virtual/main.rs");
-        assert!(ccx.files().contains(file_path.as_ref()));
+        assert!(ccx.has_source(file_path));
         let source_text = ccx.source_text(file_path).unwrap();
         assert_eq!(source_text.as_ref(), "fn main() {}");
     }
 
     #[test]
-    fn abstract_files_stores_sources_without_interner() {
+    fn abstract_files_stores_source_handles() {
         let files = AbstractFiles::default();
+        let interner = StringInterner::default();
+        let virtual_source_text = interner.intern("fn main() {}");
+        let physical_source_text = interner.intern("pub fn lib() {}");
         let virtual_path = PathBuf::from("/virtual/main.rs");
         let physical_path = PathBuf::from("/virtual/lib.rs");
 
         assert_eq!(
             files
-                .insert_virtual_file(&virtual_path, "fn main() {}")
+                .insert_virtual_file(&virtual_path, virtual_source_text.raw())
                 .unwrap(),
             virtual_path
         );
         assert_eq!(
             files
-                .insert_physical_file(&physical_path, "pub fn lib() {}")
+                .insert_physical_file(&physical_path, physical_source_text.raw())
                 .unwrap(),
             physical_path
         );
 
-        assert_eq!(files.code("/virtual/main.rs"), Some("fn main() {}"));
-        assert_eq!(files.code("/virtual/lib.rs"), Some("pub fn lib() {}"));
+        assert_eq!(
+            files.raw_source_text("/virtual/main.rs"),
+            Some(virtual_source_text.raw())
+        );
+        assert_eq!(
+            files.raw_source_text("/virtual/lib.rs"),
+            Some(physical_source_text.raw())
+        );
     }
 
     #[test]
     fn physical_file_path_must_be_absolute() {
         let files = AbstractFiles::default();
+        let interner = StringInterner::default();
+        let source_text = interner.intern("");
 
-        let err = files.insert_physical_file("relative.rs", "").unwrap_err();
+        let err = files
+            .insert_physical_file("relative.rs", source_text.raw())
+            .unwrap_err();
 
         assert_eq!(
             err.to_string(),
@@ -384,8 +405,10 @@ mod tests {
     #[test]
     fn known_libraries_point_to_file_paths() {
         let files = AbstractFiles::default();
+        let interner = StringInterner::default();
+        let source_text = interner.intern("mod marker {}");
         let file_path = files
-            .insert_virtual_file("/virtual/core.rs", "mod marker {}")
+            .insert_virtual_file("/virtual/core.rs", source_text.raw())
             .unwrap();
 
         assert_eq!(files.set_known_library("core", &file_path).unwrap(), None);

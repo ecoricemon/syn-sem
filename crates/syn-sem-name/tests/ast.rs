@@ -141,14 +141,17 @@ impl<'cx> AstNameCollector<'cx> {
     }
 }
 
-fn collect_ast_names<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: SourceText<'cx>) -> NameDb<'cx> {
-    let file = parse_file(scx, text);
+fn collect_ast_names<'cx>(
+    scx: &'cx ast::SyntaxCx<'cx>,
+    source_text: SourceText<'cx>,
+) -> NameDb<'cx> {
+    let file = parse_file(scx, source_text);
     AstNameCollector::default().collect_file(&file)
 }
 
-fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, text: SourceText<'cx>) -> ast::File<'cx> {
+fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, source_text: SourceText<'cx>) -> ast::File<'cx> {
     let file_path = scx.common.intern("test.rs");
-    scx.parse_virtual_file(file_path, text).unwrap();
+    scx.parse_virtual_file(file_path, source_text).unwrap();
     let source = scx.get_source(file_path).unwrap();
     source.ast().clone()
 }
@@ -203,14 +206,14 @@ fn resolve_lexical<'cx>(
 fn resolves_function_generics_params_and_locals_from_ast() {
     let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
-    let text = ccx.intern(
+    let source_text = ccx.intern(
         r#"
         fn f<T, const N: usize>(x: T) {
             let y = x;
         }
         "#,
     );
-    let db = collect_ast_names(&scx, text);
+    let db = collect_ast_names(&scx, source_text);
 
     let generic_scope = scope(&db, ScopeKind::Generic, 0);
     let block_scope = scope(&db, ScopeKind::Block, 0);
@@ -256,7 +259,7 @@ fn resolves_function_generics_params_and_locals_from_ast() {
 fn resolves_local_item_declared_inside_function_from_ast() {
     let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
-    let text = ccx.intern(
+    let source_text = ccx.intern(
         r#"
         fn f<T>(x: T) {
             struct Local<U> {
@@ -267,7 +270,7 @@ fn resolves_local_item_declared_inside_function_from_ast() {
         }
         "#,
     );
-    let db = collect_ast_names(&scx, text);
+    let db = collect_ast_names(&scx, source_text);
 
     let block_scope = scope(&db, ScopeKind::Block, 0);
 
@@ -305,14 +308,14 @@ fn resolves_local_item_declared_inside_function_from_ast() {
 fn keeps_type_and_value_namespaces_separate_from_ast() {
     let ccx = CommonCx::default();
     let scx = ast::SyntaxCx::new(&ccx);
-    let text = ccx.intern(
+    let source_text = ccx.intern(
         r#"
         fn f<T>(T: i32) {
             let x: T = T;
         }
         "#,
     );
-    let db = collect_ast_names(&scx, text);
+    let db = collect_ast_names(&scx, source_text);
 
     let block_scope = scope(&db, ScopeKind::Block, 0);
 

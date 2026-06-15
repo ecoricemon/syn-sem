@@ -38,11 +38,11 @@ impl<'cx> SyntaxCx<'cx> {
             return Ok(file_path);
         }
 
-        let text = self
+        let source_text = self
             .common
             .source_text(file_path)
             .ok_or_else(|| format!("source file is not stored: {file_path}"))?;
-        self.parse_physical_file(file_path, text)?;
+        self.parse_physical_file(file_path, source_text)?;
         Ok(file_path)
     }
 }
