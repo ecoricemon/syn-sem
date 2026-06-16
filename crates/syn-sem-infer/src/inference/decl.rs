@@ -375,7 +375,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         let PathTypeResolution::Projection(projection) = &path.resolution else {
             return;
         };
-        self.db.projection_obligations.push(ProjectionObligation {
+        self.db.projections.obligations.push(ProjectionObligation {
             projection: id,
             assoc_type: projection.assoc_type,
             self_ty: projection.self_ty,
@@ -1155,7 +1155,8 @@ mod tests {
         };
         let existing = infer.projection_normalizations()[0];
         infer
-            .projection_normalizations
+            .projections
+            .normalizations
             .push(ProjectionNormalization {
                 value_ty: ambiguous_value,
                 ..existing

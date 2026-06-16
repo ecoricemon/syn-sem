@@ -29,7 +29,7 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
     fn derive_projection_candidates(&mut self) {
         let mut logic = ProjectionLogic::new(self.ccx, self.db);
         logic.load_projection_candidates();
-        let obligations = self.db.projection_obligations.clone();
+        let obligations = self.db.projections.obligations.clone();
         let bounds = self.db.trait_bound_facts.clone();
         let mut candidates = Vec::new();
         for obligation in obligations {
@@ -68,14 +68,14 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 }
             }
         }
-        self.db.projection_candidates.extend(candidates);
+        self.db.projections.candidates.extend(candidates);
     }
 
     fn derive_projection_matches(&mut self) {
         let trait_members = self.trait_members();
         let mut logic = ProjectionLogic::new(self.ccx, self.db);
         logic.load_projection_matches(&trait_members);
-        let candidates = self.db.projection_candidates.clone();
+        let candidates = self.db.projections.candidates.clone();
         let mut matches = Vec::new();
         for candidate in candidates {
             for member in trait_members
@@ -97,11 +97,11 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 }
             }
         }
-        self.db.projection_matches.extend(matches);
+        self.db.projections.matches.extend(matches);
     }
 
     fn derive_impl_self_matches(&mut self) {
-        let matches = self.db.projection_matches.clone();
+        let matches = self.db.projections.matches.clone();
         let impl_facts = self.db.assoc_type_impl_facts.clone();
         let mut impl_self_matches = Vec::new();
         let mut type_bindings = Vec::new();
@@ -186,7 +186,7 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
     fn derive_projection_normalizations(&mut self) {
         let mut logic = ProjectionLogic::new(self.ccx, self.db);
         logic.load_projection_normalizations();
-        let matches = self.db.projection_matches.clone();
+        let matches = self.db.projections.matches.clone();
         let impl_facts = self.db.assoc_type_impl_facts.clone();
         let substitutions = self.db.type_substitutions.clone();
         let mut normalizations = Vec::new();
@@ -222,12 +222,13 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 }
             }
         }
-        self.db.projection_normalizations.extend(normalizations);
+        self.db.projections.normalizations.extend(normalizations);
     }
 
     fn trait_members(&self) -> Vec<TraitMember> {
         self.db
-            .projection_candidates
+            .projections
+            .candidates
             .iter()
             .filter_map(|candidate| self.trait_member(*candidate))
             .collect()
@@ -629,7 +630,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_projection_obligations(&mut self) {
-        for obligation in &self.infer.projection_obligations {
+        for obligation in &self.infer.projections.obligations {
             let Some(self_ty) = obligation.self_ty else {
                 continue;
             };
@@ -663,13 +664,13 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_projection_candidates(&mut self) {
-        for candidate in &self.infer.projection_candidates {
+        for candidate in &self.infer.projections.candidates {
             self.insert_clause(term::projection_candidate_clause(self.ccx, *candidate));
         }
     }
 
     fn insert_projection_matches(&mut self) {
-        for projection_match in &self.infer.projection_matches {
+        for projection_match in &self.infer.projections.matches {
             self.insert_clause(term::projection_match_clause(self.ccx, *projection_match));
         }
     }

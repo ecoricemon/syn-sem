@@ -43,9 +43,8 @@ fn lower_signature_facts<'cx>(hir: &hir::Hir<'cx>, db: &mut InferDb<'cx>) {
 }
 
 fn lower_local_facts<'cx>(hir: &hir::Hir<'cx>, db: &mut InferDb<'cx>, local: &hir::lower::Local) {
-    let source_local = &hir[local.local];
     if let Some(init) = local.init {
-        lower_pat_expr_facts(hir, db, Some(source_local.pat), init);
+        lower_pat_expr_facts(hir, db, Some(local.pat), init);
     }
 }
 

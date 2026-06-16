@@ -10,10 +10,14 @@
 //! resulting [`Type`] through focused query methods such as [`InferDb::projection`] and
 //! [`InferDb::projection_normalization`].
 
+mod db;
+mod id;
 mod inference;
 mod logic;
 mod obligations;
 mod types;
 
+pub use db::*;
+pub use id::*;
 pub(crate) use obligations::*;
 pub use types::*;
