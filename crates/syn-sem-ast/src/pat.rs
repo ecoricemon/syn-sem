@@ -3,6 +3,7 @@ use crate::{
     TypeReference,
 };
 use num_traits::ToPrimitive;
+use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A Rust pattern supported by the semantic AST.
@@ -67,6 +68,10 @@ pub struct PatIdent<'cx> {
     pub is_mut: bool,
     /// Source span of the pattern.
     pub span: Span<'cx>,
+}
+
+impl AstNode for PatIdent<'_> {
+    const KIND: AstNodeKind = AstNodeKind::PatIdent;
 }
 
 impl<'cx> PatIdent<'cx> {

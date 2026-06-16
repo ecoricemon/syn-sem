@@ -1,5 +1,5 @@
 use syn_sem_hir::ItemKind;
-use syn_sem_name::{DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
+use syn_sem_name::{AstNodeId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
 use syn_sem_top::TopCx;
 
 /// Verifies physical module files are loaded from the filesystem and `use` declarations across
@@ -203,7 +203,11 @@ mod upper_phase_integration {
             .expect("function item should link to a definition");
 
         assert_eq!(names[entry_def].kind, DefKind::Fn);
-        assert_eq!(hir[block].scope, names[entry_def].scopes.body);
+        assert_eq!(
+            hir[block].scope,
+            names.scope_for_ast_node(AstNodeId::from_ref(hir[block].block))
+        );
+        assert_ne!(hir[block].scope, names[entry_def].scopes.body);
         assert!(hir[signature]
             .params
             .iter()

@@ -11,6 +11,8 @@ pub struct NameDb<'cx> {
     defs: Vec<Def<'cx>>,
     imports: Vec<Import<'cx>>,
     ast_defs: Map<AstNodeId<'cx>, DefId>,
+    ast_scopes: Map<AstNodeId<'cx>, ScopeId>,
+    ast_imports: Map<AstNodeId<'cx>, Vec<ImportId>>,
 }
 
 impl<'cx> NameDb<'cx> {
@@ -34,6 +36,19 @@ impl<'cx> NameDb<'cx> {
         &self.imports
     }
 
+    /// Returns imports created from `node`.
+    pub fn imports_for_ast_node(&self, node: AstNodeId<'cx>) -> &[ImportId] {
+        self.ast_imports
+            .get(&node)
+            .map_or([].as_slice(), Vec::as_slice)
+    }
+
+    /// Records imports created from `node`.
+    pub fn set_imports_ast_node(&mut self, node: AstNodeId<'cx>, imports: Vec<ImportId>) {
+        let old = self.ast_imports.insert(node, imports);
+        assert!(old.is_none(), "one AST node cannot create imports twice");
+    }
+
     /// Returns the definition created from `node`, if one is tracked.
     pub fn def_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<DefId> {
         self.ast_defs.get(&node).copied()
@@ -45,6 +60,20 @@ impl<'cx> NameDb<'cx> {
         assert!(
             old.is_none() || old == Some(def),
             "one AST node cannot create multiple definitions"
+        );
+    }
+
+    /// Returns the scope created from `node`, if one is tracked.
+    pub fn scope_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<ScopeId> {
+        self.ast_scopes.get(&node).copied()
+    }
+
+    /// Records that `scope` was created from `node`.
+    pub fn set_scope_ast_node(&mut self, scope: ScopeId, node: AstNodeId<'cx>) {
+        let old = self.ast_scopes.insert(node, scope);
+        assert!(
+            old.is_none() || old == Some(scope),
+            "one AST node cannot create multiple scopes"
         );
     }
 
@@ -759,6 +788,8 @@ impl Default for NameDb<'_> {
             defs: Vec::new(),
             imports: Vec::new(),
             ast_defs: Map::default(),
+            ast_scopes: Map::default(),
+            ast_imports: Map::default(),
         }
     }
 }

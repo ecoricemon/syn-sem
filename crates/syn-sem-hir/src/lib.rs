@@ -9,14 +9,15 @@
 //! - Hides direct AST traversal from upper semantic phases.
 //! - Preserves Rust source declaration, type, block, statement, local binding, pattern, and
 //!   expression spine through stable id-based arenas.
-//! - Lowers semantic inputs such as generic predicates for inference-friendly consumers.
+//! - Owns lowered semantic inputs such as generic predicates and body facts for upper-phase
+//!   consumers.
 //! - Stores connection ids such as `DefId` and `ScopeId`, while leaving resolved name, import,
 //!   visibility, and type facts to other semantic phases.
 
 mod builder;
 mod hir;
 mod id;
-mod lower;
+pub mod lower;
 
 pub use builder::HirBuilder;
 pub use hir::*;

@@ -80,7 +80,7 @@ impl<'cx> AstNameCollector<'cx> {
             match stmt {
                 ast::Stmt::Local(local) => self.collect_pat(block_scope, &local.pat),
                 ast::Stmt::Item(item) => self.collect_item(block_scope, item),
-                ast::Stmt::Expr(_) => {}
+                ast::Stmt::Expr { .. } => {}
             }
         }
     }

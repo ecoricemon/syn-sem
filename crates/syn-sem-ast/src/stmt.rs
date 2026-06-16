@@ -1,4 +1,5 @@
 use crate::{Expr, FromSyn, InputDesc, Item, Pat, Span, SyntaxCx};
+use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A braced block of statements.
@@ -10,6 +11,10 @@ pub struct Block<'cx> {
     pub stmts: &'cx [Stmt<'cx>],
     /// Source span of the block.
     pub span: Span<'cx>,
+}
+
+impl AstNode for Block<'_> {
+    const KIND: AstNodeKind = AstNodeKind::Block;
 }
 
 impl<'cx> FromSyn<'cx, syn::Block> for Block<'cx> {
@@ -31,7 +36,12 @@ pub enum Stmt<'cx> {
     /// Item statement.
     Item(Item<'cx>),
     /// Expression statement.
-    Expr(Expr<'cx>),
+    Expr {
+        /// Expression being evaluated.
+        expr: Expr<'cx>,
+        /// Whether this expression statement has a trailing semicolon.
+        has_semi: bool,
+    },
 }
 
 impl<'cx> FromSyn<'cx, syn::Stmt> for Stmt<'cx> {
@@ -39,7 +49,10 @@ impl<'cx> FromSyn<'cx, syn::Stmt> for Stmt<'cx> {
         match desc.input {
             syn::Stmt::Local(v) => Self::Local(Local::from_syn(scx, desc.with_input(v))),
             syn::Stmt::Item(v) => Self::Item(Item::from_syn(scx, desc.with_input(v))),
-            syn::Stmt::Expr(v, _) => Self::Expr(Expr::from_syn(scx, desc.with_input(v))),
+            syn::Stmt::Expr(v, semi) => Self::Expr {
+                expr: Expr::from_syn(scx, desc.with_input(v)),
+                has_semi: semi.is_some(),
+            },
             _ => todo!(),
         }
     }

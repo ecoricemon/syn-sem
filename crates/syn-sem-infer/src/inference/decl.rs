@@ -54,9 +54,9 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
                 | hir::ItemKind::Struct { generics, .. }
                 | hir::ItemKind::Trait { generics, .. }
                 | hir::ItemKind::Type { generics, .. } => Some(generics.clone()),
-                hir::ItemKind::Const { .. } | hir::ItemKind::Mod { .. } | hir::ItemKind::Use => {
-                    None
-                }
+                hir::ItemKind::Const { .. }
+                | hir::ItemKind::Mod { .. }
+                | hir::ItemKind::Use { .. } => None,
             };
             let Some(generics) = generics else {
                 continue;
