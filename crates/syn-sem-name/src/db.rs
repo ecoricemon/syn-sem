@@ -319,6 +319,51 @@ impl<'cx> NameDb<'cx> {
         }
     }
 
+    /// Resolves a value path from `scope`.
+    ///
+    /// Single-segment paths use lexical value-namespace lookup so parameters, locals, functions,
+    /// constants, and value imports can resolve from their use site. Multi-segment paths follow the
+    /// same local-crate path traversal rules as import resolution, then narrow the terminal
+    /// candidates to the value namespace and follow import aliases.
+    pub fn resolve_value_path(
+        &self,
+        scope: ScopeId,
+        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+    ) -> ResolveResult {
+        if path.len() == 1 {
+            let name = path.next().unwrap();
+            return match self.resolve_lexical(scope, Namespace::Value, name) {
+                ResolveResult::Found(def) => ResolveResult::Found(self.follow_aliases(def)),
+                ResolveResult::Ambiguous(defs) => ResolveResult::Ambiguous(
+                    defs.into_iter()
+                        .map(|def| self.follow_aliases(def))
+                        .collect(),
+                ),
+                ResolveResult::NotFound => ResolveResult::NotFound,
+            };
+        }
+
+        let candidates = match self.resolve_import_path(scope, path) {
+            CandidateResolution::Found(candidates) => candidates,
+            CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
+            CandidateResolution::NotFound => return ResolveResult::NotFound,
+        };
+
+        let mut defs = candidates
+            .into_iter()
+            .filter(|(namespace, _)| *namespace == Namespace::Value)
+            .map(|(_, def)| self.follow_aliases(def))
+            .collect::<Vec<_>>();
+        defs.sort_by_key(|def| def.index());
+        defs.dedup();
+
+        match defs.as_slice() {
+            [] => ResolveResult::NotFound,
+            [def] => ResolveResult::Found(*def),
+            _ => ResolveResult::Ambiguous(defs),
+        }
+    }
+
     fn get_or_insert_import_def(
         &mut self,
         parent_scope: ScopeId,

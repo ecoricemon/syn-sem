@@ -1,4 +1,5 @@
 use crate::TypeId;
+use syn_sem_hir as hir;
 use syn_sem_name::DefId;
 
 /// Associated type projection that needs solver work.
@@ -34,6 +35,57 @@ pub(crate) struct AssocTypeImplFact {
     pub(crate) assoc_type: DefId,
     /// Type assigned by the impl item.
     pub(crate) value_ty: TypeId,
+}
+
+/// Lowered block fact consumed from HIR body lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BodyBlockFact {
+    /// Source block represented by this body fact.
+    pub(crate) block: hir::BlockId,
+    /// Tail expression for the block, when present.
+    pub(crate) tail_expr: Option<hir::ExprId>,
+}
+
+/// Lowered local fact consumed from HIR body lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BodyLocalFact {
+    /// Block containing this local statement.
+    pub(crate) block: hir::BlockId,
+    /// Source local binding.
+    pub(crate) local: hir::LocalId,
+    /// Local definitions introduced by the binding pattern.
+    pub(crate) bindings: Vec<DefId>,
+    /// Initializer expression, when present.
+    pub(crate) init: Option<hir::ExprId>,
+}
+
+/// Subject whose type can participate in body-local type equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TypeSubject {
+    /// A definition such as a parameter or local binding.
+    Def(DefId),
+    /// A HIR expression occurrence.
+    Expr(hir::ExprId),
+    /// A concrete inference type.
+    Type(TypeId),
+}
+
+/// Body-local type equality edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeEqualFact {
+    /// Left side of the equality edge.
+    pub(crate) left: TypeSubject,
+    /// Right side of the equality edge.
+    pub(crate) right: TypeSubject,
+}
+
+/// Resolved concrete type found for a body-local subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedTypeFact {
+    /// Subject being resolved.
+    pub(crate) subject: TypeSubject,
+    /// Concrete inference type reachable from the subject through equality edges.
+    pub(crate) ty: TypeId,
 }
 
 /// Impl self type pattern matched against a projection self type.

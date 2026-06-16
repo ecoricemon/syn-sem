@@ -1,7 +1,7 @@
 use crate::{
-    AssocTypeImplFact, ImplSelfMatch, ProjectionCandidate, ProjectionMatch,
-    ProjectionNormalization, ProjectionObligation, TraitBoundFact, TypeBindingFact,
-    TypeSubstitution,
+    AssocTypeImplFact, BodyBlockFact, BodyLocalFact, ImplSelfMatch, ProjectionCandidate,
+    ProjectionMatch, ProjectionNormalization, ProjectionObligation, ResolvedTypeFact,
+    TraitBoundFact, TypeBindingFact, TypeEqualFact, TypeSubstitution,
 };
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map};
@@ -16,6 +16,12 @@ pub struct InferDb<'cx> {
     pub(crate) projection_obligations: Vec<ProjectionObligation>,
     pub(crate) trait_bound_facts: Vec<TraitBoundFact>,
     pub(crate) assoc_type_impl_facts: Vec<AssocTypeImplFact>,
+    pub(crate) body_block_facts: Vec<BodyBlockFact>,
+    pub(crate) body_local_facts: Vec<BodyLocalFact>,
+    pub(crate) type_equal_facts: Vec<TypeEqualFact>,
+    pub(crate) resolved_type_facts: Vec<ResolvedTypeFact>,
+    pub(crate) hir_expr_types: Map<hir::ExprId, TypeId>,
+    pub(crate) def_types: Map<DefId, TypeId>,
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
     pub(crate) type_binding_facts: Vec<TypeBindingFact>,
     pub(crate) type_substitutions: Vec<TypeSubstitution>,
@@ -40,6 +46,16 @@ impl<'cx> InferDb<'cx> {
     /// Returns the inference type linked to a HIR type occurrence.
     pub fn type_for_hir_type(&self, hir_type: hir::TypeId) -> Option<TypeId> {
         self.hir_types.get(&hir_type).copied()
+    }
+
+    /// Returns the resolved concrete type linked to a HIR expression occurrence.
+    pub fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
+        self.hir_expr_types.get(&hir_expr).copied()
+    }
+
+    /// Returns the resolved concrete type linked to a definition, when body inference found one.
+    pub fn type_for_def(&self, def: DefId) -> Option<TypeId> {
+        self.def_types.get(&def).copied()
     }
 
     /// Returns the shallow normalized inference type linked to a HIR type occurrence.
@@ -91,6 +107,30 @@ impl<'cx> InferDb<'cx> {
     #[cfg(test)]
     pub(crate) fn assoc_type_impl_facts(&self) -> &[AssocTypeImplFact] {
         &self.assoc_type_impl_facts
+    }
+
+    /// Returns lowered block facts collected from HIR body lowering.
+    #[cfg(test)]
+    pub(crate) fn body_block_facts(&self) -> &[BodyBlockFact] {
+        &self.body_block_facts
+    }
+
+    /// Returns lowered local facts collected from HIR body lowering.
+    #[cfg(test)]
+    pub(crate) fn body_local_facts(&self) -> &[BodyLocalFact] {
+        &self.body_local_facts
+    }
+
+    /// Returns body-local type equality facts.
+    #[cfg(test)]
+    pub(crate) fn type_equal_facts(&self) -> &[TypeEqualFact] {
+        &self.type_equal_facts
+    }
+
+    /// Returns concrete body-local type resolutions derived from equality facts.
+    #[cfg(test)]
+    pub(crate) fn resolved_type_facts(&self) -> &[ResolvedTypeFact] {
+        &self.resolved_type_facts
     }
 
     /// Returns impl self type matches used for projection normalization.

@@ -42,6 +42,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         self.lower_trait_bound_facts();
         self.lower_hir_types();
         self.lower_assoc_type_impl_facts();
+        super::body::lower_bodies(self.hir, self.names, &mut self.db);
         self.db
     }
 

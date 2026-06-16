@@ -15,6 +15,9 @@
 - Do not duplicate resolved definition, scope, import, or semantic visibility facts here.
 - Do not resolve source paths into absolute or final semantic paths during source
   spine construction.
+- Lower language sugar such as `for` into HIR-owned facts or obligations, not
+  resolved call trees.
+- Leave trait, method, and type resolution for lowered obligations to later phases.
 - Do not treat current name-resolution ownership as fixed architecture.
 - Do not bake in permanent phase ordering around inference, evaluation,
   monomorphization, or backend lowering.
