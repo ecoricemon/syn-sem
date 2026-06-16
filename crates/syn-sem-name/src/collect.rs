@@ -4,8 +4,8 @@
 //! top-level orchestration context.
 
 use crate::{
-    AstNodeId, DefId, DefKind, ImportKind, Name, NameDb, Namespace, Origin, ScopeId, ScopeKind,
-    Visibility,
+    AstNodeId, DefId, DefKind, ImportId, ImportKind, Name, NameDb, Namespace, Origin, ScopeId,
+    ScopeKind, Visibility,
 };
 use std::collections::BTreeMap;
 use std::io;
@@ -588,7 +588,13 @@ impl<'cx> NameCollector<'cx> {
     /// ```
     fn collect_use(&mut self, scope: ScopeId, item: &'cx ast::ItemUse<'cx>) {
         let visibility = self.visibility_from_ast(scope, &item.vis);
+        let start = self.db.imports().len();
         self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
+        let imports = (start..self.db.imports().len())
+            .map(ImportId::new)
+            .collect();
+        self.db
+            .set_imports_ast_node(AstNodeId::from_ref(item), imports);
     }
 
     /// For `use crate::a::{B, C as D, *};`, this flattens the use tree into import records:
@@ -664,12 +670,14 @@ impl<'cx> NameCollector<'cx> {
     fn collect_block(&mut self, parent_scope: ScopeId, block: &'cx ast::Block<'cx>) {
         // Block scope
         let block_scope = self.db.add_scope(ScopeKind::Block, Some(parent_scope));
+        self.db
+            .set_scope_ast_node(block_scope, AstNodeId::from_ref(block));
 
         for stmt in block.stmts {
             match stmt {
                 ast::Stmt::Local(local) => self.collect_pat(block_scope, &local.pat),
                 ast::Stmt::Item(item) => self.collect_item_from_ast(block_scope, item),
-                ast::Stmt::Expr(_) => {}
+                ast::Stmt::Expr { .. } => {}
             }
         }
     }
@@ -684,7 +692,9 @@ impl<'cx> NameCollector<'cx> {
     fn collect_pat(&mut self, scope: ScopeId, pat: &'cx ast::Pat<'cx>) {
         match pat {
             ast::Pat::Ident(pat) => {
-                self.add_named_def(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
+                let def =
+                    self.add_named_def(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
+                self.db.set_def_ast_node(def, AstNodeId::from_ref(pat));
             }
             ast::Pat::Reference(pat) => self.collect_pat(scope, pat.pat),
             ast::Pat::Slice(pat) => {

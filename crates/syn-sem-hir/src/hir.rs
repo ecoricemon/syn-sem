@@ -6,7 +6,7 @@ use crate::{
 };
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, InternedStr};
-use syn_sem_name::{DefId, Name, ScopeId};
+use syn_sem_name::{DefId, ImportId, Name, ScopeId};
 
 /// HIR container produced for upper semantic phases.
 #[derive(Debug, Default)]
@@ -23,9 +23,30 @@ pub struct Hir<'cx> {
     pats: Vec<Pat<'cx>>,
     exprs: Vec<Expr<'cx>>,
     types: Vec<Type<'cx>>,
+    body: crate::lower::Body,
 }
 
 impl<'cx> Hir<'cx> {
+    pub(crate) fn from_arena(arena: HirArena<'cx>) -> Self {
+        let mut hir = Self {
+            files: arena.files,
+            items: arena.items,
+            signatures: arena.signatures,
+            fields: arena.fields,
+            variants: arena.variants,
+            assoc_items: arena.assoc_items,
+            blocks: arena.blocks,
+            stmts: arena.stmts,
+            locals: arena.locals,
+            pats: arena.pats,
+            exprs: arena.exprs,
+            types: arena.types,
+            body: crate::lower::Body::default(),
+        };
+        hir.body = crate::lower::Body::from_hir(&hir);
+        hir
+    }
+
     /// Returns all HIR files.
     pub fn files(&self) -> &[File<'cx>] {
         &self.files
@@ -86,125 +107,25 @@ impl<'cx> Hir<'cx> {
         &self.types
     }
 
-    pub(crate) fn next_file_id(&self) -> FileId {
-        FileId::new(self.files.len())
+    /// Returns lowered body facts derived from this HIR's source spine.
+    pub fn body(&self) -> &crate::lower::Body {
+        &self.body
     }
+}
 
-    pub(crate) fn add_file(&mut self, file: File<'cx>) {
-        let id = file.id;
-        assert_eq!(id, self.next_file_id());
-        self.files.push(file);
-    }
-
-    pub(crate) fn next_item_id(&self) -> ItemId {
-        ItemId::new(self.items.len())
-    }
-
-    pub(crate) fn add_item(&mut self, item: Item<'cx>) {
-        let id = item.id;
-        assert_eq!(id, self.next_item_id());
-        self.items.push(item);
-    }
-
-    pub(crate) fn next_signature_id(&self) -> SignatureId {
-        SignatureId::new(self.signatures.len())
-    }
-
-    pub(crate) fn add_signature(&mut self, signature: Signature) {
-        let id = signature.id;
-        assert_eq!(id, self.next_signature_id());
-        self.signatures.push(signature);
-    }
-
-    pub(crate) fn next_field_id(&self) -> FieldId {
-        FieldId::new(self.fields.len())
-    }
-
-    pub(crate) fn add_field(&mut self, field: Field<'cx>) {
-        let id = field.id;
-        assert_eq!(id, self.next_field_id());
-        self.fields.push(field);
-    }
-
-    pub(crate) fn next_variant_id(&self) -> VariantId {
-        VariantId::new(self.variants.len())
-    }
-
-    pub(crate) fn add_variant(&mut self, variant: Variant<'cx>) {
-        let id = variant.id;
-        assert_eq!(id, self.next_variant_id());
-        self.variants.push(variant);
-    }
-
-    pub(crate) fn next_assoc_item_id(&self) -> AssocItemId {
-        AssocItemId::new(self.assoc_items.len())
-    }
-
-    pub(crate) fn add_assoc_item(&mut self, item: AssocItem<'cx>) {
-        let id = item.id;
-        assert_eq!(id, self.next_assoc_item_id());
-        self.assoc_items.push(item);
-    }
-
-    pub(crate) fn next_block_id(&self) -> BlockId {
-        BlockId::new(self.blocks.len())
-    }
-
-    pub(crate) fn add_block(&mut self, block: Block<'cx>) {
-        let id = block.id;
-        assert_eq!(id, self.next_block_id());
-        self.blocks.push(block);
-    }
-
-    pub(crate) fn next_stmt_id(&self) -> StmtId {
-        StmtId::new(self.stmts.len())
-    }
-
-    pub(crate) fn add_stmt(&mut self, stmt: Stmt<'cx>) {
-        let id = stmt.id;
-        assert_eq!(id, self.next_stmt_id());
-        self.stmts.push(stmt);
-    }
-
-    pub(crate) fn next_local_id(&self) -> LocalId {
-        LocalId::new(self.locals.len())
-    }
-
-    pub(crate) fn add_local(&mut self, local: Local<'cx>) {
-        let id = local.id;
-        assert_eq!(id, self.next_local_id());
-        self.locals.push(local);
-    }
-
-    pub(crate) fn next_pat_id(&self) -> PatId {
-        PatId::new(self.pats.len())
-    }
-
-    pub(crate) fn add_pat(&mut self, pat: Pat<'cx>) {
-        let id = pat.id;
-        assert_eq!(id, self.next_pat_id());
-        self.pats.push(pat);
-    }
-
-    pub(crate) fn next_expr_id(&self) -> ExprId {
-        ExprId::new(self.exprs.len())
-    }
-
-    pub(crate) fn add_expr(&mut self, expr: Expr<'cx>) {
-        let id = expr.id;
-        assert_eq!(id, self.next_expr_id());
-        self.exprs.push(expr);
-    }
-
-    pub(crate) fn next_type_id(&self) -> TypeId {
-        TypeId::new(self.types.len())
-    }
-
-    pub(crate) fn add_type(&mut self, ty: Type<'cx>) {
-        let id = ty.id;
-        assert_eq!(id, self.next_type_id());
-        self.types.push(ty);
-    }
+pub(crate) struct HirArena<'cx> {
+    pub(crate) files: Vec<File<'cx>>,
+    pub(crate) items: Vec<Item<'cx>>,
+    pub(crate) signatures: Vec<Signature>,
+    pub(crate) fields: Vec<Field<'cx>>,
+    pub(crate) variants: Vec<Variant<'cx>>,
+    pub(crate) assoc_items: Vec<AssocItem<'cx>>,
+    pub(crate) blocks: Vec<Block<'cx>>,
+    pub(crate) stmts: Vec<Stmt<'cx>>,
+    pub(crate) locals: Vec<Local<'cx>>,
+    pub(crate) pats: Vec<Pat<'cx>>,
+    pub(crate) exprs: Vec<Expr<'cx>>,
+    pub(crate) types: Vec<Type<'cx>>,
 }
 
 impl<'cx> Index<FileId> for Hir<'cx> {
@@ -411,7 +332,10 @@ pub enum ItemKind<'cx> {
         ty: TypeId,
     },
     /// Use item.
-    Use,
+    Use {
+        /// Imports created from this use item.
+        imports: Vec<ImportId>,
+    },
 }
 
 /// HIR-native item generics.
@@ -536,6 +460,8 @@ pub enum PatKind<'cx> {
     Ident {
         /// Bound identifier.
         name: Name<'cx>,
+        /// Local definition introduced by this binding pattern.
+        def: Option<DefId>,
         /// Whether the binding uses `ref`.
         is_ref: bool,
         /// Whether the binding is mutable.
@@ -753,6 +679,10 @@ pub(crate) fn item_visibility<'cx>(item: &'cx ast::Item<'cx>) -> Visibility<'cx>
 }
 
 /// One braced source block.
+///
+/// This is currently a source-spine anchor. As body lowering grows enough to own block statement
+/// facts directly, this type may shrink to source/scope linkage or be replaced by lowered body
+/// queries for non-diagnostic consumers.
 #[derive(Debug)]
 pub struct Block<'cx> {
     /// Block id in HIR.
@@ -766,6 +696,9 @@ pub struct Block<'cx> {
 }
 
 /// One represented statement occurrence.
+///
+/// This is currently a source-spine anchor. Statement order and lowered local/item/expression
+/// facts are expected to move behind [`crate::lower::Body`] as that model matures.
 #[derive(Debug)]
 pub struct Stmt<'cx> {
     /// Statement id in HIR.
@@ -784,12 +717,20 @@ pub enum StmtKind {
     /// Local `let` binding statement.
     Local(LocalId),
     /// Block-local item statement.
-    Item,
+    Item(ItemId),
     /// Expression statement.
-    Expr(ExprId),
+    Expr {
+        /// Expression being evaluated.
+        expr: ExprId,
+        /// Whether this expression statement has a trailing semicolon.
+        has_semi: bool,
+    },
 }
 
 /// One represented local `let` binding.
+///
+/// This is currently a source-spine anchor. Lowered local facts such as binding definitions and
+/// initializer expressions are expected to live behind [`crate::lower::Local`] for upper phases.
 #[derive(Debug)]
 pub struct Local<'cx> {
     /// Local id in HIR.

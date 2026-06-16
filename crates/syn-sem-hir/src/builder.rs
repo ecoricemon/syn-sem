@@ -1,23 +1,211 @@
 use crate::hir::{
     item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr,
     ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Hir,
-    Item, ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, QSelf, Signature,
-    SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind, TypeParam,
-    TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
+    HirArena, Item, ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, QSelf,
+    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind,
+    TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
 };
 use crate::lower::{self, PredicateSubject};
 use crate::{
-    AssocItemId, BlockId, ExprId, FieldId, ItemId, LocalId, PatId, SignatureId, StmtId, TypeId,
-    VariantId,
+    AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId, StmtId,
+    TypeId, VariantId,
 };
+use std::ops::{Index, IndexMut};
 use syn_sem_ast as ast;
-use syn_sem_common::FilePath;
+use syn_sem_common::{ArenaBuilder, FilePath};
 use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
+
+struct HirArenaBuilder<'cx> {
+    files: ArenaBuilder<FileId, File<'cx>>,
+    items: ArenaBuilder<ItemId, Item<'cx>>,
+    signatures: ArenaBuilder<SignatureId, Signature>,
+    fields: ArenaBuilder<FieldId, Field<'cx>>,
+    variants: ArenaBuilder<VariantId, Variant<'cx>>,
+    assoc_items: ArenaBuilder<AssocItemId, AssocItem<'cx>>,
+    blocks: ArenaBuilder<BlockId, Block<'cx>>,
+    stmts: ArenaBuilder<StmtId, Stmt<'cx>>,
+    locals: ArenaBuilder<LocalId, Local<'cx>>,
+    pats: ArenaBuilder<PatId, Pat<'cx>>,
+    exprs: ArenaBuilder<ExprId, Expr<'cx>>,
+    types: ArenaBuilder<TypeId, Type<'cx>>,
+}
+
+impl<'cx> HirArenaBuilder<'cx> {
+    fn new() -> Self {
+        Self {
+            files: ArenaBuilder::new(FileId::new, FileId::index),
+            items: ArenaBuilder::new(ItemId::new, ItemId::index),
+            signatures: ArenaBuilder::new(SignatureId::new, SignatureId::index),
+            fields: ArenaBuilder::new(FieldId::new, FieldId::index),
+            variants: ArenaBuilder::new(VariantId::new, VariantId::index),
+            assoc_items: ArenaBuilder::new(AssocItemId::new, AssocItemId::index),
+            blocks: ArenaBuilder::new(BlockId::new, BlockId::index),
+            stmts: ArenaBuilder::new(StmtId::new, StmtId::index),
+            locals: ArenaBuilder::new(LocalId::new, LocalId::index),
+            pats: ArenaBuilder::new(PatId::new, PatId::index),
+            exprs: ArenaBuilder::new(ExprId::new, ExprId::index),
+            types: ArenaBuilder::new(TypeId::new, TypeId::index),
+        }
+    }
+
+    fn finish(self) -> HirArena<'cx> {
+        HirArena {
+            files: self.files.finish(),
+            items: self.items.finish(),
+            signatures: self.signatures.finish(),
+            fields: self.fields.finish(),
+            variants: self.variants.finish(),
+            assoc_items: self.assoc_items.finish(),
+            blocks: self.blocks.finish(),
+            stmts: self.stmts.finish(),
+            locals: self.locals.finish(),
+            pats: self.pats.finish(),
+            exprs: self.exprs.finish(),
+            types: self.types.finish(),
+        }
+    }
+
+    fn reserve_file(&mut self) -> FileId {
+        self.files.reserve()
+    }
+
+    fn fill_file(&mut self, id: FileId, file: File<'cx>) {
+        assert_eq!(id, file.id);
+        self.files.fill(id, file);
+    }
+
+    fn reserve_item(&mut self) -> ItemId {
+        self.items.reserve()
+    }
+
+    fn fill_item(&mut self, id: ItemId, item: Item<'cx>) {
+        assert_eq!(id, item.id);
+        self.items.fill(id, item);
+    }
+
+    fn reserve_signature(&mut self) -> SignatureId {
+        self.signatures.reserve()
+    }
+
+    fn fill_signature(&mut self, id: SignatureId, signature: Signature) {
+        assert_eq!(id, signature.id);
+        self.signatures.fill(id, signature);
+    }
+
+    fn reserve_field(&mut self) -> FieldId {
+        self.fields.reserve()
+    }
+
+    fn fill_field(&mut self, id: FieldId, field: Field<'cx>) {
+        assert_eq!(id, field.id);
+        self.fields.fill(id, field);
+    }
+
+    fn reserve_variant(&mut self) -> VariantId {
+        self.variants.reserve()
+    }
+
+    fn fill_variant(&mut self, id: VariantId, variant: Variant<'cx>) {
+        assert_eq!(id, variant.id);
+        self.variants.fill(id, variant);
+    }
+
+    fn reserve_assoc_item(&mut self) -> AssocItemId {
+        self.assoc_items.reserve()
+    }
+
+    fn fill_assoc_item(&mut self, id: AssocItemId, item: AssocItem<'cx>) {
+        assert_eq!(id, item.id);
+        self.assoc_items.fill(id, item);
+    }
+
+    fn reserve_block(&mut self) -> BlockId {
+        self.blocks.reserve()
+    }
+
+    fn fill_block(&mut self, id: BlockId, block: Block<'cx>) {
+        assert_eq!(id, block.id);
+        self.blocks.fill(id, block);
+    }
+
+    fn reserve_stmt(&mut self) -> StmtId {
+        self.stmts.reserve()
+    }
+
+    fn fill_stmt(&mut self, id: StmtId, stmt: Stmt<'cx>) {
+        assert_eq!(id, stmt.id);
+        self.stmts.fill(id, stmt);
+    }
+
+    fn reserve_local(&mut self) -> LocalId {
+        self.locals.reserve()
+    }
+
+    fn fill_local(&mut self, id: LocalId, local: Local<'cx>) {
+        assert_eq!(id, local.id);
+        self.locals.fill(id, local);
+    }
+
+    fn reserve_pat(&mut self) -> PatId {
+        self.pats.reserve()
+    }
+
+    fn fill_pat(&mut self, id: PatId, pat: Pat<'cx>) {
+        assert_eq!(id, pat.id);
+        self.pats.fill(id, pat);
+    }
+
+    fn reserve_expr(&mut self) -> ExprId {
+        self.exprs.reserve()
+    }
+
+    fn fill_expr(&mut self, id: ExprId, expr: Expr<'cx>) {
+        assert_eq!(id, expr.id);
+        self.exprs.fill(id, expr);
+    }
+
+    fn reserve_type(&mut self) -> TypeId {
+        self.types.reserve()
+    }
+
+    fn fill_type(&mut self, id: TypeId, ty: Type<'cx>) {
+        assert_eq!(id, ty.id);
+        self.types.fill(id, ty);
+    }
+}
+
+impl<'cx> Index<ItemId> for HirArenaBuilder<'cx> {
+    type Output = Item<'cx>;
+
+    fn index(&self, id: ItemId) -> &Self::Output {
+        &self.items[id]
+    }
+}
+
+impl IndexMut<ItemId> for HirArenaBuilder<'_> {
+    fn index_mut(&mut self, id: ItemId) -> &mut Self::Output {
+        &mut self.items[id]
+    }
+}
+
+impl<'cx> Index<BlockId> for HirArenaBuilder<'cx> {
+    type Output = Block<'cx>;
+
+    fn index(&self, id: BlockId) -> &Self::Output {
+        &self.blocks[id]
+    }
+}
+
+impl IndexMut<BlockId> for HirArenaBuilder<'_> {
+    fn index_mut(&mut self, id: BlockId) -> &mut Self::Output {
+        &mut self.blocks[id]
+    }
+}
 
 /// Builder for [`Hir`].
 pub struct HirBuilder<'a, 'cx> {
     names: &'a NameDb<'cx>,
-    hir: Hir<'cx>,
+    hir: HirArenaBuilder<'cx>,
 }
 
 impl<'a, 'cx> HirBuilder<'a, 'cx> {
@@ -25,20 +213,24 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     pub fn new(names: &'a NameDb<'cx>) -> Self {
         Self {
             names,
-            hir: Hir::default(),
+            hir: HirArenaBuilder::new(),
         }
     }
 
     /// Builds HIR for one entry file.
     pub fn build(mut self, file_path: FilePath<'cx>, file: &'cx ast::File<'cx>) -> Hir<'cx> {
+        let id = self.hir.reserve_file();
         let root = Some(self.names.root_scope());
         let items = self.collect_items(file.items, root);
-        self.hir.add_file(File {
-            id: self.hir.next_file_id(),
-            file_path,
-            items,
-        });
-        self.hir
+        self.hir.fill_file(
+            id,
+            File {
+                id,
+                file_path,
+                items,
+            },
+        );
+        Hir::from_arena(self.hir.finish())
     }
 
     fn collect_items(
@@ -53,20 +245,23 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     }
 
     fn collect_item(&mut self, item: &'cx ast::Item<'cx>, parent_scope: Option<ScopeId>) -> ItemId {
-        let id = self.hir.next_item_id();
+        let id = self.hir.reserve_item();
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
         let visibility = item_visibility(item);
         let kind = self.collect_item_kind(item, parent_scope, def);
 
-        self.hir.add_item(Item {
+        self.hir.fill_item(
             id,
-            name,
-            visibility,
-            def,
-            parent_scope,
-            kind,
-        });
+            Item {
+                id,
+                name,
+                visibility,
+                def,
+                parent_scope,
+                kind,
+            },
+        );
 
         if let ast::Item::Mod(item) = item {
             let scope = def.and_then(|def| self.names.def_path_scope(def));
@@ -172,7 +367,12 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 let ty = self.collect_type(item.ty, type_scope, TypeSource::TypeAlias);
                 ItemKind::Type { generics, ty }
             }
-            ast::Item::Use(_) => ItemKind::Use,
+            ast::Item::Use(item) => ItemKind::Use {
+                imports: self
+                    .names
+                    .imports_for_ast_node(AstNodeId::from_ref(item))
+                    .to_vec(),
+            },
         }
     }
 
@@ -181,15 +381,18 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         field: &'cx ast::Field<'cx>,
         scope: Option<ScopeId>,
     ) -> FieldId {
-        let id = self.hir.next_field_id();
+        let id = self.hir.reserve_field();
         let ty = self.collect_type(&field.ty, scope, TypeSource::StructField);
-        self.hir.add_field(Field {
+        self.hir.fill_field(
             id,
-            name: field.ident.inner,
-            visibility: Visibility::from_ast(&field.vis),
-            ty,
-            source: FieldSource::Struct,
-        });
+            Field {
+                id,
+                name: field.ident.inner,
+                visibility: Visibility::from_ast(&field.vis),
+                ty,
+                source: FieldSource::Struct,
+            },
+        );
         id
     }
 
@@ -198,7 +401,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         variant: &'cx ast::Variant<'cx>,
         scope: Option<ScopeId>,
     ) -> VariantId {
-        let id = self.hir.next_variant_id();
+        let id = self.hir.reserve_variant();
         let def = self.def_for_variant(variant);
         let (fields, discriminant) = match &variant.kind {
             ast::VariantKind::Fields(fields) => (
@@ -214,13 +417,16 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             }
             ast::VariantKind::Unit => (Vec::new(), None),
         };
-        self.hir.add_variant(Variant {
+        self.hir.fill_variant(
             id,
-            def,
-            name: variant.ident.inner,
-            fields,
-            discriminant,
-        });
+            Variant {
+                id,
+                def,
+                name: variant.ident.inner,
+                fields,
+                discriminant,
+            },
+        );
         id
     }
 
@@ -229,15 +435,18 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         field: &'cx ast::VariantField<'cx>,
         scope: Option<ScopeId>,
     ) -> FieldId {
-        let id = self.hir.next_field_id();
+        let id = self.hir.reserve_field();
         let ty = self.collect_type(&field.ty, scope, TypeSource::VariantField);
-        self.hir.add_field(Field {
+        self.hir.fill_field(
             id,
-            name: field.ident.inner,
-            visibility: Visibility::Private,
-            ty,
-            source: FieldSource::Variant,
-        });
+            Field {
+                id,
+                name: field.ident.inner,
+                visibility: Visibility::Private,
+                ty,
+                source: FieldSource::Variant,
+            },
+        );
         id
     }
 
@@ -246,7 +455,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         item: &'cx ast::ImplItem<'cx>,
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
-        let id = self.hir.next_assoc_item_id();
+        let id = self.hir.reserve_assoc_item();
         let def = self.def_for_impl_item(item);
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
@@ -269,12 +478,15 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::ImplType { ty }
             }
         };
-        self.hir.add_assoc_item(AssocItem {
+        self.hir.fill_assoc_item(
             id,
-            name: item.ident().inner,
-            def,
-            kind,
-        });
+            AssocItem {
+                id,
+                name: item.ident().inner,
+                def,
+                kind,
+            },
+        );
         id
     }
 
@@ -283,7 +495,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         item: &'cx ast::TraitItem<'cx>,
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
-        let id = self.hir.next_assoc_item_id();
+        let id = self.hir.reserve_assoc_item();
         let def = self.def_for_trait_item(item);
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
@@ -307,12 +519,15 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::TraitType { default }
             }
         };
-        self.hir.add_assoc_item(AssocItem {
+        self.hir.fill_assoc_item(
             id,
-            name: item.ident().inner,
-            def,
-            kind,
-        });
+            AssocItem {
+                id,
+                name: item.ident().inner,
+                def,
+                kind,
+            },
+        );
         id
     }
 
@@ -331,6 +546,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         params: &'cx [ast::Parameter<'cx>],
         scope: Option<ScopeId>,
     ) -> SignatureId {
+        let id = self.hir.reserve_signature();
         let params: Vec<_> = params
             .iter()
             .enumerate()
@@ -347,8 +563,8 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             !params.is_empty(),
             "semantic AST signatures must include a synthesized return parameter"
         );
-        let id = self.hir.next_signature_id();
-        self.hir.add_signature(Signature { id, source, params });
+        self.hir
+            .fill_signature(id, Signature { id, source, params });
         id
     }
 
@@ -437,15 +653,18 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {
+        let id = self.hir.reserve_type();
         let kind = self.collect_type_kind(ty, scope);
-        let id = self.hir.next_type_id();
-        self.hir.add_type(Type {
+        self.hir.fill_type(
             id,
-            ty: Some(ty),
-            kind,
-            scope,
-            source,
-        });
+            Type {
+                id,
+                ty: Some(ty),
+                kind,
+                scope,
+                source,
+            },
+        );
         id
     }
 
@@ -455,20 +674,23 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {
-        let id = self.hir.next_type_id();
-        self.hir.add_type(Type {
+        let id = self.hir.reserve_type();
+        self.hir.fill_type(
             id,
-            ty: None,
-            kind: TypeKind::Path(Path {
-                qself: None,
-                segments: vec![PathSegment {
-                    name,
-                    args: Vec::new(),
-                }],
-            }),
-            scope,
-            source,
-        });
+            Type {
+                id,
+                ty: None,
+                kind: TypeKind::Path(Path {
+                    qself: None,
+                    segments: vec![PathSegment {
+                        name,
+                        args: Vec::new(),
+                    }],
+                }),
+                scope,
+                source,
+            },
+        );
         id
     }
 
@@ -626,14 +848,25 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             .or(fallback)
     }
 
-    fn collect_block(&mut self, block: &'cx ast::Block<'cx>, scope: Option<ScopeId>) -> BlockId {
-        let id = self.hir.next_block_id();
-        self.hir.add_block(Block {
+    fn collect_block(
+        &mut self,
+        block: &'cx ast::Block<'cx>,
+        fallback_scope: Option<ScopeId>,
+    ) -> BlockId {
+        let id = self.hir.reserve_block();
+        let scope = self
+            .names
+            .scope_for_ast_node(AstNodeId::from_ref(block))
+            .or(fallback_scope);
+        self.hir.fill_block(
             id,
-            block,
-            stmts: Vec::new(),
-            scope,
-        });
+            Block {
+                id,
+                block,
+                stmts: Vec::new(),
+                scope,
+            },
+        );
         let stmts = self.collect_block_contents(block, scope);
         self.hir[id].stmts = stmts;
         id
@@ -652,42 +885,53 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     }
 
     fn collect_stmt(&mut self, stmt: &'cx ast::Stmt<'cx>, scope: Option<ScopeId>) -> StmtId {
+        let id = self.hir.reserve_stmt();
         let kind = match stmt {
             ast::Stmt::Local(local) => StmtKind::Local(self.collect_local(local, scope)),
-            ast::Stmt::Item(_) => StmtKind::Item,
-            ast::Stmt::Expr(expr) => StmtKind::Expr(self.collect_expr(expr, scope)),
+            ast::Stmt::Item(item) => StmtKind::Item(self.collect_item(item, scope)),
+            ast::Stmt::Expr { expr, has_semi } => StmtKind::Expr {
+                expr: self.collect_expr(expr, scope),
+                has_semi: *has_semi,
+            },
         };
-        let id = self.hir.next_stmt_id();
-        self.hir.add_stmt(Stmt {
+        self.hir.fill_stmt(
             id,
-            stmt,
-            kind,
-            scope,
-        });
+            Stmt {
+                id,
+                stmt,
+                kind,
+                scope,
+            },
+        );
         id
     }
 
     fn collect_local(&mut self, local: &'cx ast::Local<'cx>, scope: Option<ScopeId>) -> LocalId {
+        let id = self.hir.reserve_local();
         let init = local
             .init
             .as_ref()
             .map(|init| self.collect_expr(init.expr, scope));
         let pat = self.collect_pat(&local.pat, scope);
-        let id = self.hir.next_local_id();
-        self.hir.add_local(Local {
+        self.hir.fill_local(
             id,
-            local,
-            pat,
-            init,
-            scope,
-        });
+            Local {
+                id,
+                local,
+                pat,
+                init,
+                scope,
+            },
+        );
         id
     }
 
     fn collect_pat(&mut self, pat: &'cx ast::Pat<'cx>, scope: Option<ScopeId>) -> PatId {
+        let id = self.hir.reserve_pat();
         let kind = match pat {
             ast::Pat::Ident(pat) => PatKind::Ident {
                 name: pat.ident.inner,
+                def: self.names.def_for_ast_node(AstNodeId::from_ref(pat)),
                 is_ref: pat.is_ref,
                 is_mut: pat.is_mut,
             },
@@ -724,17 +968,20 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             },
             ast::Pat::Lit(_) | ast::Pat::Rest(_) | ast::Pat::Slice(_) => PatKind::Unsupported,
         };
-        let id = self.hir.next_pat_id();
-        self.hir.add_pat(Pat {
+        self.hir.fill_pat(
             id,
-            pat,
-            kind,
-            scope,
-        });
+            Pat {
+                id,
+                pat,
+                kind,
+                scope,
+            },
+        );
         id
     }
 
     fn collect_expr(&mut self, expr: &'cx ast::Expr<'cx>, scope: Option<ScopeId>) -> ExprId {
+        let id = self.hir.reserve_expr();
         let kind = match expr {
             ast::Expr::Array(expr) => ExprKind::Array {
                 elems: expr
@@ -837,13 +1084,15 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             },
         };
 
-        let id = self.hir.next_expr_id();
-        self.hir.add_expr(Expr {
+        self.hir.fill_expr(
             id,
-            expr,
-            kind,
-            scope,
-        });
+            Expr {
+                id,
+                expr,
+                kind,
+                scope,
+            },
+        );
         id
     }
 
@@ -877,7 +1126,10 @@ mod tests {
     use crate::{Hir, HirBuilder};
     use syn_sem_ast::SyntaxCx;
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{AstNodeId, DefKind, NameDb, Origin, Visibility as NameVisibility};
+    use syn_sem_name::{
+        collect::NameCollector, AstNodeId, DefKind, ImportKind, NameDb, Origin,
+        Visibility as NameVisibility,
+    };
 
     fn parsed_model<'cx>(
         ccx: &'cx CommonCx,
@@ -890,6 +1142,22 @@ mod tests {
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         HirBuilder::new(&names).build(file_path, file)
+    }
+
+    fn parsed_model_with_names<'cx>(
+        ccx: &'cx CommonCx,
+        scx: &'cx SyntaxCx<'cx>,
+        source_text: &str,
+    ) -> (&'cx ast::File<'cx>, NameDb<'cx>, Hir<'cx>) {
+        let file_path = ccx.intern("test.rs");
+        let source_text = ccx.intern(source_text);
+        scx.parse_virtual_file(file_path, source_text).unwrap();
+        let file = scx.lookup_source(file_path).unwrap().ast();
+        let names = NameCollector::new([ast::SourceInput { file_path, file }])
+            .collect(file_path)
+            .unwrap();
+        let hir = HirBuilder::new(&names).build(file_path, file);
+        (file, names, hir)
     }
 
     fn type_sources(model: &Hir<'_>) -> Vec<TypeSource> {
@@ -906,7 +1174,7 @@ mod tests {
             ItemKind::Struct { .. } => "struct",
             ItemKind::Trait { .. } => "trait",
             ItemKind::Type { .. } => "type",
-            ItemKind::Use => "use",
+            ItemKind::Use { .. } => "use",
         }
     }
 
@@ -930,6 +1198,199 @@ mod tests {
                     .map_or(false, |item_name| item_name.as_ref() == name)
             })
             .unwrap_or_else(|| panic!("expected item named `{name}`"))
+    }
+
+    #[test]
+    fn reserves_parent_ids_before_recursive_children() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            struct S {
+                field: (Vec<u8>, [u8; 3]),
+            }
+
+            fn f((a, b): (u8, u8)) {
+                let x = (1, 2);
+            }
+            "#,
+        );
+
+        let field_type = model
+            .types()
+            .iter()
+            .find(|ty| ty.source == TypeSource::StructField)
+            .expect("expected struct field type");
+        let TypeKind::Tuple { elems } = &field_type.kind else {
+            panic!("expected tuple field type");
+        };
+        assert!(elems.iter().all(|elem| field_type.id < *elem));
+
+        let input_pat = model
+            .signatures()
+            .iter()
+            .find(|signature| signature.source == SignatureSource::ItemFn)
+            .and_then(|signature| signature.params[1].pat)
+            .expect("expected input pattern");
+        let PatKind::Tuple { elems } = &model[input_pat].kind else {
+            panic!("expected tuple input pattern");
+        };
+        assert!(elems.iter().all(|elem| input_pat < *elem));
+
+        let tuple_expr = model
+            .exprs()
+            .iter()
+            .find(|expr| matches!(expr.kind, ExprKind::Tuple { .. }))
+            .expect("expected tuple expression");
+        let ExprKind::Tuple { elems } = &tuple_expr.kind else {
+            panic!("expected tuple expression");
+        };
+        assert!(elems.iter().all(|elem| tuple_expr.id < *elem));
+    }
+
+    #[test]
+    fn uses_name_block_scope_for_hir_blocks() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (file, names, model) = parsed_model_with_names(
+            &ccx,
+            &scx,
+            r#"
+            fn f(x: usize) {
+                let y = x;
+            }
+            "#,
+        );
+
+        let ast::Item::Fn(ast_item) = &file.items[0] else {
+            panic!("expected function item");
+        };
+        let block_scope = names
+            .scope_for_ast_node(AstNodeId::from_ref(&ast_item.block))
+            .expect("expected block scope");
+        let fn_def = names
+            .def_for_ast_node(AstNodeId::from_ref(&file.items[0]))
+            .expect("expected function definition");
+        assert_ne!(names.def_body_scope(fn_def), Some(block_scope));
+
+        let item = named_item(&model, "f");
+        let ItemKind::Fn { block, .. } = item.kind else {
+            panic!("expected function HIR item");
+        };
+        assert_eq!(model[block].scope, Some(block_scope));
+    }
+
+    #[test]
+    fn links_block_local_item_statement_to_name_definition() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (file, names, model) = parsed_model_with_names(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                struct LocalItem;
+            }
+            "#,
+        );
+
+        let ast::Item::Fn(ast_item) = &file.items[0] else {
+            panic!("expected function item");
+        };
+        let ast::Stmt::Item(ast_local_item) = &ast_item.block.stmts[0] else {
+            panic!("expected block-local item statement");
+        };
+        let expected_def = names
+            .def_for_ast_node(AstNodeId::from_ref(ast_local_item))
+            .expect("expected block-local item definition");
+
+        let function = named_item(&model, "f");
+        let ItemKind::Fn { block, .. } = function.kind else {
+            panic!("expected function HIR item");
+        };
+        let [stmt] = model[block].stmts.as_slice() else {
+            panic!("expected one block statement");
+        };
+        let StmtKind::Item(item) = model[*stmt].kind else {
+            panic!("expected block-local item statement");
+        };
+
+        assert_eq!(model[item].def, Some(expected_def));
+        assert_eq!(model[item].parent_scope, model[block].scope);
+        assert_eq!(model[item].name, Some(ccx.intern("LocalItem")));
+        assert_eq!(names[expected_def].kind, DefKind::Struct);
+    }
+
+    #[test]
+    fn links_use_item_to_name_imports() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (file, names, model) = parsed_model_with_names(
+            &ccx,
+            &scx,
+            r#"
+            use a::{b, c as d, *};
+            "#,
+        );
+
+        let ast::Item::Use(ast_use) = &file.items[0] else {
+            panic!("expected use item");
+        };
+        let expected_imports = names.imports_for_ast_node(AstNodeId::from_ref(ast_use));
+        assert_eq!(expected_imports.len(), 3);
+
+        let use_item = model
+            .items()
+            .iter()
+            .find(|item| matches!(item.kind, ItemKind::Use { .. }))
+            .expect("expected HIR use item");
+        let ItemKind::Use { imports } = &use_item.kind else {
+            panic!("expected use item");
+        };
+
+        assert_eq!(use_item.def, None);
+        assert_eq!(imports, expected_imports);
+        assert_eq!(names[imports[0]].kind, ImportKind::Single);
+        assert!(matches!(names[imports[1]].kind, ImportKind::Rename(_)));
+        assert_eq!(names[imports[2]].kind, ImportKind::Glob);
+    }
+
+    #[test]
+    fn links_identifier_binding_patterns_to_name_definitions() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_, names, model) = parsed_model_with_names(
+            &ccx,
+            &scx,
+            r#"
+            fn f((a, b): (usize, usize)) {
+                let (c, ref mut d): (usize, usize) = (a, b);
+            }
+            "#,
+        );
+
+        for name in ["a", "b", "c", "d"] {
+            let pat = model
+                .pats()
+                .iter()
+                .find(|pat| {
+                    matches!(
+                        &pat.kind,
+                        PatKind::Ident { name: pat_name, .. } if pat_name.as_ref() == name
+                    )
+                })
+                .unwrap_or_else(|| panic!("expected ident pattern `{name}`"));
+            let PatKind::Ident { def, .. } = pat.kind else {
+                panic!("expected ident pattern");
+            };
+            let def = def.unwrap_or_else(|| panic!("expected definition for `{name}`"));
+            assert_eq!(names[def].kind, DefKind::Local);
+            assert!(names[def]
+                .name
+                .is_some_and(|def_name| def_name.as_ref() == name));
+        }
     }
 
     #[test]
@@ -973,9 +1434,10 @@ mod tests {
         assert_eq!(name.as_ref(), "value");
         assert_eq!(model[block].block.stmts.len(), 1);
         assert_eq!(model[block].stmts.len(), 1);
-        let StmtKind::Expr(expr) = model[model[block].stmts[0]].kind else {
+        let StmtKind::Expr { expr, has_semi } = model[model[block].stmts[0]].kind else {
             panic!("expected function body expression statement");
         };
+        assert!(!has_semi);
         assert!(matches!(model[expr].kind, ExprKind::Path(_)));
     }
 
@@ -1050,13 +1512,16 @@ mod tests {
             .expect("local initializer should be represented");
         assert!(matches!(model[init].kind, ExprKind::Lit(_)));
 
-        let StmtKind::Item = model[model[block].stmts[1]].kind else {
+        let StmtKind::Item(item) = model[model[block].stmts[1]].kind else {
             panic!("expected block-local item statement");
         };
+        assert_eq!(model[item].parent_scope, model[block].scope);
+        assert_eq!(model[item].name, Some(ccx.intern("LocalItem")));
 
-        let StmtKind::Expr(expr) = model[model[block].stmts[2]].kind else {
+        let StmtKind::Expr { expr, has_semi } = model[model[block].stmts[2]].kind else {
             panic!("expected expression statement");
         };
+        assert!(!has_semi);
         assert!(matches!(model[expr].kind, ExprKind::Path(_)));
     }
 
@@ -1173,7 +1638,7 @@ mod tests {
         assert!(model
             .items()
             .iter()
-            .any(|item| matches!(item.kind, ItemKind::Use)));
+            .any(|item| matches!(item.kind, ItemKind::Use { .. })));
         assert!(model
             .items()
             .iter()

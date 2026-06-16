@@ -1,4 +1,5 @@
-use super::term;
+//! Logic-backed associated type projection derivation.
+
 use crate::{
     GenericArgument, ImplSelfMatch, InferDb, PathType, PathTypeResolution, ProjectionCandidate,
     ProjectionMatch, ProjectionNormalization, Type, TypeBindingFact, TypeId, TypeSubstitution,
@@ -7,7 +8,9 @@ use logic_eval::Database;
 use syn_sem_common::CommonCx;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult};
 
-pub(crate) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &NameDb<'cx>) {
+use crate::logic::term;
+
+pub(super) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &NameDb<'cx>) {
     let mut logic = LogicCx { ccx, db, names };
     logic.derive_projection_candidates();
     logic.derive_projection_matches();

@@ -4,9 +4,11 @@
 //! abstract source files. It deliberately stays independent from syntax, AST, name-resolution, and
 //! semantic crates.
 
+mod arena;
 mod ast_node;
 mod context;
 
+pub use arena::*;
 pub use ast_node::*;
 pub use context::*;
 

@@ -11,6 +11,8 @@ pub struct NameDb<'cx> {
     defs: Vec<Def<'cx>>,
     imports: Vec<Import<'cx>>,
     ast_defs: Map<AstNodeId<'cx>, DefId>,
+    ast_scopes: Map<AstNodeId<'cx>, ScopeId>,
+    ast_imports: Map<AstNodeId<'cx>, Vec<ImportId>>,
 }
 
 impl<'cx> NameDb<'cx> {
@@ -34,6 +36,19 @@ impl<'cx> NameDb<'cx> {
         &self.imports
     }
 
+    /// Returns imports created from `node`.
+    pub fn imports_for_ast_node(&self, node: AstNodeId<'cx>) -> &[ImportId] {
+        self.ast_imports
+            .get(&node)
+            .map_or([].as_slice(), Vec::as_slice)
+    }
+
+    /// Records imports created from `node`.
+    pub fn set_imports_ast_node(&mut self, node: AstNodeId<'cx>, imports: Vec<ImportId>) {
+        let old = self.ast_imports.insert(node, imports);
+        assert!(old.is_none(), "one AST node cannot create imports twice");
+    }
+
     /// Returns the definition created from `node`, if one is tracked.
     pub fn def_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<DefId> {
         self.ast_defs.get(&node).copied()
@@ -45,6 +60,20 @@ impl<'cx> NameDb<'cx> {
         assert!(
             old.is_none() || old == Some(def),
             "one AST node cannot create multiple definitions"
+        );
+    }
+
+    /// Returns the scope created from `node`, if one is tracked.
+    pub fn scope_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<ScopeId> {
+        self.ast_scopes.get(&node).copied()
+    }
+
+    /// Records that `scope` was created from `node`.
+    pub fn set_scope_ast_node(&mut self, scope: ScopeId, node: AstNodeId<'cx>) {
+        let old = self.ast_scopes.insert(node, scope);
+        assert!(
+            old.is_none() || old == Some(scope),
+            "one AST node cannot create multiple scopes"
         );
     }
 
@@ -278,6 +307,51 @@ impl<'cx> NameDb<'cx> {
         let mut defs = candidates
             .into_iter()
             .filter(|(namespace, _)| *namespace == Namespace::Type)
+            .map(|(_, def)| self.follow_aliases(def))
+            .collect::<Vec<_>>();
+        defs.sort_by_key(|def| def.index());
+        defs.dedup();
+
+        match defs.as_slice() {
+            [] => ResolveResult::NotFound,
+            [def] => ResolveResult::Found(*def),
+            _ => ResolveResult::Ambiguous(defs),
+        }
+    }
+
+    /// Resolves a value path from `scope`.
+    ///
+    /// Single-segment paths use lexical value-namespace lookup so parameters, locals, functions,
+    /// constants, and value imports can resolve from their use site. Multi-segment paths follow the
+    /// same local-crate path traversal rules as import resolution, then narrow the terminal
+    /// candidates to the value namespace and follow import aliases.
+    pub fn resolve_value_path(
+        &self,
+        scope: ScopeId,
+        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+    ) -> ResolveResult {
+        if path.len() == 1 {
+            let name = path.next().unwrap();
+            return match self.resolve_lexical(scope, Namespace::Value, name) {
+                ResolveResult::Found(def) => ResolveResult::Found(self.follow_aliases(def)),
+                ResolveResult::Ambiguous(defs) => ResolveResult::Ambiguous(
+                    defs.into_iter()
+                        .map(|def| self.follow_aliases(def))
+                        .collect(),
+                ),
+                ResolveResult::NotFound => ResolveResult::NotFound,
+            };
+        }
+
+        let candidates = match self.resolve_import_path(scope, path) {
+            CandidateResolution::Found(candidates) => candidates,
+            CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
+            CandidateResolution::NotFound => return ResolveResult::NotFound,
+        };
+
+        let mut defs = candidates
+            .into_iter()
+            .filter(|(namespace, _)| *namespace == Namespace::Value)
             .map(|(_, def)| self.follow_aliases(def))
             .collect::<Vec<_>>();
         defs.sort_by_key(|def| def.index());
@@ -759,6 +833,8 @@ impl Default for NameDb<'_> {
             defs: Vec::new(),
             imports: Vec::new(),
             ast_defs: Map::default(),
+            ast_scopes: Map::default(),
+            ast_imports: Map::default(),
         }
     }
 }

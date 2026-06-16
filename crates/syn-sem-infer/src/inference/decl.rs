@@ -42,6 +42,7 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
         self.lower_trait_bound_facts();
         self.lower_hir_types();
         self.lower_assoc_type_impl_facts();
+        super::body::lower_bodies(self.hir, self.names, &mut self.db);
         self.db
     }
 
@@ -54,9 +55,9 @@ impl<'a, 'cx> InferCx<'a, 'cx> {
                 | hir::ItemKind::Struct { generics, .. }
                 | hir::ItemKind::Trait { generics, .. }
                 | hir::ItemKind::Type { generics, .. } => Some(generics.clone()),
-                hir::ItemKind::Const { .. } | hir::ItemKind::Mod { .. } | hir::ItemKind::Use => {
-                    None
-                }
+                hir::ItemKind::Const { .. }
+                | hir::ItemKind::Mod { .. }
+                | hir::ItemKind::Use { .. } => None,
             };
             let Some(generics) = generics else {
                 continue;

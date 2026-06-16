@@ -28,7 +28,7 @@ directly.
 | `Item::Struct` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Struct { generics, fields }` | None at item layer | Fields are separately indexed. Type parameter trait bounds are HIR-native. |
 | `Item::Trait` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Trait { generics, items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
 | `Item::Type` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Type { generics, ty }` | None at item layer | Alias target gets a `TypeId`. |
-| `Item::Use` | Partial | `Item { visibility, parent_scope }`, `ItemKind::Use` | None at item layer | Import declarations are not linked to `ImportId` or `DefKind::Use` aliases yet. |
+| `Item::Use` | Indexed | `Item { visibility, parent_scope }`, `ItemKind::Use { imports }` | None at item layer | Import declarations link to `ImportId`s owned by `syn-sem-name`; resolved `DefKind::Use` aliases remain name-resolution facts. |
 
 ## Associated Items
 
@@ -72,24 +72,29 @@ entries use `Nested`.
 
 | AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
 | --- | --- | --- | --- | --- |
-| Function block bodies | Indexed | `Block { scope, stmts }` linked directly from function-like owners | Retained source anchor only | Block contents link to `StmtId`s in source order. |
+| Function block bodies | Indexed | `Block { scope, stmts }` linked directly from function-like owners; `lower::Block { stmts, tail_expr }` | Retained source anchor only | Block contents link to `StmtId`s in source order; lowered body facts identify tail expressions when the final expression has no semicolon. |
 | Const initializers | Indexed | `ExprId` links into the expression arena | Retained source anchor only | Includes free consts, impl consts, trait const defaults, and variant discriminants. |
-| `Stmt::{Local, Item, Expr}` | Partial | `Stmt { kind, scope }` with `StmtKind::{Local, Item, Expr}` | Retained source anchor only | Local and expression statements link to `LocalId` and `ExprId`; block-local item statements are classified but do not link to `ItemId` yet. |
+| `Stmt::{Local, Item, Expr}` | Indexed | `Stmt { kind, scope }` with `StmtKind::{Local, Item, Expr}` | Retained source anchor only | Local, block-local item, and expression statements link to `LocalId`, `ItemId`, and `ExprId`. |
 | `Local` and `LocalInit` | Partial | `Local { pat, init, scope }` | None at local layer | Local patterns link to `PatId`; local initializer expressions link to `ExprId`. |
-| `Pat` variants | Partial by design | `Pat { kind, scope }` with `PatKind::{Ident, Path, Struct, Reference, Tuple, Type, Unsupported}` | Retained source anchor only | Identifier, path, struct, reference, tuple, and type-annotated patterns are HIR-native; literal, rest, and slice patterns intentionally remain `Unsupported` until a consumer needs them. |
+| `Pat` variants | Partial by design | `Pat { kind, scope }` with `PatKind::{Ident, Path, Struct, Reference, Tuple, Type, Unsupported}` | Retained source anchor only | Identifier patterns link to local `DefId`s; path, struct, reference, tuple, and type-annotated patterns are HIR-native; literal, rest, and slice patterns intentionally remain `Unsupported` until a consumer needs them. |
 | `Expr` variants | Indexed | `Expr { kind, scope }` plus child `ExprId`, `BlockId`, `SignatureId`, and `TypeId` links | Retained source anchor only | Operators are still source-anchored where the AST has not exposed a HIR-native operator kind. |
 
 Current expression, statement, local, and pattern entries use stable ids as the
 HIR source spine. Full pattern coverage is not a goal by itself; add unsupported
-pattern variants when an upper-phase consumer needs them. Block-local item links
-are still future work.
+pattern variants when an upper-phase consumer needs them.
+
+`Block`, `Stmt`, and `Local` currently remain source-spine anchors. As
+`lower::Body` grows enough to own body facts, those pre-lowered body nodes may
+shrink to source/scope linkage or disappear from non-diagnostic consumption
+paths.
 
 ## Current Lowering Roles
 
 Current generic predicate integration lives under `src/lower/` as HIR generics
-lowering. Future body/control-flow lowering and inference preprocessing should
-be added as HIR lowering layers while keeping source spine construction
-separate.
+lowering. `Hir` also owns `lower::Body`, which currently derives block
+statement order, tail expressions, and local binding/init facts from the source
+spine. Future control-flow lowering and inference preprocessing should be added
+as HIR lowering layers while keeping source spine construction separate.
 
 ## Current Test Coverage
 
@@ -99,7 +104,7 @@ source-expression ids, inline and file-backed module shape, struct and
 variant fields, variant discriminants, generic predicates, const generic
 arguments, associated const arguments, and simple `DefId` linking behavior.
 
-They still do not prove full HIR-native conversion for every pattern variant or
-block-local item statement because those rows remain intentionally partial.
-`Type`, `Block`, `Stmt`, `Local`, `Pat`, and `Expr` still expose AST payloads as
-the current source boundary.
+They still do not prove full HIR-native conversion for every pattern variant
+because that row remains intentionally partial. `Type`, `Block`, `Stmt`,
+`Local`, `Pat`, and `Expr` still expose AST payloads as the current source
+boundary.

@@ -1,9 +1,12 @@
+//! Logic rules and predicates for associated type projection solving.
+
+use super::atom::{def_id, term, type_id, var, LogicAtom, LogicClause, LogicTerm};
 use crate::{
     AssocTypeImplFact, ImplSelfMatch, ProjectionCandidate, ProjectionMatch, ProjectionObligation,
     TraitBoundFact, TypeBindingFact, TypeId, TypeSubstitution,
 };
-use logic_eval::{Clause, Expr, Term};
-use syn_sem_common::{CommonCx, InternedStr};
+use logic_eval::{Clause, Expr};
+use syn_sem_common::CommonCx;
 use syn_sem_name::DefId;
 
 // In examples below, `tyN` encodes `TypeId::new(N)` and `defN` encodes `DefId::new(N)`.
@@ -48,7 +51,9 @@ const VAR_VALUE: &str = "Value";
 /// * Output clause 1 - `projection_candidate($Projection, $Self, $Assoc, $Trait) :-
 ///   projection_obligation($Projection, $Self, $Assoc), trait_bound($Subject, $Trait),
 ///   same_type($Self, $Subject).`
-pub(super) fn projection_candidate_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 2] {
+pub(in crate::logic) fn projection_candidate_rules<'cx>(
+    ccx: &'cx CommonCx,
+) -> [LogicClause<'cx>; 2] {
     [
         Clause {
             head: projection_candidate(
@@ -98,7 +103,7 @@ pub(super) fn projection_candidate_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClaus
 /// * Output clause - `projection_match($Projection, $Self, $MemberAssoc, $Trait) :-
 ///   projection_candidate($Projection, $Self, $RequestedAssoc, $Trait),
 ///   trait_member($Trait, $RequestedAssoc, $MemberAssoc).`
-pub(super) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
+pub(in crate::logic) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
     [Clause {
         head: projection_match(
             ccx,
@@ -151,7 +156,9 @@ pub(super) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'c
 ///   same_type($Trait, $ImplTrait), impl_self_match($Self, $ImplSelf),
 ///   type_binding($Self, $ImplSelf, $Generic, $Arg),
 ///   type_substitution($Self, $ImplSelf, $Value, $Generic, $Arg, $Substituted).`
-pub(super) fn projection_normalization_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 2] {
+pub(in crate::logic) fn projection_normalization_rules<'cx>(
+    ccx: &'cx CommonCx,
+) -> [LogicClause<'cx>; 2] {
     [
         Clause {
             head: projection_normalizes_to(
@@ -253,7 +260,7 @@ pub(super) fn projection_normalization_rules<'cx>(ccx: &'cx CommonCx) -> [LogicC
 /// * Code - `<T>::Assoc`
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = None`
 /// * Output - `projection_obligation(ty0, ty1, def2).`
-pub(super) fn projection_obligation_clause<'cx>(
+pub(in crate::logic) fn projection_obligation_clause<'cx>(
     ccx: &'cx CommonCx,
     obligation: ProjectionObligation,
     self_ty: TypeId,
@@ -288,7 +295,7 @@ pub(super) fn projection_obligation_clause<'cx>(
 /// * Code - `T: Trait`
 /// * Input - `subject = ty0`, `trait_ty = ty1`
 /// * Output - `trait_bound(ty0, ty1).`
-pub(super) fn trait_bound_clause<'cx>(
+pub(in crate::logic) fn trait_bound_clause<'cx>(
     ccx: &'cx CommonCx,
     bound: TraitBoundFact,
 ) -> LogicClause<'cx> {
@@ -312,7 +319,7 @@ pub(super) fn trait_bound_clause<'cx>(
 /// * Code - `impl Iterator for Vec { type Item = u32; }`
 /// * Input - `impl_self_ty = ty0`, `trait_ty = ty1`, `assoc_type = def2`, `value_ty = ty3`
 /// * Output - `impl_assoc_type(ty0, ty1, def2, ty3).`
-pub(super) fn impl_assoc_type_clause<'cx>(
+pub(in crate::logic) fn impl_assoc_type_clause<'cx>(
     ccx: &'cx CommonCx,
     fact: AssocTypeImplFact,
 ) -> LogicClause<'cx> {
@@ -336,7 +343,7 @@ pub(super) fn impl_assoc_type_clause<'cx>(
 /// * Code - `<Vec<u32> as Iterator>::Item` matched against `impl<T> Iterator for Vec<T>`
 /// * Input - `projection_self_ty = ty0`, `impl_self_ty = ty1`
 /// * Output - `impl_self_match(ty0, ty1).`
-pub(super) fn impl_self_match_clause<'cx>(
+pub(in crate::logic) fn impl_self_match_clause<'cx>(
     ccx: &'cx CommonCx,
     match_: ImplSelfMatch,
 ) -> LogicClause<'cx> {
@@ -360,7 +367,7 @@ pub(super) fn impl_self_match_clause<'cx>(
 /// * Code - `<Vec<u32> as Iterator>::Item` matched against `impl<T> Iterator for Vec<T>`
 /// * Input - `projection_self_ty = ty0`, `impl_self_ty = ty1`, `generic_ty = ty2`, `arg_ty = ty3`
 /// * Output - `type_binding(ty0, ty1, ty2, ty3).`
-pub(super) fn type_binding_clause<'cx>(
+pub(in crate::logic) fn type_binding_clause<'cx>(
     ccx: &'cx CommonCx,
     binding: TypeBindingFact,
 ) -> LogicClause<'cx> {
@@ -389,7 +396,7 @@ pub(super) fn type_binding_clause<'cx>(
 /// * Input - `projection_self_ty = ty0`, `impl_self_ty = ty1`, `value_ty = ty2`,
 ///   `generic_ty = ty2`, `arg_ty = ty3`, `substituted_ty = ty3`
 /// * Output - `type_substitution(ty0, ty1, ty2, ty2, ty3, ty3).`
-pub(super) fn type_substitution_clause<'cx>(
+pub(in crate::logic) fn type_substitution_clause<'cx>(
     ccx: &'cx CommonCx,
     substitution: TypeSubstitution,
 ) -> LogicClause<'cx> {
@@ -417,7 +424,7 @@ pub(super) fn type_substitution_clause<'cx>(
 /// * Code - `<T>::Assoc` with candidate `Trait`
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`
 /// * Output - `projection_candidate(ty0, ty1, def2, ty3).`
-pub(super) fn projection_candidate_clause<'cx>(
+pub(in crate::logic) fn projection_candidate_clause<'cx>(
     ccx: &'cx CommonCx,
     candidate: ProjectionCandidate,
 ) -> LogicClause<'cx> {
@@ -443,7 +450,7 @@ pub(super) fn projection_candidate_clause<'cx>(
 /// * Code - `<T>::Assoc` matched against `Trait::Assoc`
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`
 /// * Output - `projection_match(ty0, ty1, def2, ty3).`
-pub(super) fn projection_match_clause<'cx>(
+pub(in crate::logic) fn projection_match_clause<'cx>(
     ccx: &'cx CommonCx,
     match_: ProjectionMatch,
 ) -> LogicClause<'cx> {
@@ -468,7 +475,7 @@ pub(super) fn projection_match_clause<'cx>(
 /// * Code - `trait Trait { type Assoc; }`
 /// * Input - `trait_ty = ty0`, `requested_assoc_type = def1`, `member_assoc_type = def2`
 /// * Output - `trait_member(ty0, def1, def2).`
-pub(super) fn trait_member_clause<'cx>(
+pub(in crate::logic) fn trait_member_clause<'cx>(
     ccx: &'cx CommonCx,
     trait_ty: TypeId,
     requested_assoc_type: DefId,
@@ -493,7 +500,7 @@ pub(super) fn trait_member_clause<'cx>(
 /// * Code - two lowered ids store the same type shape
 /// * Input - `left = ty0`, `right = ty1`
 /// * Output - `same_type(ty0, ty1).`
-pub(super) fn same_type_clause<'cx>(
+pub(in crate::logic) fn same_type_clause<'cx>(
     ccx: &'cx CommonCx,
     left: TypeId,
     right: TypeId,
@@ -514,7 +521,7 @@ pub(super) fn same_type_clause<'cx>(
 /// * Code - can `<T>::Assoc` use `Trait`?
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`
 /// * Output - `Expr::Term(projection_candidate(ty0, ty1, def2, ty3))`
-pub(super) fn projection_candidate_query<'cx>(
+pub(in crate::logic) fn projection_candidate_query<'cx>(
     ccx: &'cx CommonCx,
     projection: TypeId,
     self_ty: TypeId,
@@ -540,7 +547,7 @@ pub(super) fn projection_candidate_query<'cx>(
 /// * Code - can `<T>::Assoc` match `Trait::Assoc`?
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`
 /// * Output - `Expr::Term(projection_match(ty0, ty1, def2, ty3))`
-pub(super) fn projection_match_query<'cx>(
+pub(in crate::logic) fn projection_match_query<'cx>(
     ccx: &'cx CommonCx,
     projection: TypeId,
     self_ty: TypeId,
@@ -567,7 +574,7 @@ pub(super) fn projection_match_query<'cx>(
 /// * Code - can `<Vec as Iterator>::Item` normalize to `u32`?
 /// * Input - `projection = ty0`, `self_ty = ty1`, `assoc_type = def2`, `trait_ty = ty3`, `value_ty = ty4`
 /// * Output - `Expr::Term(projection_normalizes_to(ty0, ty1, def2, ty3, ty4))`
-pub(super) fn projection_normalization_query<'cx>(
+pub(in crate::logic) fn projection_normalization_query<'cx>(
     ccx: &'cx CommonCx,
     projection: TypeId,
     self_ty: TypeId,
@@ -862,53 +869,3 @@ fn same_type<'cx>(
 ) -> LogicTerm<'cx> {
     term(ccx, PRED_SAME_TYPE, vec![left, right])
 }
-
-/// * id - Inference type id to encode as a logic atom
-///
-/// # Examples
-///
-/// * Input - `id = TypeId::new(0)`
-/// * Output - `ty0`
-fn type_id<'cx>(ccx: &'cx CommonCx, id: TypeId) -> LogicTerm<'cx> {
-    let value = format!("ty{}", id.index());
-    atom(ccx, &value)
-}
-
-/// def-id atom.
-///
-/// * id - Name definition id to encode as a logic atom
-///
-/// # Examples
-///
-/// * Input - `id = DefId::new(2)`
-/// * Output - `def2`
-fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
-    let value = format!("def{}", id.index());
-    atom(ccx, &value)
-}
-
-/// * name - Logic variable name without `$`
-///
-/// # Examples
-///
-/// * Input - `name = "Self"`
-/// * Output - `$Self`
-fn var<'cx>(ccx: &'cx CommonCx, name: &str) -> LogicTerm<'cx> {
-    let value = format!("${name}");
-    atom(ccx, &value)
-}
-
-fn atom<'cx>(ccx: &'cx CommonCx, functor: &str) -> LogicTerm<'cx> {
-    term(ccx, functor, Vec::new())
-}
-
-fn term<'cx>(ccx: &'cx CommonCx, functor: &str, args: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
-    Term {
-        functor: ccx.intern(functor),
-        args,
-    }
-}
-
-pub(super) type LogicAtom<'cx> = InternedStr<'cx>;
-pub(super) type LogicTerm<'cx> = Term<LogicAtom<'cx>>;
-pub(super) type LogicClause<'cx> = Clause<LogicAtom<'cx>>;

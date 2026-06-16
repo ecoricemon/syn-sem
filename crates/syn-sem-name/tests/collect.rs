@@ -1,8 +1,8 @@
 use syn_sem_ast as ast;
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
-    collect::NameCollector, DefId, DefKind, Import, ImportKind, ImportStatus, Name, NameDb,
-    Namespace, ResolveResult, ScopeId, ScopeKind,
+    collect::NameCollector, AstNodeId, DefId, DefKind, Import, ImportKind, ImportStatus, Name,
+    NameDb, Namespace, ResolveResult, ScopeId, ScopeKind,
 };
 
 struct TestCx {
@@ -249,9 +249,20 @@ fn collects_import_declarations_from_use_trees() {
     let d = tcx.common.intern("d");
 
     assert_eq!(db.imports().len(), 3);
-    assert_eq!(import_for(&db, root, &[a, b]).kind, ImportKind::Single);
-    assert_eq!(import_for(&db, root, &[a, c]).kind, ImportKind::Rename(d));
-    assert_eq!(import_for(&db, root, &[a]).kind, ImportKind::Glob);
+    let single = import_for(&db, root, &[a, b]);
+    let renamed = import_for(&db, root, &[a, c]);
+    let glob = import_for(&db, root, &[a]);
+    assert_eq!(single.kind, ImportKind::Single);
+    assert_eq!(renamed.kind, ImportKind::Rename(d));
+    assert_eq!(glob.kind, ImportKind::Glob);
+
+    let ast::Item::Use(item) = &entry.file.items[0] else {
+        panic!("expected use item");
+    };
+    assert_eq!(
+        db.imports_for_ast_node(AstNodeId::from_ref(item)),
+        &[single.id, renamed.id, glob.id]
+    );
 }
 
 #[test]
@@ -505,6 +516,19 @@ fn keeps_function_generics_params_and_block_locals_in_separate_scopes() {
         }
         "#,
     );
+    let ast::Item::Fn(item) = &entry.file.items[0] else {
+        panic!("expected function item");
+    };
+    let block_node = AstNodeId::from_ref(&item.block);
+    let ast::Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
+        panic!("expected parameter ident pattern");
+    };
+    let ast::Stmt::Local(local) = &item.block.stmts[0] else {
+        panic!("expected local statement");
+    };
+    let ast::Pat::Ident(y_pat) = &local.pat else {
+        panic!("expected local ident pattern");
+    };
 
     let db = collect([entry], entry.file_path);
     let f = direct_binding(
@@ -518,6 +542,7 @@ fn keeps_function_generics_params_and_block_locals_in_separate_scopes() {
     let function_scope = db.def_body_scope(f).unwrap();
     let block_scope = scope(&db, ScopeKind::Block, 0);
 
+    assert_eq!(db.scope_for_ast_node(block_node), Some(block_scope));
     assert_eq!(
         direct_type_binding(&db, generic_scope, tcx.common.intern("T")).map(|def| db[def].kind),
         Some(DefKind::GenericType)
@@ -529,8 +554,18 @@ fn keeps_function_generics_params_and_block_locals_in_separate_scopes() {
         Some(DefKind::Local)
     );
     assert_eq!(
+        db.def_for_ast_node(AstNodeId::from_ref(x_pat))
+            .map(|def| db[def].kind),
+        Some(DefKind::Local)
+    );
+    assert_eq!(
         db.binding(block_scope, Namespace::Value, tcx.common.intern("y"))
             .and_then(|binding| binding.iter().next())
+            .map(|def| db[def].kind),
+        Some(DefKind::Local)
+    );
+    assert_eq!(
+        db.def_for_ast_node(AstNodeId::from_ref(y_pat))
             .map(|def| db[def].kind),
         Some(DefKind::Local)
     );

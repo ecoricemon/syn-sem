@@ -3,6 +3,8 @@
 pub enum AstNodeKind {
     /// Parsed source file node.
     File,
+    /// Braced source block node.
+    Block,
     /// Free item wrapper node.
     Item,
     /// Free const item payload node.
@@ -23,6 +25,8 @@ pub enum AstNodeKind {
     ItemType,
     /// Use item payload node.
     ItemUse,
+    /// Identifier binding pattern payload node.
+    PatIdent,
     /// Struct or union field node.
     Field,
     /// Enum variant node.
