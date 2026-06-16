@@ -82,11 +82,15 @@ pub enum Stmt {
 impl Stmt {
     fn from_hir_stmt(hir: &Hir<'_>, stmt: crate::StmtId) -> Self {
         match hir[stmt].kind {
-            crate::StmtKind::Local(local) => Self::Local(Local {
-                local,
-                bindings: collect_pat_bindings(hir, hir[local].pat),
-                init: hir[local].init,
-            }),
+            crate::StmtKind::Local(local) => {
+                let pat = hir[local].pat;
+                Self::Local(Local {
+                    local,
+                    pat,
+                    bindings: collect_pat_bindings(hir, pat),
+                    init: hir[local].init,
+                })
+            }
             crate::StmtKind::Item(item) => Self::Item(item),
             crate::StmtKind::Expr { expr, .. } => Self::Expr(expr),
         }
@@ -98,6 +102,8 @@ impl Stmt {
 pub struct Local {
     /// Source local id.
     pub local: LocalId,
+    /// Source pattern for this local binding.
+    pub pat: PatId,
     /// Local definitions introduced by this local's binding pattern, in source order.
     pub bindings: Vec<DefId>,
     /// Optional initializer expression.
@@ -197,6 +203,7 @@ mod tests {
             panic!("expected local, item, expr statement order");
         };
         assert!(block.tail_expr.is_some());
+        assert_eq!(local.pat, hir[local.local].pat);
         assert_eq!(local.bindings.len(), 2);
         assert!(local.init.is_some());
         assert!(local

@@ -1,8 +1,8 @@
 use std::ops::{Index, IndexMut};
 
 use crate::{
-    AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId, StmtId,
-    TypeId, VariantId,
+    lower, AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId,
+    StmtId, TypeId, VariantId,
 };
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, InternedStr};
@@ -23,7 +23,7 @@ pub struct Hir<'cx> {
     pats: Vec<Pat<'cx>>,
     exprs: Vec<Expr<'cx>>,
     types: Vec<Type<'cx>>,
-    body: crate::lower::Body,
+    body: lower::Body,
 }
 
 impl<'cx> Hir<'cx> {
@@ -41,9 +41,9 @@ impl<'cx> Hir<'cx> {
             pats: arena.pats,
             exprs: arena.exprs,
             types: arena.types,
-            body: crate::lower::Body::default(),
+            body: lower::Body::default(),
         };
-        hir.body = crate::lower::Body::from_hir(&hir);
+        hir.body = lower::Body::from_hir(&hir);
         hir
     }
 
@@ -108,7 +108,7 @@ impl<'cx> Hir<'cx> {
     }
 
     /// Returns lowered body facts derived from this HIR's source spine.
-    pub fn body(&self) -> &crate::lower::Body {
+    pub fn body(&self) -> &lower::Body {
         &self.body
     }
 }
@@ -698,7 +698,7 @@ pub struct Block<'cx> {
 /// One represented statement occurrence.
 ///
 /// This is currently a source-spine anchor. Statement order and lowered local/item/expression
-/// facts are expected to move behind [`crate::lower::Body`] as that model matures.
+/// facts are expected to move behind [`lower::Body`] as that model matures.
 #[derive(Debug)]
 pub struct Stmt<'cx> {
     /// Statement id in HIR.
@@ -730,7 +730,7 @@ pub enum StmtKind {
 /// One represented local `let` binding.
 ///
 /// This is currently a source-spine anchor. Lowered local facts such as binding definitions and
-/// initializer expressions are expected to live behind [`crate::lower::Local`] for upper phases.
+/// initializer expressions are expected to live behind [`lower::Local`] for upper phases.
 #[derive(Debug)]
 pub struct Local<'cx> {
     /// Local id in HIR.

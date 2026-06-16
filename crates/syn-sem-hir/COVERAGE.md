@@ -1,110 +1,76 @@
-# syn-sem-hir / HIR Coverage Matrix
+# syn-sem-hir Coverage
 
-This document tracks how the current HIR source spine covers the semantic AST
-surface supported by `syn-sem-ast`.
+## Keys
 
-`syn-sem-hir` owns HIR source spine construction plus HIR lowering for upper
-semantic phases. Many rows are intentionally "indexed with AST source" rather
-than fully HIR-native. Retained AST references are construction/source anchors
-for spans, diagnostics, and source mapping, not data later phases should inspect
-directly.
+- `Indexed`: stable HIR id exists.
+- `Native`: HIR-owned shape exists.
+- `Lowered`: `lower::*` fact exists.
+- `AST anchor`: retained `&ast::*` for source/diagnostics only.
+- `Partial`: selected facts only.
 
-## Status Legend
+## Summary
 
-- `Indexed`: HIR creates a stable id and records HIR-level links.
-- `AST source`: HIR keeps an explicit `&ast::...` source reference as an anchor.
-- `Partial`: HIR records only selected native facts.
-- `Missing`: no HIR entry is created yet.
+- Items: all supported `ast::Item` forms are `Indexed` + `Native`.
+- Associated items: all supported impl/trait associated item forms are `Indexed` + `Native`.
+- Declarations: signatures, fields, variants, generics, and visibility have HIR-native facts.
+- Types: all current `ast::Type` forms are `Indexed` + `Native` + `AST anchor`.
+- Bodies: blocks, statements, locals, patterns, and expressions are stable source-spine arenas.
+- Lowering: generic predicates and selected body facts are exposed through `lower::*`.
 
-## Items
+## Item Gaps
 
-| AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
-| --- | --- | --- | --- | --- |
-| `Item::Const` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Const { ty, init }` | None at item layer | Initializer is indexed as an `ExprId`. |
-| `Item::Enum` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Enum { generics, variants }` | None at item layer | Variants are separately indexed. Type parameter trait bounds are HIR-native. |
-| `Item::Fn` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Fn { generics, signature, block }` | None at item layer | Function body is a `BlockId`; signature input parameter patterns link to `PatId`s. |
-| `Item::Impl` | Indexed | `Item { name: None, visibility, def, parent_scope }`, `ItemKind::Impl { generics, trait_, self_ty, items }` | None at item layer | `trait_` is a HIR-native type path with generic arguments. Associated item def links are currently mostly absent because impl scope is not exposed through `DefScopes`. |
-| `Item::Mod` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Mod { is_inline, scope, items }` | None at item layer | Inline module children are indexed. File-backed module children are not represented by `HirBuilder::build` today. |
-| `Item::Struct` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Struct { generics, fields }` | None at item layer | Fields are separately indexed. Type parameter trait bounds are HIR-native. |
-| `Item::Trait` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Trait { generics, items }` | None at item layer | Associated item def links are currently mostly absent because trait scope is not exposed through `DefScopes`. |
-| `Item::Type` | Indexed | `Item { name, visibility, def, parent_scope }`, `ItemKind::Type { generics, ty }` | None at item layer | Alias target gets a `TypeId`. |
-| `Item::Use` | Indexed | `Item { visibility, parent_scope }`, `ItemKind::Use { imports }` | None at item layer | Import declarations link to `ImportId`s owned by `syn-sem-name`; resolved `DefKind::Use` aliases remain name-resolution facts. |
+- `Item::Mod`: inline children represented; file-backed module children are not built by `HirBuilder::build`.
+- `Item::Impl`: associated item `DefId` links depend on name-layer scope coverage.
+- `Item::Trait`: associated item `DefId` links depend on name-layer scope coverage.
+- `Item::Use`: imports link to `ImportId`; alias definitions and resolution stay in `syn-sem-name`.
+- Visibility: syntax shape is represented; semantic visibility stays in `syn-sem-name`.
 
-## Associated Items
+## Declaration Coverage
 
-| AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
-| --- | --- | --- | --- | --- |
-| `ImplItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplConst { ty, init }` | None at associated item layer | Initializer is indexed as an `ExprId`. |
-| `ImplItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplFn { signature, block }` | None at associated item layer | Function body is a `BlockId`. |
-| `ImplItem::Type` | Indexed | `AssocItem { name, def }`, `AssocItemKind::ImplType { ty }` | None at associated item layer | Assigned type gets a `TypeId`. |
-| `TraitItem::Const` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitConst { ty, default }` | None at associated item layer | Default expression, when present, is indexed as an `ExprId`. |
-| `TraitItem::Fn` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitFn { signature, default }` | None at associated item layer | Default block, when present, is a `BlockId`. |
-| `TraitItem::Type` | Indexed | `AssocItem { name, def }`, `AssocItemKind::TraitType { default }` | None at associated item layer | Default type, when present, gets a `TypeId`. |
+- `Signature`: output type is `params[0]`; input params link to `PatId`.
+- `Generics`: type params, const params, inline bounds, and where predicates are represented.
+- Generic predicate lowering: inline type bounds + source where predicates -> `WherePredicate`.
+- Unsupported generic params, bounds, predicates, and generic args remain explicit `Unsupported` variants.
 
-## Declarations Inside Items
+## Type Coverage
 
-| AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
-| --- | --- | --- | --- | --- |
-| `Signature` | Indexed | `Signature { source, params }`, `SignatureParam { ty, pat }` | None at signature layer | `params[0]` is the output type with no pattern; `params[1..]` are input parameters with `PatId`s. |
-| `Field` | Indexed | `Field { name, visibility, ty, source }` | None at field layer | Struct field visibility is HIR-native; variant fields use private visibility. |
-| `Variant` | Indexed | `Variant { name, def, fields, discriminant }` | None at variant layer | Variant payload fields are indexed; explicit discriminant is indexed as an `ExprId`. |
-| `Generics` | Indexed | `Generics { params, predicates }`, `GenericParam::{Type, Const, Unsupported}`, `WherePredicate::TypeBound`, `TypeParamBound::Trait` | None at item layer | Inline type parameter bounds are lowered into generic predicates alongside source where-clause predicates. |
-| `Visibility` | Partial | `Visibility::{Public, Restricted, Private}` on items and fields | Restricted paths are HIR-native segment lists | Semantic visibility interactions belong to name-resolution data. |
+- Covered type forms: array, infer, path, reference, slice, tuple.
+- Path type coverage: `QSelf`, full source path segments, generic args, assoc type args, assoc const args, constraints.
+- Const arg coverage: literal, path, expression.
+- Type roles: `TypeSource` tracks declaration role plus `Nested`.
+- Out of scope: semantic path classification and type resolution.
 
-## Types
+## Body Coverage
 
-| AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
-| --- | --- | --- | --- | --- |
-| `Type::Array` | Indexed | `Type { kind: TypeKind::Array { elem, len }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`; length is indexed as an `ExprId`. |
-| `Type::Infer` | Indexed | `Type { kind: TypeKind::Infer, scope }` | Retained source anchor only | Represents `_` without requiring later phases to inspect AST. |
-| `Type::Path` | Indexed | `Type { kind: TypeKind::Path, scope }` with optional qualified self type, segments, and generic argument shape | Retained source anchor only | Qualified self types link to nested `TypeId`s; type and associated-type generic arguments also link to nested `TypeId`s; associated type constraints keep HIR-native bounds; const args and associated consts use `ConstArg::{Lit, Path, Expr}`. |
-| `Type::Reference` | Indexed | `Type { kind: TypeKind::Reference { elem, is_mut }, scope }` | Retained source anchor only | Referenced type is indexed as `TypeSource::Nested`. |
-| `Type::Slice` | Indexed | `Type { kind: TypeKind::Slice { elem }, scope }` | Retained source anchor only | Element type is indexed as `TypeSource::Nested`. |
-| `Type::Tuple` | Indexed | `Type { kind: TypeKind::Tuple { elems }, scope }` | Retained source anchor only | Tuple element types are indexed as `TypeSource::Nested`. |
+- `Block`: source block id, statement order, scope, lowered tail expression.
+- `Stmt`: local, item, expression statement links.
+- `Local`: source local id, `pat: PatId`, `init: Option<ExprId>`, scope.
+- `lower::Body`: lowered blocks in source order.
+- `lower::Block`: lowered statements + `tail_expr`.
+- `lower::Local`: `local`, `pat`, introduced local `DefId`s, initializer.
 
-Current `TypeSource` roles are `ConstType`, `SignatureParam`,
-`ImplSelf`, `StructField`, `VariantField`, `TypeAlias`, `AssocConstType`,
-`AssocTypeValue`, `GenericParamDefault`, `ConstGenericParam`, and
-`WherePredicateSubject`; nested type
-entries use `Nested`.
+## Pattern Coverage
 
-## Blocks, Statements, Expressions, and Patterns
+- Supported: ident, reference, path, struct, tuple, type-annotated.
+- `PatKind::Ident`: stores binding `DefId` when name collection provides it.
+- Unsupported by design: literal, rest, slice, future forms.
+- Add unsupported pattern variants only when a consumer needs their structure.
 
-| AST surface | HIR coverage | Current HIR data | AST exposure | Notes |
-| --- | --- | --- | --- | --- |
-| Function block bodies | Indexed | `Block { scope, stmts }` linked directly from function-like owners; `lower::Block { stmts, tail_expr }` | Retained source anchor only | Block contents link to `StmtId`s in source order; lowered body facts identify tail expressions when the final expression has no semicolon. |
-| Const initializers | Indexed | `ExprId` links into the expression arena | Retained source anchor only | Includes free consts, impl consts, trait const defaults, and variant discriminants. |
-| `Stmt::{Local, Item, Expr}` | Indexed | `Stmt { kind, scope }` with `StmtKind::{Local, Item, Expr}` | Retained source anchor only | Local, block-local item, and expression statements link to `LocalId`, `ItemId`, and `ExprId`. |
-| `Local` and `LocalInit` | Partial | `Local { pat, init, scope }` | None at local layer | Local patterns link to `PatId`; local initializer expressions link to `ExprId`. |
-| `Pat` variants | Partial by design | `Pat { kind, scope }` with `PatKind::{Ident, Path, Struct, Reference, Tuple, Type, Unsupported}` | Retained source anchor only | Identifier patterns link to local `DefId`s; path, struct, reference, tuple, and type-annotated patterns are HIR-native; literal, rest, and slice patterns intentionally remain `Unsupported` until a consumer needs them. |
-| `Expr` variants | Indexed | `Expr { kind, scope }` plus child `ExprId`, `BlockId`, `SignatureId`, and `TypeId` links | Retained source anchor only | Operators are still source-anchored where the AST has not exposed a HIR-native operator kind. |
+## Expression Coverage
 
-Current expression, statement, local, and pattern entries use stable ids as the
-HIR source spine. Full pattern coverage is not a goal by itself; add unsupported
-pattern variants when an upper-phase consumer needs them.
+- Current expression forms are indexed as `ExprId` with HIR-native `ExprKind`.
+- Child links use `ExprId`, `BlockId`, `SignatureId`, and `TypeId`.
+- Operator payload remains source-anchored where AST has no HIR-native operator kind.
+- Method, field, path, and type resolution stay outside HIR.
 
-`Block`, `Stmt`, and `Local` currently remain source-spine anchors. As
-`lower::Body` grows enough to own body facts, those pre-lowered body nodes may
-shrink to source/scope linkage or disappear from non-diagnostic consumption
-paths.
+## AST Anchors
 
-## Current Lowering Roles
+- Retained on source-spine nodes for source mapping and diagnostics.
+- Not intended as semantic input for upper phases.
+- Non-diagnostic body consumers should prefer `lower::Body` facts.
 
-Current generic predicate integration lives under `src/lower/` as HIR generics
-lowering. `Hir` also owns `lower::Body`, which currently derives block
-statement order, tail expressions, and local binding/init facts from the source
-spine. Future control-flow lowering and inference preprocessing should be added
-as HIR lowering layers while keeping source spine construction separate.
+## Tests
 
-## Current Test Coverage
-
-Existing `syn-sem-hir` tests now cover the main source-spine rows in this matrix:
-supported item kinds, associated item kinds, `TypeSource` roles, block handles,
-source-expression ids, inline and file-backed module shape, struct and
-variant fields, variant discriminants, generic predicates, const generic
-arguments, associated const arguments, and simple `DefId` linking behavior.
-
-They still do not prove full HIR-native conversion for every pattern variant
-because that row remains intentionally partial. `Type`, `Block`, `Stmt`,
-`Local`, `Pat`, and `Expr` still expose AST payloads as the current source
-boundary.
+- Covered: item/associated item shapes, type roles, modules, fields, variants, generics, const args, associated args, simple `DefId` links.
+- Covered: block handles, expression ids, lowered statement order, lowered local bindings, lowered tail expressions.
+- Intentional gaps: full pattern coverage, AST-anchor removal, full control-flow lowering.
