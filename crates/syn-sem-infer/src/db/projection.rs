@@ -1,44 +1,39 @@
 //! Projection-specific facts and query helpers for inference.
 
 use crate::{
-    PathTypeResolution, ProjectionCandidate, ProjectionMatch, ProjectionNormalization,
-    ProjectionObligation, ProjectionType, TypeId,
+    ImplSelfMatch, PathTypeResolution, ProjectionType, Type, TypeBindingFact, TypeId,
+    TypeSubstitution,
 };
+use syn_sem_name::DefId;
 
 /// Associated type projection facts owned by inference.
+///
+/// A projection is the [`TypeId`] for the whole associated-type expression, such as
+/// `<T as Iterator>::Item`, `<Vec<u32> as Iterator>::Item`, or `T::Assoc`.
+///
+/// That type id does not name a nominal type directly. Instead, it means "the `Item` or `Assoc`
+/// type selected for this `Self` type, optionally through this trait." The solver records the
+/// whole projection, the `Self` type, the associated type definition, and any explicit trait type,
+/// then tries to normalize the projection to the value type from a matching impl.
 #[derive(Debug, Default)]
-pub struct ProjectionDb {
+pub(crate) struct ProjectionDb {
+    /// Projection type occurrences collected during lowering that still need solver work.
     pub(crate) obligations: Vec<ProjectionObligation>,
+    /// Candidate trait selections that may provide the requested associated type.
     pub(crate) candidates: Vec<ProjectionCandidate>,
+    /// Candidate projections matched against concrete associated type members on a trait.
     pub(crate) matches: Vec<ProjectionMatch>,
+    /// Impl self type matches used for projection normalization.
+    pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
+    /// Generic type bindings discovered from impl self type matches.
+    pub(crate) type_bindings: Vec<TypeBindingFact>,
+    /// Type substitutions used for projection normalization.
+    pub(crate) type_substitutions: Vec<TypeSubstitution>,
+    /// Matched projections rewritten to the value type assigned by an applicable impl.
     pub(crate) normalizations: Vec<ProjectionNormalization>,
 }
 
 impl ProjectionDb {
-    /// Returns associated type projections that still need solver work.
-    #[cfg(test)]
-    pub(crate) fn obligations(&self) -> &[ProjectionObligation] {
-        &self.obligations
-    }
-
-    /// Returns projection candidates derived from obligations and known trait bounds.
-    #[cfg(test)]
-    pub(crate) fn candidates(&self) -> &[ProjectionCandidate] {
-        &self.candidates
-    }
-
-    /// Returns projections matched against concrete associated type members.
-    #[cfg(test)]
-    pub(crate) fn matches(&self) -> &[ProjectionMatch] {
-        &self.matches
-    }
-
-    /// Returns projections normalized to impl-provided value types.
-    #[cfg(test)]
-    pub(crate) fn normalizations(&self) -> &[ProjectionNormalization] {
-        &self.normalizations
-    }
-
     /// Returns associated type projection metadata for a path resolution.
     pub fn projection<'a>(
         &self,
@@ -100,6 +95,85 @@ impl ProjectionDb {
         }
         ProjectionNormalizationResult::Known(value_ty)
     }
+}
+
+pub(super) struct ProjectionCollector;
+
+impl ProjectionCollector {
+    pub(super) fn collect(types: &[Type<'_>]) -> ProjectionDb {
+        let mut projections = ProjectionDb::default();
+
+        for (index, ty) in types.iter().enumerate() {
+            let Type::Path(path) = ty else {
+                continue;
+            };
+            let PathTypeResolution::Projection(projection) = &path.resolution else {
+                continue;
+            };
+            projections.obligations.push(ProjectionObligation {
+                projection: TypeId::new(index),
+                assoc_type: projection.assoc_type,
+                self_ty: projection.self_ty,
+                trait_ty: projection.trait_ty,
+            });
+        }
+
+        projections
+    }
+}
+
+/// Associated type projection that needs solver work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectionObligation {
+    /// Type occurrence whose value is the projection result.
+    pub(crate) projection: TypeId,
+    /// Associated type definition selected by name lookup.
+    pub(crate) assoc_type: DefId,
+    /// Self type for the projection, when represented.
+    pub(crate) self_ty: Option<TypeId>,
+    /// Trait type for the projection, when represented.
+    pub(crate) trait_ty: Option<TypeId>,
+}
+
+/// Candidate trait selected for an associated type projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectionCandidate {
+    /// Type occurrence whose value is the projection result.
+    pub(crate) projection: TypeId,
+    /// Self type for the projection.
+    pub(crate) self_ty: TypeId,
+    /// Associated type definition selected by name lookup.
+    pub(crate) assoc_type: DefId,
+    /// Candidate trait type that may provide the associated type.
+    pub(crate) trait_ty: TypeId,
+}
+
+/// Associated type projection matched against a concrete trait member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectionMatch {
+    /// Type occurrence whose value is the projection result.
+    pub(crate) projection: TypeId,
+    /// Self type for the projection.
+    pub(crate) self_ty: TypeId,
+    /// Associated type member found in the candidate trait.
+    pub(crate) assoc_type: DefId,
+    /// Trait type that provides the associated type member.
+    pub(crate) trait_ty: TypeId,
+}
+
+/// Associated type projection normalized to an impl-provided value type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectionNormalization {
+    /// Type occurrence whose value is the projection result.
+    pub(crate) projection: TypeId,
+    /// Self type for the projection.
+    pub(crate) self_ty: TypeId,
+    /// Associated type member used for normalization.
+    pub(crate) assoc_type: DefId,
+    /// Trait type that provides the associated type member.
+    pub(crate) trait_ty: TypeId,
+    /// Type assigned by the matching impl item.
+    pub(crate) value_ty: TypeId,
 }
 
 /// Result of asking whether one projection type can normalize to a value type.
