@@ -21,19 +21,54 @@ impl<'cx> NameDb<'cx> {
         ScopeId::new(0)
     }
 
-    /// Returns all scopes.
-    pub fn scopes(&self) -> &[Scope<'cx>] {
-        &self.scopes
+    /// Returns scopes with `kind`.
+    pub fn scopes_with_kind(&self, kind: ScopeKind) -> impl Iterator<Item = ScopeId> + '_ {
+        self.scopes
+            .iter()
+            .filter(move |scope| scope.kind == kind)
+            .map(|scope| scope.id)
     }
 
-    /// Returns all definitions.
-    pub fn defs(&self) -> &[Def<'cx>] {
-        &self.defs
+    /// Returns child scopes under `parent` with `kind`.
+    pub fn child_scopes(
+        &self,
+        parent: ScopeId,
+        kind: ScopeKind,
+    ) -> impl Iterator<Item = ScopeId> + '_ {
+        self.scopes
+            .iter()
+            .filter(move |scope| scope.parent == Some(parent) && scope.kind == kind)
+            .map(|scope| scope.id)
     }
 
-    /// Returns all imports.
-    pub fn imports(&self) -> &[Import<'cx>] {
-        &self.imports
+    /// Returns definitions with `kind`.
+    pub fn defs_with_kind(&self, kind: DefKind) -> impl Iterator<Item = DefId> + '_ {
+        self.defs
+            .iter()
+            .filter(move |def| def.kind == kind)
+            .map(|def| def.id)
+    }
+
+    /// Returns the number of collected imports.
+    pub fn import_count(&self) -> usize {
+        self.imports.len()
+    }
+
+    /// Returns all collected imports by id.
+    pub fn import_ids(&self) -> impl ExactSizeIterator<Item = ImportId> + '_ {
+        (0..self.imports.len()).map(ImportId::new)
+    }
+
+    /// Returns imports in `scope` with `source_path`.
+    pub fn imports_matching<'a>(
+        &'a self,
+        scope: ScopeId,
+        source_path: &'a [Name<'cx>],
+    ) -> impl Iterator<Item = ImportId> + 'a {
+        self.imports
+            .iter()
+            .filter(move |import| import.scope == scope && import.source_path == source_path)
+            .map(|import| import.id)
     }
 
     /// Returns imports created from `node`.
@@ -1301,9 +1336,8 @@ mod tests {
             db.resolve_imports();
 
             assert!(db
-                .imports()
-                .iter()
-                .all(|import| import.status == ImportStatus::Resolved));
+                .import_ids()
+                .all(|import| db[import].status == ImportStatus::Resolved));
             assert_eq!(
                 target_kind(&db, b_scope, Namespace::Type, s),
                 DefKind::Struct
@@ -1364,8 +1398,8 @@ mod tests {
 
             db.resolve_imports();
 
-            assert_eq!(db.imports()[0].status, ImportStatus::Ambiguous);
-            assert_eq!(db.imports()[1].status, ImportStatus::NotFound);
+            assert_eq!(db[ImportId::new(0)].status, ImportStatus::Ambiguous);
+            assert_eq!(db[ImportId::new(1)].status, ImportStatus::NotFound);
             assert_eq!(
                 db.resolve_lexical(b_scope, Namespace::Type, self_name),
                 ResolveResult::NotFound
@@ -1447,9 +1481,8 @@ mod tests {
             db.resolve_imports();
 
             assert!(db
-                .imports()
-                .iter()
-                .all(|import| import.status == ImportStatus::Resolved));
+                .import_ids()
+                .all(|import| db[import].status == ImportStatus::Resolved));
             assert_eq!(
                 target_kind(&db, c_scope, Namespace::Type, public),
                 DefKind::Struct
@@ -1538,7 +1571,7 @@ mod tests {
                 panic!("expected imported globs to make {x:?} ambiguous");
             };
             assert_eq!(defs.len(), 2);
-            assert_eq!(db.imports()[2].status, ImportStatus::NotFound);
+            assert_eq!(db[ImportId::new(2)].status, ImportStatus::NotFound);
         }
 
         // Covers imports from this module shape:

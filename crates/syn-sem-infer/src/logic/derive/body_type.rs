@@ -6,38 +6,44 @@ use syn_sem_common::CommonCx;
 
 use crate::logic::term;
 
-pub(super) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>) {
-    let mut logic = BodyTypeLogic::new(ccx, db);
-    logic.load_body_type_facts();
+/// Uses [`BodyTypeLogic`] to resolve body-local equality subjects, then stores the derived concrete
+/// type facts in [`InferDb`].
+pub(super) struct BodyTypeDeriver<'a, 'cx> {
+    ccx: &'cx CommonCx,
+    db: &'a mut InferDb<'cx>,
+}
 
-    let subjects = body_type_subjects(db);
-    let mut resolved = Vec::new();
-    for subject in subjects {
-        for ty in logic.resolved_types(subject) {
-            let fact = ResolvedTypeFact { subject, ty };
-            if !resolved.contains(&fact) {
-                resolved.push(fact);
-            }
-        }
+impl<'a, 'cx> BodyTypeDeriver<'a, 'cx> {
+    pub(super) fn new(ccx: &'cx CommonCx, db: &'a mut InferDb<'cx>) -> Self {
+        Self { ccx, db }
     }
 
-    for fact in &resolved {
-        match fact.subject {
-            TypeSubject::Def(def) => {
-                db.def_types.entry(def).or_insert(fact.ty);
-            }
-            TypeSubject::Expr(expr) => {
-                db.hir_expr_types.entry(expr).or_insert(fact.ty);
-            }
-            TypeSubject::Type(_) => {}
-        }
+    pub(super) fn derive(&mut self) {
+        let resolved = self.derive_resolved_type_facts();
+        self.db.body_types.extend_resolved(resolved);
     }
-    db.resolved_type_facts.extend(resolved);
+
+    fn derive_resolved_type_facts(&mut self) -> Vec<ResolvedTypeFact> {
+        let mut logic = BodyTypeLogic::new(self.ccx, self.db);
+        logic.load_body_type_facts();
+
+        let subjects = body_type_subjects(self.db);
+        let mut resolved = Vec::new();
+        for subject in subjects {
+            for ty in logic.resolved_types(subject) {
+                let fact = ResolvedTypeFact { subject, ty };
+                if !resolved.contains(&fact) {
+                    resolved.push(fact);
+                }
+            }
+        }
+        resolved
+    }
 }
 
 fn body_type_subjects(db: &InferDb<'_>) -> Vec<TypeSubject> {
     let mut subjects = Vec::new();
-    for fact in &db.type_equal_facts {
+    for fact in &db.body_types.equalities {
         if !subjects.contains(&fact.left) {
             subjects.push(fact.left);
         }
@@ -48,6 +54,12 @@ fn body_type_subjects(db: &InferDb<'_>) -> Vec<TypeSubject> {
     subjects
 }
 
+/// Performs body type logic operations:
+///
+/// * Loads equality rules
+/// * Loads body-local type equality facts
+/// * Loads known concrete inference types
+/// * Queries concrete types resolved for a body-local subject
 struct BodyTypeLogic<'a, 'cx> {
     ccx: &'cx CommonCx,
     infer: &'a InferDb<'cx>,
@@ -67,7 +79,7 @@ impl<'a, 'cx> BodyTypeLogic<'a, 'cx> {
         for clause in term::body_type_rules(self.ccx) {
             self.insert_clause(clause);
         }
-        for fact in &self.infer.type_equal_facts {
+        for fact in &self.infer.body_types.equalities {
             self.insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
         for (index, ty) in self.infer.types.iter().enumerate() {

@@ -1,31 +1,39 @@
 //! Logic-backed associated type projection derivation.
 
 use crate::{
-    GenericArgument, ImplSelfMatch, InferDb, PathType, PathTypeResolution, ProjectionCandidate,
-    ProjectionMatch, ProjectionNormalization, Type, TypeBindingFact, TypeId, TypeSubstitution,
+    logic::term, GenericArgument, ImplSelfMatch, InferDb, PathType, PathTypeResolution,
+    ProjectionCandidate, ProjectionMatch, ProjectionNormalization, Type, TypeBindingFact, TypeId,
+    TypeSubstitution,
 };
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult};
 
-use crate::logic::term;
-
-pub(super) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &NameDb<'cx>) {
-    let mut logic = LogicCx { ccx, db, names };
-    logic.derive_projection_candidates();
-    logic.derive_projection_matches();
-    logic.derive_impl_self_matches();
-    logic.derive_type_substitutions();
-    logic.derive_projection_normalizations();
-}
-
-struct LogicCx<'a, 'cx> {
+/// Uses [`ProjectionLogic`] at each solver-backed step, then stores the derived projection facts in
+/// [`InferDb`].
+pub(super) struct ProjectionDeriver<'a, 'cx> {
     ccx: &'cx CommonCx,
     db: &'a mut InferDb<'cx>,
     names: &'a NameDb<'cx>,
 }
 
-impl<'a, 'cx> LogicCx<'a, 'cx> {
+impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
+    pub(super) fn new(
+        ccx: &'cx CommonCx,
+        db: &'a mut InferDb<'cx>,
+        names: &'a NameDb<'cx>,
+    ) -> Self {
+        Self { ccx, db, names }
+    }
+
+    pub(super) fn derive(&mut self) {
+        self.derive_projection_candidates();
+        self.derive_projection_matches();
+        self.derive_impl_self_matches();
+        self.derive_type_substitutions();
+        self.derive_projection_normalizations();
+    }
+
     fn derive_projection_candidates(&mut self) {
         let mut logic = ProjectionLogic::new(self.ccx, self.db);
         logic.load_projection_candidates();
@@ -131,13 +139,16 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 }
             }
         }
-        self.db.impl_self_matches.extend(impl_self_matches);
-        self.db.type_binding_facts.extend(type_bindings);
+        self.db
+            .projections
+            .impl_self_matches
+            .extend(impl_self_matches);
+        self.db.projections.type_bindings.extend(type_bindings);
     }
 
     fn derive_type_substitutions(&mut self) {
         let impl_facts = self.db.assoc_type_impl_facts.clone();
-        let bindings = self.db.type_binding_facts.clone();
+        let bindings = self.db.projections.type_bindings.clone();
         let mut substitutions = Vec::new();
         for impl_fact in impl_facts {
             let mut contexts = Vec::new();
@@ -180,7 +191,7 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
                 }
             }
         }
-        self.db.type_substitutions.extend(substitutions);
+        self.db.projections.type_substitutions.extend(substitutions);
     }
 
     fn derive_projection_normalizations(&mut self) {
@@ -188,7 +199,7 @@ impl<'a, 'cx> LogicCx<'a, 'cx> {
         logic.load_projection_normalizations();
         let matches = self.db.projections.matches.clone();
         let impl_facts = self.db.assoc_type_impl_facts.clone();
-        let substitutions = self.db.type_substitutions.clone();
+        let substitutions = self.db.projections.type_substitutions.clone();
         let mut normalizations = Vec::new();
         for projection_match in matches {
             for impl_fact in &impl_facts {
@@ -569,6 +580,12 @@ impl TraitMember {
     }
 }
 
+/// Performs projection logic operations:
+///
+/// * Loads candidate, match, or normalization rules
+/// * Loads projection and trait facts needed by the selected rule set
+/// * Loads Rust-side matching and substitution facts
+/// * Queries candidate, match, and normalization predicates
 struct ProjectionLogic<'a, 'cx> {
     ccx: &'cx CommonCx,
     infer: &'a InferDb<'cx>,
@@ -693,19 +710,19 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_impl_self_matches(&mut self) {
-        for match_ in &self.infer.impl_self_matches {
+        for match_ in &self.infer.projections.impl_self_matches {
             self.insert_clause(term::impl_self_match_clause(self.ccx, *match_));
         }
     }
 
     fn insert_type_binding_facts(&mut self) {
-        for binding in &self.infer.type_binding_facts {
+        for binding in &self.infer.projections.type_bindings {
             self.insert_clause(term::type_binding_clause(self.ccx, *binding));
         }
     }
 
     fn insert_type_substitutions(&mut self) {
-        for substitution in &self.infer.type_substitutions {
+        for substitution in &self.infer.projections.type_substitutions {
             self.insert_clause(term::type_substitution_clause(self.ccx, *substitution));
         }
     }

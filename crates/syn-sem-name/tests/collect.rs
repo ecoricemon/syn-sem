@@ -1,7 +1,7 @@
 use syn_sem_ast as ast;
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
-    collect::NameCollector, AstNodeId, DefId, DefKind, Import, ImportKind, ImportStatus, Name,
+    collect::NameCollector, AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name,
     NameDb, Namespace, ResolveResult, ScopeId, ScopeKind,
 };
 
@@ -68,20 +68,11 @@ fn direct_binding<'cx>(
 }
 
 fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
-    db.scopes()
-        .iter()
-        .filter(|scope| scope.kind == kind)
-        .nth(nth)
-        .unwrap()
-        .id
+    db.scopes_with_kind(kind).nth(nth).unwrap()
 }
 
 fn unique_child_scope(db: &NameDb<'_>, parent: ScopeId, kind: ScopeKind) -> ScopeId {
-    let mut scopes = db
-        .scopes()
-        .iter()
-        .filter(|scope| scope.parent == Some(parent) && scope.kind == kind)
-        .map(|scope| scope.id);
+    let mut scopes = db.child_scopes(parent, kind);
     let scope = scopes.next().unwrap();
     assert!(
         scopes.next().is_none(),
@@ -91,11 +82,7 @@ fn unique_child_scope(db: &NameDb<'_>, parent: ScopeId, kind: ScopeKind) -> Scop
 }
 
 fn single_def(db: &NameDb<'_>, kind: DefKind) -> DefId {
-    let mut defs = db
-        .defs()
-        .iter()
-        .filter(|def| def.kind == kind)
-        .map(|def| def.id);
+    let mut defs = db.defs_with_kind(kind);
     let def = defs.next().unwrap();
     assert!(defs.next().is_none(), "expected exactly one {kind:?} def");
     def
@@ -107,15 +94,8 @@ fn module_scope<'cx>(db: &NameDb<'cx>, parent: ScopeId, name: Name<'cx>) -> Scop
     db.def_path_scope(def).unwrap()
 }
 
-fn import_for<'a, 'cx>(
-    db: &'a NameDb<'cx>,
-    scope: ScopeId,
-    source_path: &[Name<'cx>],
-) -> &'a Import<'cx> {
-    let mut imports = db
-        .imports()
-        .iter()
-        .filter(|import| import.scope == scope && import.source_path == source_path);
+fn import_for<'cx>(db: &NameDb<'cx>, scope: ScopeId, source_path: &[Name<'cx>]) -> ImportId {
+    let mut imports = db.imports_matching(scope, source_path);
     let import = imports.next().unwrap();
     assert!(
         imports.next().is_none(),
@@ -248,20 +228,20 @@ fn collects_import_declarations_from_use_trees() {
     let c = tcx.common.intern("c");
     let d = tcx.common.intern("d");
 
-    assert_eq!(db.imports().len(), 3);
+    assert_eq!(db.import_count(), 3);
     let single = import_for(&db, root, &[a, b]);
     let renamed = import_for(&db, root, &[a, c]);
     let glob = import_for(&db, root, &[a]);
-    assert_eq!(single.kind, ImportKind::Single);
-    assert_eq!(renamed.kind, ImportKind::Rename(d));
-    assert_eq!(glob.kind, ImportKind::Glob);
+    assert_eq!(db[single].kind, ImportKind::Single);
+    assert_eq!(db[renamed].kind, ImportKind::Rename(d));
+    assert_eq!(db[glob].kind, ImportKind::Glob);
 
     let ast::Item::Use(item) = &entry.file.items[0] else {
         panic!("expected use item");
     };
     assert_eq!(
         db.imports_for_ast_node(AstNodeId::from_ref(item)),
-        &[single.id, renamed.id, glob.id]
+        &[single, renamed, glob]
     );
 }
 
@@ -335,7 +315,7 @@ fn applies_restricted_visibility_to_imports() {
             tcx.common.intern("InA"),
         ],
     );
-    assert_eq!(import.status, ImportStatus::NotFound);
+    assert_eq!(db[import].status, ImportStatus::NotFound);
 }
 
 #[test]

@@ -588,11 +588,9 @@ impl<'cx> NameCollector<'cx> {
     /// ```
     fn collect_use(&mut self, scope: ScopeId, item: &'cx ast::ItemUse<'cx>) {
         let visibility = self.visibility_from_ast(scope, &item.vis);
-        let start = self.db.imports().len();
+        let start = self.db.import_count();
         self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
-        let imports = (start..self.db.imports().len())
-            .map(ImportId::new)
-            .collect();
+        let imports = (start..self.db.import_count()).map(ImportId::new).collect();
         self.db
             .set_imports_ast_node(AstNodeId::from_ref(item), imports);
     }

@@ -157,12 +157,7 @@ fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, source_text: SourceText<'cx>) -
 }
 
 fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
-    db.scopes()
-        .iter()
-        .filter(|scope| scope.kind == kind)
-        .nth(nth)
-        .unwrap()
-        .id
+    db.scopes_with_kind(kind).nth(nth).unwrap()
 }
 
 fn expect_def<'cx>(

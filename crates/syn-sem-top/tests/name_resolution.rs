@@ -18,9 +18,8 @@ fn resolves_imports_from_physical_module_files() {
     let root = db.root_scope();
 
     assert!(db
-        .imports()
-        .iter()
-        .all(|import| import.status == ImportStatus::Resolved));
+        .import_ids()
+        .all(|import| db[import].status == ImportStatus::Resolved));
 
     assert_eq!(
         resolve_kind(&tcx, db, root, Namespace::Type, "b1"),

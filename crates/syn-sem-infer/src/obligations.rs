@@ -2,20 +2,10 @@ use crate::TypeId;
 use syn_sem_hir as hir;
 use syn_sem_name::DefId;
 
-/// Associated type projection that needs solver work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionObligation {
-    /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
-    /// Associated type definition selected by name lookup.
-    pub(crate) assoc_type: DefId,
-    /// Self type for the projection, when represented.
-    pub(crate) self_ty: Option<TypeId>,
-    /// Trait type for the projection, when represented.
-    pub(crate) trait_ty: Option<TypeId>,
-}
-
-/// Trait bound fact collected as solver input.
+/// One trait bound fact collected as solver input.
+///
+/// A type-bound predicate can contain multiple bounds, such as `T: Debug + Clone`;
+/// inference flattens that into one fact per trait bound, e.g. `T: Debug` and `T: Clone`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TraitBoundFact {
     /// Type constrained by the trait bound.
@@ -125,45 +115,4 @@ pub(crate) struct TypeSubstitution {
     pub(crate) arg_ty: TypeId,
     /// Type after substitution, such as `u32`.
     pub(crate) substituted_ty: TypeId,
-}
-
-/// Candidate trait selected for an associated type projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionCandidate {
-    /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
-    /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
-    /// Associated type definition selected by name lookup.
-    pub(crate) assoc_type: DefId,
-    /// Candidate trait type that may provide the associated type.
-    pub(crate) trait_ty: TypeId,
-}
-
-/// Associated type projection matched against a concrete trait member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionMatch {
-    /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
-    /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
-    /// Associated type member found in the candidate trait.
-    pub(crate) assoc_type: DefId,
-    /// Trait type that provides the associated type member.
-    pub(crate) trait_ty: TypeId,
-}
-
-/// Associated type projection normalized to an impl-provided value type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionNormalization {
-    /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
-    /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
-    /// Associated type member used for normalization.
-    pub(crate) assoc_type: DefId,
-    /// Trait type that provides the associated type member.
-    pub(crate) trait_ty: TypeId,
-    /// Type assigned by the matching impl item.
-    pub(crate) value_ty: TypeId,
 }

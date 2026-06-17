@@ -8,6 +8,6 @@ use syn_sem_common::CommonCx;
 use syn_sem_name::NameDb;
 
 pub(crate) fn derive<'cx>(ccx: &'cx CommonCx, db: &mut InferDb<'cx>, names: &NameDb<'cx>) {
-    projection::derive(ccx, db, names);
-    body_type::derive(ccx, db);
+    projection::ProjectionDeriver::new(ccx, db, names).derive();
+    body_type::BodyTypeDeriver::new(ccx, db).derive();
 }
