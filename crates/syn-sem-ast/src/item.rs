@@ -790,21 +790,20 @@ pub struct Signature<'cx> {
     /// Generic parameters and where-clause.
     pub generics: Generics<'cx>,
     /// Return parameter followed by input parameters.
-    pub params: &'cx [Parameter<'cx>],
+    pub params: &'cx [Param<'cx>],
     /// Source span of the signature.
     pub span: Span<'cx>,
 }
 
 impl<'cx> FromSyn<'cx, syn::Signature> for Signature<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Signature>) -> Self {
-        let output =
-            Parameter::from_return_type(scx, desc.with_input(&desc.input.output), ParameterCx::Fn);
+        let output = Param::from_return_type(scx, desc.with_input(&desc.input.output), ParamCx::Fn);
         let output = iter::once(output);
         let inputs = desc
             .input
             .inputs
             .iter()
-            .map(|arg| Parameter::from_syn(scx, desc.with_input(arg)));
+            .map(|arg| Param::from_syn(scx, desc.with_input(arg)));
         let mut params = output.chain(inputs);
         let len = desc.input.inputs.len() + 1;
 
@@ -821,27 +820,27 @@ impl<'cx> FromSyn<'cx, syn::Signature> for Signature<'cx> {
 ///
 /// For example, `x: i32` in `fn f(x: i32)`, or the return type in `fn f() -> i32`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct Parameter<'cx> {
+pub struct Param<'cx> {
     /// Pattern and type for the parameter.
     pub pat: PatType<'cx>,
     /// Source span of the parameter.
     pub span: Span<'cx>,
 }
 
-impl<'cx> Parameter<'cx> {
+impl<'cx> Param<'cx> {
     /// Creates a parameter with the ident `0`.
     pub fn from_return_type(
         scx: &'cx SyntaxCx<'cx>,
         desc: InputDesc<'cx, '_, syn::ReturnType>,
-        parameter_cx: ParameterCx,
+        param_cx: ParamCx,
     ) -> Self {
         const IDENT: u32 = 0;
 
         let span = desc.span(desc.input);
         let ty = match desc.input {
-            syn::ReturnType::Default => match parameter_cx {
-                ParameterCx::Fn => Type::unit(span),
-                ParameterCx::Closure => Type::Infer(span),
+            syn::ReturnType::Default => match param_cx {
+                ParamCx::Fn => Type::unit(span),
+                ParamCx::Closure => Type::Infer(span),
             },
             syn::ReturnType::Type(_, ty) => Type::from_syn(scx, desc.with_input(ty)),
         };
@@ -871,7 +870,7 @@ impl<'cx> Parameter<'cx> {
     }
 }
 
-impl<'cx> FromSyn<'cx, syn::FnArg> for Parameter<'cx> {
+impl<'cx> FromSyn<'cx, syn::FnArg> for Param<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::FnArg>) -> Self {
         let span = desc.span(desc.input);
         let pat = match desc.input {
@@ -886,7 +885,7 @@ impl<'cx> FromSyn<'cx, syn::FnArg> for Parameter<'cx> {
 ///
 /// For example, functions default to `()` while closures can default to an inferred type.
 #[derive(PartialEq, Eq)]
-pub enum ParameterCx {
+pub enum ParamCx {
     /// Function return parameter context.
     Fn,
     /// Closure return parameter context.

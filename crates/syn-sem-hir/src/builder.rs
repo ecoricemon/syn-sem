@@ -168,9 +168,9 @@ impl<'cx> HirArenaBuilder<'cx> {
         self.types.reserve()
     }
 
-    fn fill_type(&mut self, id: TypeId, ty: Type<'cx>) {
-        assert_eq!(id, ty.id);
-        self.types.fill(id, ty);
+    fn fill_type(&mut self, tid: TypeId, ty: Type<'cx>) {
+        assert_eq!(tid, ty.tid);
+        self.types.fill(tid, ty);
     }
 }
 
@@ -290,9 +290,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         let type_scope = self.type_scope_for_def(def, parent_scope);
         match item {
             ast::Item::Const(item) => {
-                let ty = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
+                let tid = self.collect_type(item.ty, type_scope, TypeSource::ConstType);
                 let init = self.collect_expr(item.init, type_scope);
-                ItemKind::Const { ty, init }
+                ItemKind::Const { tid, init }
             }
             ast::Item::Enum(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
@@ -319,7 +319,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             }
             ast::Item::Impl(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
-                let self_ty = self.collect_type(item.self_ty, type_scope, TypeSource::ImplSelf);
+                let self_tid = self.collect_type(item.self_ty, type_scope, TypeSource::ImplSelf);
                 let trait_ = item
                     .trait_
                     .as_ref()
@@ -332,7 +332,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 ItemKind::Impl {
                     generics,
                     trait_,
-                    self_ty,
+                    self_tid,
                     items,
                 }
             }
@@ -364,8 +364,8 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             }
             ast::Item::Type(item) => {
                 let generics = self.collect_generics(&item.generics, type_scope);
-                let ty = self.collect_type(item.ty, type_scope, TypeSource::TypeAlias);
-                ItemKind::Type { generics, ty }
+                let tid = self.collect_type(item.ty, type_scope, TypeSource::TypeAlias);
+                ItemKind::Type { generics, tid }
             }
             ast::Item::Use(item) => ItemKind::Use {
                 imports: self
@@ -382,14 +382,14 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> FieldId {
         let id = self.hir.reserve_field();
-        let ty = self.collect_type(&field.ty, scope, TypeSource::StructField);
+        let tid = self.collect_type(&field.ty, scope, TypeSource::StructField);
         self.hir.fill_field(
             id,
             Field {
                 id,
                 name: field.ident.inner,
                 visibility: Visibility::from_ast(&field.vis),
-                ty,
+                tid,
                 source: FieldSource::Struct,
             },
         );
@@ -436,14 +436,14 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> FieldId {
         let id = self.hir.reserve_field();
-        let ty = self.collect_type(&field.ty, scope, TypeSource::VariantField);
+        let tid = self.collect_type(&field.ty, scope, TypeSource::VariantField);
         self.hir.fill_field(
             id,
             Field {
                 id,
                 name: field.ident.inner,
                 visibility: Visibility::Private,
-                ty,
+                tid,
                 source: FieldSource::Variant,
             },
         );
@@ -460,9 +460,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::ImplItem::Const(item) => {
-                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
+                let tid = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
                 let init = self.collect_expr(item.init, type_scope);
-                AssocItemKind::ImplConst { ty, init }
+                AssocItemKind::ImplConst { tid, init }
             }
             ast::ImplItem::Fn(item) => {
                 let signature =
@@ -474,8 +474,8 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::ImplFn { signature, block }
             }
             ast::ImplItem::Type(item) => {
-                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocTypeValue);
-                AssocItemKind::ImplType { ty }
+                let tid = self.collect_type(item.ty, type_scope, TypeSource::AssocTypeValue);
+                AssocItemKind::ImplType { tid }
             }
         };
         self.hir.fill_assoc_item(
@@ -500,9 +500,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::TraitItem::Const(item) => {
-                let ty = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
+                let tid = self.collect_type(item.ty, type_scope, TypeSource::AssocConstType);
                 let default = item.default.map(|expr| self.collect_expr(expr, type_scope));
-                AssocItemKind::TraitConst { ty, default }
+                AssocItemKind::TraitConst { tid, default }
             }
             ast::TraitItem::Fn(item) => {
                 let signature =
@@ -513,10 +513,10 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::TraitFn { signature, default }
             }
             ast::TraitItem::Type(item) => {
-                let default = item
+                let default_tid = item
                     .default
                     .map(|ty| self.collect_type(ty, type_scope, TypeSource::AssocTypeValue));
-                AssocItemKind::TraitType { default }
+                AssocItemKind::TraitType { default_tid }
             }
         };
         self.hir.fill_assoc_item(
@@ -543,7 +543,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     fn collect_signature_params(
         &mut self,
         source: SignatureSource,
-        params: &'cx [ast::Parameter<'cx>],
+        params: &'cx [ast::Param<'cx>],
         scope: Option<ScopeId>,
     ) -> SignatureId {
         let id = self.hir.reserve_signature();
@@ -551,11 +551,11 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             .iter()
             .enumerate()
             .map(|(index, param)| {
-                let ty =
+                let tid =
                     self.collect_type(&param.pat.ty, scope, TypeSource::SignatureParam { index });
                 SignatureParam {
                     pat: (index != 0).then(|| self.collect_pat(param.pat.pat, scope)),
-                    ty,
+                    tid,
                 }
             })
             .collect();
@@ -597,13 +597,13 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         match param {
             ast::GenericParam::Type(param) => GenericParam::Type(TypeParam {
                 name: param.ident.inner,
-                default: param
+                default_tid: param
                     .default
                     .map(|ty| self.collect_type(ty, scope, TypeSource::GenericParamDefault)),
             }),
             ast::GenericParam::Const(param) => GenericParam::Const(ConstParam {
                 name: param.ident.inner,
-                ty: self.collect_type(param.ty, scope, TypeSource::ConstGenericParam),
+                tid: self.collect_type(param.ty, scope, TypeSource::ConstGenericParam),
             }),
             ast::GenericParam::Unsupported(_) => GenericParam::Unsupported,
         }
@@ -616,7 +616,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     ) -> WherePredicate<'cx> {
         match predicate {
             lower::WherePredicate::TypeBound(predicate) => WherePredicate::TypeBound {
-                subject: match predicate.subject {
+                subject_tid: match predicate.subject {
                     PredicateSubject::TypeParam(name) => {
                         self.collect_name_type(name, scope, TypeSource::WherePredicateSubject)
                     }
@@ -653,19 +653,19 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {
-        let id = self.hir.reserve_type();
+        let tid = self.hir.reserve_type();
         let kind = self.collect_type_kind(ty, scope);
         self.hir.fill_type(
-            id,
+            tid,
             Type {
-                id,
+                tid,
                 ty: Some(ty),
                 kind,
                 scope,
                 source,
             },
         );
-        id
+        tid
     }
 
     fn collect_name_type(
@@ -674,11 +674,11 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {
-        let id = self.hir.reserve_type();
+        let tid = self.hir.reserve_type();
         self.hir.fill_type(
-            id,
+            tid,
             Type {
-                id,
+                tid,
                 ty: None,
                 kind: TypeKind::Path(Path {
                     qself: None,
@@ -691,7 +691,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 source,
             },
         );
-        id
+        tid
     }
 
     fn collect_type_kind(
@@ -701,7 +701,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     ) -> TypeKind<'cx> {
         match ty {
             ast::Type::Array(ty) => TypeKind::Array {
-                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+                elem_tid: self.collect_type(ty.elem, scope, TypeSource::Nested),
                 len: ArrayLen::Expr(self.collect_expr(&ty.len, scope)),
             },
             ast::Type::Infer(_) => TypeKind::Infer,
@@ -710,14 +710,14 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 segments: self.collect_type_path(&ty.path, scope),
             }),
             ast::Type::Reference(ty) => TypeKind::Reference {
-                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+                elem_tid: self.collect_type(ty.elem, scope, TypeSource::Nested),
                 is_mut: ty.is_mut,
             },
             ast::Type::Slice(ty) => TypeKind::Slice {
-                elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
+                elem_tid: self.collect_type(ty.elem, scope, TypeSource::Nested),
             },
             ast::Type::Tuple(ty) => TypeKind::Tuple {
-                elems: ty
+                elem_tids: ty
                     .elems
                     .iter()
                     .map(|elem| self.collect_type(elem, scope, TypeSource::Nested))
@@ -734,7 +734,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     ) -> Option<QSelf<'cx>> {
         let qself = qself?;
         Some(QSelf {
-            self_ty: self.collect_type(qself.ty, scope, TypeSource::Nested),
+            self_tid: self.collect_type(qself.ty, scope, TypeSource::Nested),
             trait_path: self.collect_qself_trait_path(qself.position, path, scope),
         })
     }
@@ -779,7 +779,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
 
     fn collect_generic_args(
         &mut self,
-        args: &'cx ast::PathArguments<'cx>,
+        args: &'cx ast::PathArgs<'cx>,
         scope: Option<ScopeId>,
     ) -> Vec<GenericArg<'cx>> {
         args.args()
@@ -790,25 +790,25 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
 
     fn collect_generic_arg(
         &mut self,
-        arg: &'cx ast::GenericArgument<'cx>,
+        arg: &'cx ast::GenericArg<'cx>,
         scope: Option<ScopeId>,
     ) -> GenericArg<'cx> {
         match arg {
-            ast::GenericArgument::Type(ty) => {
+            ast::GenericArg::Type(ty) => {
                 GenericArg::Type(self.collect_type(ty, scope, TypeSource::Nested))
             }
-            ast::GenericArgument::Const(value) => {
+            ast::GenericArg::Const(value) => {
                 GenericArg::Const(self.collect_const_arg(value, scope))
             }
-            ast::GenericArgument::AssocType(arg) => GenericArg::AssocType {
+            ast::GenericArg::AssocType(arg) => GenericArg::AssocType {
                 name: arg.ident.inner,
-                ty: self.collect_type(&arg.ty, scope, TypeSource::Nested),
+                tid: self.collect_type(&arg.ty, scope, TypeSource::Nested),
             },
-            ast::GenericArgument::AssocConst(arg) => GenericArg::AssocConst {
+            ast::GenericArg::AssocConst(arg) => GenericArg::AssocConst {
                 name: arg.ident.inner,
                 value: self.collect_const_arg(&arg.value, scope),
             },
-            ast::GenericArgument::Constraint(arg) => GenericArg::Constraint {
+            ast::GenericArg::Constraint(arg) => GenericArg::Constraint {
                 name: arg.ident.inner,
                 bounds: arg
                     .bounds
@@ -816,7 +816,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                     .map(|bound| self.collect_type_param_bound(bound, scope))
                     .collect(),
             },
-            ast::GenericArgument::Unsupported(_) => GenericArg::Unsupported,
+            ast::GenericArg::Unsupported(_) => GenericArg::Unsupported,
         }
     }
 
@@ -964,7 +964,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             },
             ast::Pat::Type(pat) => PatKind::Type {
                 pat: self.collect_pat(pat.pat, scope),
-                ty: self.collect_type(&pat.ty, scope, TypeSource::Nested),
+                tid: self.collect_type(&pat.ty, scope, TypeSource::Nested),
             },
             ast::Pat::Lit(_) | ast::Pat::Rest(_) | ast::Pat::Slice(_) => PatKind::Unsupported,
         };
@@ -1011,7 +1011,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             },
             ast::Expr::Cast(expr) => ExprKind::Cast {
                 expr: self.collect_expr(expr.expr, scope),
-                ty: self.collect_type(expr.ty, scope, TypeSource::Nested),
+                tid: self.collect_type(expr.ty, scope, TypeSource::Nested),
             },
             ast::Expr::Closure(expr) => ExprKind::Closure {
                 signature: self.collect_signature_params(
@@ -1218,15 +1218,15 @@ mod tests {
             "#,
         );
 
-        let field_type = model
+        let field_ty = model
             .types()
             .iter()
             .find(|ty| ty.source == TypeSource::StructField)
             .expect("expected struct field type");
-        let TypeKind::Tuple { elems } = &field_type.kind else {
+        let TypeKind::Tuple { elem_tids } = &field_ty.kind else {
             panic!("expected tuple field type");
         };
-        assert!(elems.iter().all(|elem| field_type.id < *elem));
+        assert!(elem_tids.iter().all(|elem_tid| field_ty.tid < *elem_tid));
 
         let input_pat = model
             .signatures()
@@ -1416,13 +1416,13 @@ mod tests {
             panic!("expected function item");
         };
         assert!(matches!(
-            model[model[signature].params[0].ty].kind,
+            model[model[signature].params[0].tid].kind,
             TypeKind::Path(_)
         ));
         assert!(model[signature].params[0].pat.is_none());
         assert_eq!(model[signature].params.len(), 2);
         assert!(matches!(
-            model[model[signature].params[1].ty].kind,
+            model[model[signature].params[1].tid].kind,
             TypeKind::Path(_)
         ));
         let input_pat = model[signature].params[1]
@@ -1465,17 +1465,23 @@ mod tests {
 
         let inferred = closures
             .iter()
-            .find(|signature| matches!(model[signature.params[1].ty].kind, TypeKind::Infer))
+            .find(|signature| matches!(model[signature.params[1].tid].kind, TypeKind::Infer))
             .expect("expected closure with inferred input type");
-        assert!(matches!(model[inferred.params[0].ty].kind, TypeKind::Infer));
-        assert!(matches!(model[inferred.params[1].ty].kind, TypeKind::Infer));
+        assert!(matches!(
+            model[inferred.params[0].tid].kind,
+            TypeKind::Infer
+        ));
+        assert!(matches!(
+            model[inferred.params[1].tid].kind,
+            TypeKind::Infer
+        ));
 
         let typed = closures
             .iter()
-            .find(|signature| matches!(model[signature.params[1].ty].kind, TypeKind::Path(_)))
+            .find(|signature| matches!(model[signature.params[1].tid].kind, TypeKind::Path(_)))
             .expect("expected closure with typed input");
-        assert!(matches!(model[typed.params[0].ty].kind, TypeKind::Path(_)));
-        assert!(matches!(model[typed.params[1].ty].kind, TypeKind::Path(_)));
+        assert!(matches!(model[typed.params[0].tid].kind, TypeKind::Path(_)));
+        assert!(matches!(model[typed.params[1].tid].kind, TypeKind::Path(_)));
     }
 
     #[test]
@@ -1825,8 +1831,8 @@ mod tests {
 
         for item in model.assoc_items() {
             match item.kind {
-                AssocItemKind::ImplConst { ty, init, .. } => {
-                    assert_eq!(model[ty].source, TypeSource::AssocConstType);
+                AssocItemKind::ImplConst { tid, init, .. } => {
+                    assert_eq!(model[tid].source, TypeSource::AssocConstType);
                     assert!(matches!(model[init].kind, ExprKind::Lit(_)));
                 }
                 AssocItemKind::ImplFn {
@@ -1835,11 +1841,11 @@ mod tests {
                     assert!(matches!(model[signature].source, SignatureSource::ImplFn));
                     assert_eq!(model[block].block.stmts.len(), 1);
                 }
-                AssocItemKind::ImplType { ty, .. } => {
-                    assert_eq!(model[ty].source, TypeSource::AssocTypeValue);
+                AssocItemKind::ImplType { tid, .. } => {
+                    assert_eq!(model[tid].source, TypeSource::AssocTypeValue);
                 }
-                AssocItemKind::TraitConst { ty, default, .. } => {
-                    assert_eq!(model[ty].source, TypeSource::AssocConstType);
+                AssocItemKind::TraitConst { tid, default, .. } => {
+                    assert_eq!(model[tid].source, TypeSource::AssocConstType);
                     let default = default.expect("trait const should keep default expression");
                     assert!(matches!(model[default].kind, ExprKind::Lit(_)));
                 }
@@ -1850,9 +1856,9 @@ mod tests {
                     let default = default.expect("trait fn default should create a block");
                     assert_eq!(model[default].block.stmts.len(), 1);
                 }
-                AssocItemKind::TraitType { default, .. } => {
-                    let default = default.expect("trait type default should create a type");
-                    assert_eq!(model[default].source, TypeSource::AssocTypeValue);
+                AssocItemKind::TraitType { default_tid, .. } => {
+                    let default_tid = default_tid.expect("trait type default should create a type");
+                    assert_eq!(model[default_tid].source, TypeSource::AssocTypeValue);
                 }
             }
         }
@@ -1930,13 +1936,13 @@ mod tests {
             "#,
         );
 
-        let field_type = model
+        let field_ty = model
             .types()
             .iter()
             .find(|ty| ty.source == TypeSource::StructField)
             .expect("expected struct field type");
 
-        let TypeKind::Path(path) = &field_type.kind else {
+        let TypeKind::Path(path) = &field_ty.kind else {
             panic!("expected path type");
         };
         assert_eq!(path.segments.len(), 3);
@@ -1948,10 +1954,10 @@ mod tests {
         assert_eq!(last.args.len(), 2);
         assert!(matches!(last.args[0], GenericArg::Type(_)));
 
-        let GenericArg::Type(iter_ty) = last.args[1] else {
+        let GenericArg::Type(iter_tid) = last.args[1] else {
             panic!("expected type argument");
         };
-        let TypeKind::Path(iter_path) = &model[iter_ty].kind else {
+        let TypeKind::Path(iter_path) = &model[iter_tid].kind else {
             panic!("expected nested iterator path type");
         };
         assert_eq!(iter_path.segments[0].name.as_ref(), "Iterator");
@@ -1977,13 +1983,13 @@ mod tests {
             "#,
         );
 
-        let field_type = model
+        let field_ty = model
             .types()
             .iter()
             .find(|ty| ty.source == TypeSource::StructField)
             .expect("expected struct field type");
 
-        let TypeKind::Path(path) = &field_type.kind else {
+        let TypeKind::Path(path) = &field_ty.kind else {
             panic!("expected path type");
         };
         let args = &path.segments[0].args;
@@ -2093,22 +2099,22 @@ mod tests {
             "#,
         );
 
-        let field_type = model
+        let field_ty = model
             .types()
             .iter()
             .find(|ty| ty.source == TypeSource::StructField)
             .expect("expected struct field type");
 
-        let TypeKind::Path(path) = &field_type.kind else {
+        let TypeKind::Path(path) = &field_ty.kind else {
             panic!("expected path type");
         };
         let qself = path.qself.as_ref().expect("expected qualified self type");
-        let TypeKind::Path(self_ty) = &model[qself.self_ty].kind else {
+        let TypeKind::Path(self_tid) = &model[qself.self_tid].kind else {
             panic!("expected qself self type to be a path");
         };
         let trait_path = &qself.trait_path;
 
-        assert_eq!(self_ty.segments[0].name.as_ref(), "T");
+        assert_eq!(self_tid.segments[0].name.as_ref(), "T");
         assert_eq!(trait_path.len(), 3);
         assert_eq!(trait_path[0].name.as_ref(), "a");
         assert_eq!(trait_path[1].name.as_ref(), "b");
@@ -2144,10 +2150,14 @@ mod tests {
             .predicates
             .iter()
             .map(|predicate| {
-                let WherePredicate::TypeBound { subject, bounds } = predicate else {
+                let WherePredicate::TypeBound {
+                    subject_tid,
+                    bounds,
+                } = predicate
+                else {
                     panic!("expected type-bound predicate");
                 };
-                let TypeKind::Path(subject_path) = &model[*subject].kind else {
+                let TypeKind::Path(subject_path) = &model[*subject_tid].kind else {
                     panic!("expected generic parameter subject type");
                 };
                 assert_eq!(subject_path.segments[0].name.as_ref(), "T");

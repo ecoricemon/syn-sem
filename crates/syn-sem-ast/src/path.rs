@@ -68,7 +68,7 @@ pub struct PathSegment<'cx> {
     /// Segment identifier.
     pub ident: Ident<'cx>,
     /// Generic arguments on this segment.
-    pub args: PathArguments<'cx>,
+    pub args: PathArgs<'cx>,
     /// Source span of the segment.
     pub span: Span<'cx>,
 }
@@ -78,7 +78,7 @@ impl<'cx> PathSegment<'cx> {
     pub fn from_str(scx: &'cx SyntaxCx<'cx>, value: &str, span: Span<'cx>) -> Self {
         Self {
             ident: Ident::from_str(scx, value, span),
-            args: PathArguments::None,
+            args: PathArgs::None,
             span,
         }
     }
@@ -98,7 +98,7 @@ impl<'cx> FromSyn<'cx, syn::PathSegment> for PathSegment<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PathSegment>) -> Self {
         Self {
             ident: Ident::from_syn(scx, desc.with_input(&desc.input.ident)),
-            args: PathArguments::from_syn(scx, desc.with_input(&desc.input.arguments)),
+            args: PathArgs::from_syn(scx, desc.with_input(&desc.input.arguments)),
             span: desc.span(desc.input),
         }
     }
@@ -108,18 +108,18 @@ impl<'cx> FromSyn<'cx, syn::PathSegment> for PathSegment<'cx> {
 ///
 /// Examples include no arguments in `T` and angle-bracketed arguments in `Vec<T>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum PathArguments<'cx> {
+pub enum PathArgs<'cx> {
     /// No generic arguments.
     None,
     /// Angle-bracketed generic arguments.
-    AngleBracketed(AngleBracketedGenericArguments<'cx>),
+    AngleBracketed(AngleBracketedGenericArgs<'cx>),
     /// Unsupported argument form.
     Unsupported(Span<'cx>),
 }
 
-impl PathArguments<'_> {
+impl PathArgs<'_> {
     /// Returns supported generic arguments.
-    pub fn args(&self) -> &[GenericArgument<'_>] {
+    pub fn args(&self) -> &[GenericArg<'_>] {
         match self {
             Self::None => &[],
             Self::AngleBracketed(v) => v.args,
@@ -138,13 +138,13 @@ impl PathArguments<'_> {
     }
 }
 
-impl<'cx> FromSyn<'cx, syn::PathArguments> for PathArguments<'cx> {
+impl<'cx> FromSyn<'cx, syn::PathArguments> for PathArgs<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::PathArguments>) -> Self {
         match desc.input {
             syn::PathArguments::None => Self::None,
-            syn::PathArguments::AngleBracketed(v) => Self::AngleBracketed(
-                AngleBracketedGenericArguments::from_syn(scx, desc.with_input(v)),
-            ),
+            syn::PathArguments::AngleBracketed(v) => {
+                Self::AngleBracketed(AngleBracketedGenericArgs::from_syn(scx, desc.with_input(v)))
+            }
             syn::PathArguments::Parenthesized(v) => Self::Unsupported(desc.span(v)),
         }
     }
@@ -154,16 +154,14 @@ impl<'cx> FromSyn<'cx, syn::PathArguments> for PathArguments<'cx> {
 ///
 /// For example, `<K, V>` in `HashMap<K, V>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub struct AngleBracketedGenericArguments<'cx> {
+pub struct AngleBracketedGenericArgs<'cx> {
     /// Generic arguments.
-    pub args: &'cx [GenericArgument<'cx>],
+    pub args: &'cx [GenericArg<'cx>],
     /// Source span of the argument list.
     pub span: Span<'cx>,
 }
 
-impl<'cx> FromSyn<'cx, syn::AngleBracketedGenericArguments>
-    for AngleBracketedGenericArguments<'cx>
-{
+impl<'cx> FromSyn<'cx, syn::AngleBracketedGenericArguments> for AngleBracketedGenericArgs<'cx> {
     fn from_syn(
         scx: &'cx SyntaxCx<'cx>,
         desc: InputDesc<'cx, '_, syn::AngleBracketedGenericArguments>,
@@ -179,7 +177,7 @@ impl<'cx> FromSyn<'cx, syn::AngleBracketedGenericArguments>
 ///
 /// Examples include `T`, `N`, `Item = T`, `PANIC = false`, and `Item: Display`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
-pub enum GenericArgument<'cx> {
+pub enum GenericArg<'cx> {
     /// Type argument.
     Type(Type<'cx>),
     /// Const expression argument.
@@ -194,7 +192,7 @@ pub enum GenericArgument<'cx> {
     Unsupported(Span<'cx>),
 }
 
-impl<'cx> FromSyn<'cx, syn::GenericArgument> for GenericArgument<'cx> {
+impl<'cx> FromSyn<'cx, syn::GenericArgument> for GenericArg<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::GenericArgument>) -> Self {
         match desc.input {
             syn::GenericArgument::Type(v) => Self::Type(Type::from_syn(scx, desc.with_input(v))),
@@ -332,21 +330,21 @@ mod tests {
         assert!(path.get_ident().is_none());
         assert_eq!(&*path.segments[0].ident, "A");
 
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert_eq!(args.args.len(), 1);
         assert_eq!(path.segments[0].args.len(), 1);
         assert_eq!(path.segments[0].args.args().len(), 1);
-        assert!(matches!(args.args[0], GenericArgument::Type(_)));
+        assert!(matches!(args.args[0], GenericArg::Type(_)));
 
         let path = parse::<syn::Path, Path>(&scx, "HashMap<K, V>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert_eq!(args.args.len(), 2);
-        assert!(matches!(args.args[0], GenericArgument::Type(_)));
-        assert!(matches!(args.args[1], GenericArgument::Type(_)));
+        assert!(matches!(args.args[0], GenericArg::Type(_)));
+        assert!(matches!(args.args[1], GenericArg::Type(_)));
     }
 
     #[test]
@@ -356,35 +354,35 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
 
         let path = parse::<syn::Path, Path>(&scx, "Array<3>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
         assert_eq!(args.args.len(), 1);
-        assert!(matches!(args.args[0], GenericArgument::Const(_)));
+        assert!(matches!(args.args[0], GenericArg::Const(_)));
 
         let path = parse::<syn::Path, Path>(&scx, "Iterator<Item = T>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        let GenericArgument::AssocType(arg) = &args.args[0] else {
+        let GenericArg::AssocType(arg) = &args.args[0] else {
             panic!()
         };
         assert_eq!(&*arg.ident, "Item");
 
         let path = parse::<syn::Path, Path>(&scx, "Trait<PANIC = false>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        let GenericArgument::AssocConst(arg) = &args.args[0] else {
+        let GenericArg::AssocConst(arg) = &args.args[0] else {
             panic!()
         };
         assert_eq!(&*arg.ident, "PANIC");
 
         let path = parse::<syn::Path, Path>(&scx, "Iterator<Item: Display>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        let GenericArgument::Constraint(arg) = &args.args[0] else {
+        let GenericArg::Constraint(arg) = &args.args[0] else {
             panic!()
         };
         assert_eq!(&*arg.ident, "Item");
@@ -403,26 +401,26 @@ mod tests {
         };
         assert!(matches!(
             bound.path.segments[0].args,
-            PathArguments::Unsupported(_)
+            PathArgs::Unsupported(_)
         ));
         assert!(bound.path.segments[0].args.is_empty());
 
         let path = parse::<syn::Path, Path>(&scx, "Borrowed<'a>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
+        assert!(matches!(args.args[0], GenericArg::Unsupported(_)));
 
         let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T> = U>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
+        assert!(matches!(args.args[0], GenericArg::Unsupported(_)));
 
         let path = parse::<syn::Path, Path>(&scx, "Trait<Assoc<T>: Display>");
-        let PathArguments::AngleBracketed(args) = &path.segments[0].args else {
+        let PathArgs::AngleBracketed(args) = &path.segments[0].args else {
             panic!()
         };
-        assert!(matches!(args.args[0], GenericArgument::Unsupported(_)));
+        assert!(matches!(args.args[0], GenericArg::Unsupported(_)));
     }
 }

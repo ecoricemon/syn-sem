@@ -9,22 +9,22 @@ use syn_sem_name::DefId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TraitBoundFact {
     /// Type constrained by the trait bound.
-    pub(crate) subject: TypeId,
+    pub(crate) subject_tid: TypeId,
     /// Trait type required by the bound.
-    pub(crate) trait_ty: TypeId,
+    pub(crate) trait_tid: TypeId,
 }
 
 /// Associated type value assigned by a trait implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AssocTypeImplFact {
     /// Implementing self type in `impl Trait for Self`.
-    pub(crate) impl_self_ty: TypeId,
+    pub(crate) impl_self_tid: TypeId,
     /// Implemented trait type in `impl Trait for Self`.
-    pub(crate) trait_ty: TypeId,
+    pub(crate) trait_tid: TypeId,
     /// Associated type definition assigned by the impl item.
     pub(crate) assoc_type: DefId,
     /// Type assigned by the impl item.
-    pub(crate) value_ty: TypeId,
+    pub(crate) value_tid: TypeId,
 }
 
 /// Lowered block fact consumed from HIR body lowering.
@@ -75,44 +75,44 @@ pub(crate) struct ResolvedTypeFact {
     /// Subject being resolved.
     pub(crate) subject: TypeSubject,
     /// Concrete inference type reachable from the subject through equality edges.
-    pub(crate) ty: TypeId,
+    pub(crate) tid: TypeId,
 }
 
 /// Impl self type pattern matched against a projection self type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImplSelfMatch {
     /// Self type from the projection, such as `Vec<u32>`.
-    pub(crate) projection_self_ty: TypeId,
+    pub(crate) projection_self_tid: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
-    pub(crate) impl_self_ty: TypeId,
+    pub(crate) impl_self_tid: TypeId,
 }
 
 /// Generic type binding discovered while matching an impl self type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TypeBindingFact {
     /// Self type from the projection, such as `Vec<u32>`.
-    pub(crate) projection_self_ty: TypeId,
+    pub(crate) projection_self_tid: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
-    pub(crate) impl_self_ty: TypeId,
+    pub(crate) impl_self_tid: TypeId,
     /// Generic type occurrence from the impl self type, such as `T`.
-    pub(crate) generic_ty: TypeId,
+    pub(crate) generic_tid: TypeId,
     /// Type argument matched for the generic, such as `u32`.
-    pub(crate) arg_ty: TypeId,
+    pub(crate) arg_tid: TypeId,
 }
 
 /// Type substitution fact used while normalizing associated type projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TypeSubstitution {
     /// Self type from the projection that requested the substitution.
-    pub(crate) projection_self_ty: TypeId,
+    pub(crate) projection_self_tid: TypeId,
     /// Self type from the impl header whose value type is substituted.
-    pub(crate) impl_self_ty: TypeId,
+    pub(crate) impl_self_tid: TypeId,
     /// Type before substitution, such as `T`.
-    pub(crate) value_ty: TypeId,
+    pub(crate) value_tid: TypeId,
     /// Generic type occurrence being substituted, such as `T`.
-    pub(crate) generic_ty: TypeId,
+    pub(crate) generic_tid: TypeId,
     /// Type argument used for the generic, such as `u32`.
-    pub(crate) arg_ty: TypeId,
+    pub(crate) arg_tid: TypeId,
     /// Type after substitution, such as `u32`.
-    pub(crate) substituted_ty: TypeId,
+    pub(crate) substituted_tid: TypeId,
 }

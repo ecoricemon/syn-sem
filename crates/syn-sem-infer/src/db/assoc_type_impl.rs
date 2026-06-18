@@ -8,7 +8,7 @@ use syn_sem_name::{NameDb, Namespace, ResolveResult};
 pub(super) struct AssocTypeImplFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
-    lowerer: TypeLowerer<'a, 'cx>,
+    ty_lowerer: TypeLowerer<'a, 'cx>,
     facts: Vec<AssocTypeImplFact>,
 }
 
@@ -21,7 +21,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
         Self {
             hir,
             names,
-            lowerer: TypeLowerer::new(hir, names, types),
+            ty_lowerer: TypeLowerer::new(hir, names, types),
             facts: Vec::new(),
         }
         .collect_inner()
@@ -31,7 +31,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
         for item in self.hir.items() {
             let hir::ItemKind::Impl {
                 trait_,
-                self_ty,
+                self_tid,
                 items,
                 ..
             } = &item.kind
@@ -41,15 +41,15 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
             let Some(trait_) = trait_ else {
                 continue;
             };
-            let impl_self_ty = self.lowerer.lower_hir_type(*self_ty);
-            let trait_ty = self
-                .lowerer
-                .lower_path_value_as_type(trait_, item.parent_scope);
-            let Some(trait_def) = self.lowerer.trait_def_for_type(trait_ty) else {
+            let impl_self_tid = self.ty_lowerer.lower_hir_type(*self_tid);
+            let trait_tid = self
+                .ty_lowerer
+                .lower_plain_path_as_type(trait_, item.parent_scope);
+            let Some(trait_def) = self.ty_lowerer.trait_def_for_type(trait_tid) else {
                 continue;
             };
             for assoc_item in items.iter().map(|id| &self.hir[*id]) {
-                let hir::AssocItemKind::ImplType { ty } = assoc_item.kind else {
+                let hir::AssocItemKind::ImplType { tid } = assoc_item.kind else {
                     continue;
                 };
                 let ResolveResult::Found(assoc_type) =
@@ -58,12 +58,12 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
                 else {
                     continue;
                 };
-                let value_ty = self.lowerer.lower_hir_type(ty);
+                let value_tid = self.ty_lowerer.lower_hir_type(tid);
                 self.facts.push(AssocTypeImplFact {
-                    impl_self_ty,
-                    trait_ty,
+                    impl_self_tid,
+                    trait_tid,
                     assoc_type,
-                    value_ty,
+                    value_tid,
                 });
             }
         }

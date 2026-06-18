@@ -1,6 +1,4 @@
-use crate::{
-    Block, FromSyn, Ident, InputDesc, Lit, Parameter, ParameterCx, Path, Span, SyntaxCx, Type,
-};
+use crate::{Block, FromSyn, Ident, InputDesc, Lit, Param, ParamCx, Path, Span, SyntaxCx, Type};
 use std::iter;
 use syn_sem_macros::CheckDropless;
 
@@ -95,7 +93,7 @@ pub struct ExprClosure<'cx> {
     /// Whether the closure captures by `move`.
     pub is_move: bool,
     /// Return parameter followed by input parameters.
-    pub params: &'cx [Parameter<'cx>],
+    pub params: &'cx [Param<'cx>],
     /// Closure body expression.
     ///
     /// Stored by reference to break the recursive [`Expr`] shape.
@@ -106,16 +104,13 @@ pub struct ExprClosure<'cx> {
 
 impl<'cx> FromSyn<'cx, syn::ExprClosure> for ExprClosure<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ExprClosure>) -> Self {
-        let output = Parameter::from_return_type(
-            scx,
-            desc.with_input(&desc.input.output),
-            ParameterCx::Closure,
-        );
+        let output =
+            Param::from_return_type(scx, desc.with_input(&desc.input.output), ParamCx::Closure);
         let inputs = desc
             .input
             .inputs
             .iter()
-            .map(|pat| Parameter::from_closure_input(scx, desc.with_input(pat)));
+            .map(|pat| Param::from_closure_input(scx, desc.with_input(pat)));
         let mut params = iter::once(output).chain(inputs);
         let len = desc.input.inputs.len() + 1;
 
