@@ -206,7 +206,7 @@ pub enum GenericArg<'cx> {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Source bounds.
-        bounds: TypeBounds<'cx>,
+        bounds: Vec<TypeParamBound<'cx>>,
     },
     /// Unsupported argument form.
     Unsupported,
@@ -259,25 +259,11 @@ impl<'cx> Lit<'cx> {
     }
 }
 
-/// Type bounds attached to an associated type constraint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeBounds<'cx> {
-    /// Bounds in source order.
-    pub bounds: Vec<TypeParamBound<'cx>>,
-}
-
 /// Type parameter bound shape used by inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
-    Trait(TraitBound<'cx>),
+    Trait(Path<'cx>),
     /// Unsupported bound form.
     Unsupported,
-}
-
-/// Trait bound shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraitBound<'cx> {
-    /// Trait path.
-    pub path: Path<'cx>,
 }

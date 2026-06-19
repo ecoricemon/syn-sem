@@ -55,12 +55,12 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
             };
             let subject_tid = self.ty_lowerer.lower_hir_type(*subject_tid);
             for bound in bounds {
-                let hir::TypeParamBound::Trait(bound) = bound else {
+                let hir::TypeParamBound::Trait(path) = bound else {
                     continue;
                 };
                 let trait_tid = self
                     .ty_lowerer
-                    .lower_plain_path_as_type(&bound.path, generics.scope);
+                    .lower_plain_path_as_type(path, generics.scope);
                 self.facts.push(TraitBoundFact {
                     subject_tid,
                     trait_tid,

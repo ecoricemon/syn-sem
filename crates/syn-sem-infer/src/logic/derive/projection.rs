@@ -441,12 +441,11 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
     fn substitute_type_bounds(
         &self,
-        bounds: crate::TypeBounds<'cx>,
+        bounds: Vec<crate::TypeParamBound<'cx>>,
         bindings: &[TypeBindingFact],
-    ) -> (crate::TypeBounds<'cx>, Vec<TypeBindingFact>) {
+    ) -> (Vec<crate::TypeParamBound<'cx>>, Vec<TypeBindingFact>) {
         let mut used = Vec::new();
         let bounds = bounds
-            .bounds
             .into_iter()
             .map(|bound| {
                 let (bound, bound_used) = self.substitute_type_param_bound(bound, bindings);
@@ -454,7 +453,7 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
                 bound
             })
             .collect();
-        (crate::TypeBounds { bounds }, Self::unique_bindings(used))
+        (bounds, Self::unique_bindings(used))
     }
 
     fn substitute_type_param_bound(
@@ -463,12 +462,9 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
         bindings: &[TypeBindingFact],
     ) -> (crate::TypeParamBound<'cx>, Vec<TypeBindingFact>) {
         match bound {
-            crate::TypeParamBound::Trait(bound) => {
-                let (path, used) = self.substitute_path(bound.path, bindings);
-                (
-                    crate::TypeParamBound::Trait(crate::TraitBound { path }),
-                    used,
-                )
+            crate::TypeParamBound::Trait(path) => {
+                let (path, used) = self.substitute_path(path, bindings);
+                (crate::TypeParamBound::Trait(path), used)
             }
             crate::TypeParamBound::Unsupported => (crate::TypeParamBound::Unsupported, Vec::new()),
         }

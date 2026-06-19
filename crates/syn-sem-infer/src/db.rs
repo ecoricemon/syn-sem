@@ -6,8 +6,8 @@ mod trait_bound;
 
 use crate::{
     logic, AssocTypeImplFact, GenericArg, Path, PathSegment, PathType, PathTypeResolution,
-    ProjectionDb, ProjectionNormalizationResult, ProjectionType, QSelf, TraitBound, TraitBoundFact,
-    Type, TypeBounds, TypeId, TypeParamBound,
+    ProjectionDb, ProjectionNormalizationResult, ProjectionType, QSelf, TraitBoundFact, Type,
+    TypeId, TypeParamBound,
 };
 use assoc_type_impl::AssocTypeImplFactCollector;
 use body_type::{BodyTypeCollector, BodyTypeDb};
@@ -303,17 +303,14 @@ impl<'cx> InferDb<'cx> {
 
     fn normalized_type_bounds(
         &mut self,
-        bounds: TypeBounds<'cx>,
+        bounds: Vec<TypeParamBound<'cx>>,
         active: &mut Vec<TypeId>,
         changed: &mut bool,
-    ) -> TypeBounds<'cx> {
-        TypeBounds {
-            bounds: bounds
-                .bounds
-                .into_iter()
-                .map(|bound| self.normalized_type_param_bound(bound, active, changed))
-                .collect(),
-        }
+    ) -> Vec<TypeParamBound<'cx>> {
+        bounds
+            .into_iter()
+            .map(|bound| self.normalized_type_param_bound(bound, active, changed))
+            .collect()
     }
 
     fn normalized_type_param_bound(
@@ -323,9 +320,9 @@ impl<'cx> InferDb<'cx> {
         changed: &mut bool,
     ) -> TypeParamBound<'cx> {
         match bound {
-            TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
-                path: self.normalized_path(bound.path, active, changed),
-            }),
+            TypeParamBound::Trait(path) => {
+                TypeParamBound::Trait(self.normalized_path(path, active, changed))
+            }
             TypeParamBound::Unsupported => TypeParamBound::Unsupported,
         }
     }
@@ -539,6 +536,83 @@ mod tests {
         assert_eq!(path.path.segments[0].name.as_ref(), "crate");
         assert_eq!(path.path.segments[1].name.as_ref(), "usize");
         assert_eq!(path.resolution, PathTypeResolution::Unresolved);
+    }
+
+    #[test]
+    fn keeps_distinct_infer_type_occurrences_separate() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, infer) = infer_tids(&ccx, &scx, "struct S { first: _, second: _ }");
+
+        let field_tids = struct_field_hir_types(&hir, "S");
+        let [first, second] = field_tids.as_slice() else {
+            panic!("struct should have two field types");
+        };
+        let first = infer.type_for_hir_type(*first).unwrap();
+        let second = infer.type_for_hir_type(*second).unwrap();
+
+        assert_ne!(
+            first, second,
+            "independent `_` type occurrences must not share an inference TypeId"
+        );
+        assert!(matches!(infer[first], Type::Infer));
+        assert!(matches!(infer[second], Type::Infer));
+    }
+
+    #[test]
+    fn interning_keeps_unresolved_paths_separate() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_, mut infer) = infer_tids(&ccx, &scx, "struct S;");
+        let unresolved = || {
+            Type::Path(PathType {
+                qself: None,
+                path: Path {
+                    segments: vec![PathSegment {
+                        name: ccx.intern("Unknown"),
+                        args: Vec::new(),
+                    }],
+                },
+                resolution: PathTypeResolution::Unresolved,
+            })
+        };
+
+        let first = infer.intern_type(unresolved());
+        let second = infer.intern_type(unresolved());
+
+        assert_ne!(
+            first, second,
+            "unresolved paths can depend on source scope and must not share a TypeId"
+        );
+    }
+
+    #[test]
+    fn interning_deeply_shares_container_types() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, mut infer) = infer_tids(&ccx, &scx, "struct S { first: u32, second: u32 }");
+
+        let field_tids = struct_field_hir_types(&hir, "S");
+        let [first, second] = field_tids.as_slice() else {
+            panic!("struct should have two field types");
+        };
+        let first = infer.type_for_hir_type(*first).unwrap();
+        let second = infer.type_for_hir_type(*second).unwrap();
+        assert_ne!(first, second, "HIR occurrences should remain distinct");
+
+        let first_ref = infer.intern_type(Type::Reference {
+            elem_tid: first,
+            is_mut: false,
+        });
+        let second_ref = infer.intern_type(Type::Reference {
+            elem_tid: second,
+            is_mut: false,
+        });
+
+        assert_eq!(
+            first_ref, second_ref,
+            "container types should share when their inner TypeIds are deeply shareable"
+        );
     }
 
     #[test]
@@ -1643,12 +1717,12 @@ mod tests {
             panic!("trait bound should preserve associated type constraint");
         };
         assert_eq!(name.as_ref(), "Item");
-        let [TypeParamBound::Trait(bound)] = bounds.bounds.as_slice() else {
+        let [TypeParamBound::Trait(bound)] = bounds.as_slice() else {
             panic!("constraint should preserve its trait bound");
         };
-        assert_eq!(bound.path.segments[0].name.as_ref(), "std");
-        assert_eq!(bound.path.segments[1].name.as_ref(), "fmt");
-        assert_eq!(bound.path.segments[2].name.as_ref(), "Display");
+        assert_eq!(bound.segments[0].name.as_ref(), "std");
+        assert_eq!(bound.segments[1].name.as_ref(), "fmt");
+        assert_eq!(bound.segments[2].name.as_ref(), "Display");
     }
 
     #[test]

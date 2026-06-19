@@ -281,16 +281,9 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
 
     fn lit_type(&mut self, lit: &hir::Lit<'cx>) -> Option<TypeId> {
         match lit {
-            hir::Lit::Bool(_) => Some(self.intern_type(Type::Primitive(PrimitiveType::Bool))),
+            hir::Lit::Bool(_) => Some(self.types.intern_type(Type::Primitive(PrimitiveType::Bool))),
             hir::Lit::Int(_) | hir::Lit::Float(_) => None,
         }
-    }
-
-    fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
-        if let Some(index) = self.types.iter().position(|existing| existing == &ty) {
-            return TypeId::new(index);
-        }
-        self.types.add_type(ty)
     }
 
     fn push_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {

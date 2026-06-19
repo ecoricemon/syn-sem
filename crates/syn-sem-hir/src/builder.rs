@@ -2,8 +2,8 @@ use crate::hir::{
     item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr,
     ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Hir,
     HirArena, Item, ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, QSelf,
-    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, TraitBound, Type, TypeKind,
-    TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
+    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, Type, TypeKind, TypeParam,
+    TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
 };
 use crate::lower::{self, PredicateSubject};
 use crate::{
@@ -640,9 +640,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> TypeParamBound<'cx> {
         match bound {
-            ast::TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
-                path: self.collect_type_path(&bound.path, scope),
-            }),
+            ast::TypeParamBound::Trait(bound) => {
+                TypeParamBound::Trait(self.collect_type_path(&bound.path, scope))
+            }
             ast::TypeParamBound::Unsupported(_) => TypeParamBound::Unsupported,
         }
     }
@@ -2032,7 +2032,7 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        let GenericArg::AssocConst { name, value } = &bound.path[0].args[0] else {
+        let GenericArg::AssocConst { name, value } = &bound[0].args[0] else {
             panic!("expected associated const argument");
         };
 
@@ -2064,7 +2064,7 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        let GenericArg::Constraint { name, bounds } = &bound.path[0].args[0] else {
+        let GenericArg::Constraint { name, bounds } = &bound[0].args[0] else {
             panic!("expected associated type constraint");
         };
         assert_eq!(name.as_ref(), "Item");
@@ -2072,9 +2072,9 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        assert_eq!(bound.path[0].name.as_ref(), "std");
-        assert_eq!(bound.path[1].name.as_ref(), "fmt");
-        assert_eq!(bound.path[2].name.as_ref(), "Display");
+        assert_eq!(bound[0].name.as_ref(), "std");
+        assert_eq!(bound[1].name.as_ref(), "fmt");
+        assert_eq!(bound[2].name.as_ref(), "Display");
     }
 
     #[test]
@@ -2164,7 +2164,7 @@ mod tests {
                 let TypeParamBound::Trait(bound) = &bounds[0] else {
                     panic!("expected trait bound");
                 };
-                bound.path[0].name.as_ref()
+                bound[0].name.as_ref()
             })
             .collect::<Vec<_>>();
         assert_eq!(predicate_bounds, ["Clone", "Iterator"]);

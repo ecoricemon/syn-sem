@@ -386,16 +386,9 @@ pub struct ConstParam<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
-    Trait(TraitBound<'cx>),
+    Trait(Vec<PathSegment<'cx>>),
     /// Unsupported bound form.
     Unsupported,
-}
-
-/// HIR-native trait bound.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraitBound<'cx> {
-    /// Trait path.
-    pub path: Vec<PathSegment<'cx>>,
 }
 
 /// HIR-native generic predicate.

@@ -2,7 +2,7 @@
 
 use crate::{
     ArrayLen, ConstArg, GenericArg, Path, PathSegment, PathType, PathTypeResolution, PrimitiveType,
-    ProjectionType, QSelf, TraitBound, Type, TypeBounds, TypeId, TypeParamBound,
+    ProjectionType, QSelf, Type, TypeId, TypeParamBound,
 };
 use std::ops::Index;
 use syn_sem_common::Map;
@@ -10,6 +10,12 @@ use syn_sem_hir as hir;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
 
 /// Inference-owned type arena and HIR type occurrence map.
+///
+/// HIR type ids name source occurrences, so lowering keeps each HIR occurrence mapped to its own
+/// inference type id. Occurrence-insensitive helper types may still be interned when that is safe.
+/// Distinct inference type ids can end up denoting the same final type after solving; for example,
+/// a generic parameter path `T` and a concrete path `u32` remain distinct stored types even if
+/// later obligations infer `T = u32`.
 #[derive(Debug, Default)]
 pub(crate) struct InferTypes<'cx> {
     types: Vec<Type<'cx>>,
@@ -40,21 +46,283 @@ impl<'cx> InferTypes<'cx> {
         self.types.len()
     }
 
-    fn next_type_id(&self) -> TypeId {
-        TypeId::new(self.types.len())
+    pub(crate) fn bind_hir_type(&mut self, hir_tid: hir::TypeId, tid: TypeId) {
+        self.hir_to_infer.insert(hir_tid, tid);
     }
 
-    pub(super) fn add_type(&mut self, ty: Type<'cx>) -> TypeId {
-        let id = self.next_type_id();
-        self.types.push(ty);
-        id
+    pub(crate) fn insert_fresh_type(&mut self, ty: Type<'cx>) -> TypeId {
+        self.push_type(ty)
     }
 
-    pub(super) fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
-        if let Some(index) = self.types.iter().position(|existing| existing == &ty) {
-            return TypeId::new(index);
+    pub(crate) fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
+        let sharing = TypeSharing::new(&self.types);
+        for index in 0..self.types.len() {
+            let existing = TypeId::new(index);
+            if sharing.can_share_type_with(existing, &ty) {
+                return existing;
+            }
         }
-        self.add_type(ty)
+
+        self.push_type(ty)
+    }
+
+    fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
+        let tid = TypeId::new(self.types.len());
+        self.types.push(ty);
+        tid
+    }
+}
+
+struct TypeSharing<'a, 'cx> {
+    types: &'a [Type<'cx>],
+}
+
+impl<'a, 'cx> TypeSharing<'a, 'cx> {
+    fn new(types: &'a [Type<'cx>]) -> Self {
+        Self { types }
+    }
+
+    fn can_share_type_with(&self, existing: TypeId, candidate: &Type<'cx>) -> bool {
+        self.can_share_type_with_inner(existing, candidate, &mut Vec::new())
+    }
+
+    fn can_share_type_ids(
+        &self,
+        left: TypeId,
+        right: TypeId,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        if seen.contains(&(left, right)) {
+            return true;
+        }
+        seen.push((left, right));
+        self.can_share_type_with_inner(left, &self.types[right.index()], seen)
+    }
+
+    fn can_share_type_with_inner(
+        &self,
+        existing: TypeId,
+        candidate: &Type<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (&self.types[existing.index()], candidate) {
+            (
+                Type::Array {
+                    elem_tid: left_elem,
+                    len: left_len,
+                },
+                Type::Array {
+                    elem_tid: right_elem,
+                    len: right_len,
+                },
+            ) => left_len == right_len && self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (Type::Infer, Type::Infer) => false,
+            (Type::Primitive(left), Type::Primitive(right)) => left == right,
+            (Type::Path(left), Type::Path(right)) => self.can_share_path_types(left, right, seen),
+            (
+                Type::Reference {
+                    elem_tid: left_elem,
+                    is_mut: left_mut,
+                },
+                Type::Reference {
+                    elem_tid: right_elem,
+                    is_mut: right_mut,
+                },
+            ) => left_mut == right_mut && self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (
+                Type::Slice {
+                    elem_tid: left_elem,
+                },
+                Type::Slice {
+                    elem_tid: right_elem,
+                },
+            ) => self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (Type::Tuple { elem_tids: left }, Type::Tuple { elem_tids: right }) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| self.can_share_type_ids(*left, *right, seen))
+            }
+            _ => false,
+        }
+    }
+
+    fn can_share_path_types(
+        &self,
+        left: &PathType<'cx>,
+        right: &PathType<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        if !self.can_share_paths(&left.path, &right.path, seen)
+            || !self.can_share_path_resolutions(&left.resolution, &right.resolution, seen)
+        {
+            return false;
+        }
+        match (left.qself, right.qself) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_qself(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_path_resolutions(
+        &self,
+        left: &PathTypeResolution,
+        right: &PathTypeResolution,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (PathTypeResolution::Nominal(left), PathTypeResolution::Nominal(right)) => {
+                left == right
+            }
+            (PathTypeResolution::GenericParam(left), PathTypeResolution::GenericParam(right)) => {
+                left == right
+            }
+            (PathTypeResolution::Projection(left), PathTypeResolution::Projection(right)) => {
+                self.can_share_projection_types(left, right, seen)
+            }
+            (
+                PathTypeResolution::Ambiguous(_) | PathTypeResolution::Unresolved,
+                PathTypeResolution::Ambiguous(_) | PathTypeResolution::Unresolved,
+            ) => false,
+            _ => false,
+        }
+    }
+
+    fn can_share_projection_types(
+        &self,
+        left: &ProjectionType,
+        right: &ProjectionType,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.assoc_type == right.assoc_type
+            && self.can_share_optional_type_ids(left.self_tid, right.self_tid, seen)
+            && self.can_share_optional_type_ids(left.trait_tid, right.trait_tid, seen)
+    }
+
+    fn can_share_qself(&self, left: QSelf, right: QSelf, seen: &mut Vec<(TypeId, TypeId)>) -> bool {
+        if !self.can_share_type_ids(left.self_tid, right.self_tid, seen) {
+            return false;
+        }
+        match (left.trait_tid, right.trait_tid) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_type_ids(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_optional_type_ids(
+        &self,
+        left: Option<TypeId>,
+        right: Option<TypeId>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_type_ids(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_paths(
+        &self,
+        left: &Path<'cx>,
+        right: &Path<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.segments.len() == right.segments.len()
+            && left
+                .segments
+                .iter()
+                .zip(&right.segments)
+                .all(|(left, right)| self.can_share_path_segments(left, right, seen))
+    }
+
+    fn can_share_path_segments(
+        &self,
+        left: &PathSegment<'cx>,
+        right: &PathSegment<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.name == right.name
+            && left.args.len() == right.args.len()
+            && left
+                .args
+                .iter()
+                .zip(&right.args)
+                .all(|(left, right)| self.can_share_generic_args(left, right, seen))
+    }
+
+    fn can_share_generic_args(
+        &self,
+        left: &GenericArg<'cx>,
+        right: &GenericArg<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (GenericArg::Type(left), GenericArg::Type(right)) => {
+                self.can_share_type_ids(*left, *right, seen)
+            }
+            (GenericArg::Const(left), GenericArg::Const(right)) => left == right,
+            (
+                GenericArg::AssocType {
+                    name: left_name,
+                    tid: left_tid,
+                },
+                GenericArg::AssocType {
+                    name: right_name,
+                    tid: right_tid,
+                },
+            ) => left_name == right_name && self.can_share_type_ids(*left_tid, *right_tid, seen),
+            (
+                GenericArg::AssocConst {
+                    name: left_name,
+                    value: left_value,
+                },
+                GenericArg::AssocConst {
+                    name: right_name,
+                    value: right_value,
+                },
+            ) => left_name == right_name && left_value == right_value,
+            (
+                GenericArg::Constraint {
+                    name: left_name,
+                    bounds: left_bounds,
+                },
+                GenericArg::Constraint {
+                    name: right_name,
+                    bounds: right_bounds,
+                },
+            ) => {
+                left_name == right_name
+                    && left_bounds.len() == right_bounds.len()
+                    && left_bounds
+                        .iter()
+                        .zip(right_bounds)
+                        .all(|(left, right)| self.can_share_type_param_bounds(left, right, seen))
+            }
+            (GenericArg::Unsupported, GenericArg::Unsupported) => false,
+            _ => false,
+        }
+    }
+
+    fn can_share_type_param_bounds(
+        &self,
+        left: &TypeParamBound<'cx>,
+        right: &TypeParamBound<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (TypeParamBound::Trait(left), TypeParamBound::Trait(right)) => {
+                self.can_share_paths(left, right, seen)
+            }
+            (TypeParamBound::Unsupported, TypeParamBound::Unsupported) => false,
+            _ => false,
+        }
     }
 }
 
@@ -87,9 +355,9 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         }
 
         let ty = self.lower_type(hir_tid, &self.hir[hir_tid].kind);
-        let id = self.types.add_type(ty);
-        self.types.hir_to_infer.insert(hir_tid, id);
-        id
+        let tid = self.types.insert_fresh_type(ty);
+        self.types.bind_hir_type(hir_tid, tid);
+        tid
     }
 
     fn lower_type(&mut self, hir_tid: hir::TypeId, kind: &hir::TypeKind<'cx>) -> Type<'cx> {
@@ -153,12 +421,13 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         path: &[hir::PathSegment<'cx>],
         scope: Option<ScopeId>,
     ) -> TypeId {
+        let resolution = self.resolve_path_type(None, path, scope);
         let ty = Type::Path(PathType {
             qself: None,
             path: self.lower_plain_path(path),
-            resolution: self.resolve_path_type(None, path, scope),
+            resolution,
         });
-        self.types.add_type(ty)
+        self.types.intern_type(ty)
     }
 
     fn resolve_path_type(
@@ -288,20 +557,19 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         }
     }
 
-    fn lower_type_bounds(&mut self, bounds: &[hir::TypeParamBound<'cx>]) -> TypeBounds<'cx> {
-        TypeBounds {
-            bounds: bounds
-                .iter()
-                .map(|bound| self.lower_type_param_bound(bound))
-                .collect(),
-        }
+    fn lower_type_bounds(
+        &mut self,
+        bounds: &[hir::TypeParamBound<'cx>],
+    ) -> Vec<TypeParamBound<'cx>> {
+        bounds
+            .iter()
+            .map(|bound| self.lower_type_param_bound(bound))
+            .collect()
     }
 
     fn lower_type_param_bound(&mut self, bound: &hir::TypeParamBound<'cx>) -> TypeParamBound<'cx> {
         match bound {
-            hir::TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
-                path: self.lower_plain_path(&bound.path),
-            }),
+            hir::TypeParamBound::Trait(path) => TypeParamBound::Trait(self.lower_plain_path(path)),
             hir::TypeParamBound::Unsupported => TypeParamBound::Unsupported,
         }
     }
