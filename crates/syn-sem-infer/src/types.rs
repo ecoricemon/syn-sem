@@ -8,7 +8,7 @@ pub enum Type<'cx> {
     /// Fixed-length array type.
     Array {
         /// Element type.
-        elem: TypeId,
+        elem_tid: TypeId,
         /// Array length expression shape.
         len: ArrayLen,
     },
@@ -21,19 +21,19 @@ pub enum Type<'cx> {
     /// Borrowed reference type.
     Reference {
         /// Referenced type.
-        elem: TypeId,
+        elem_tid: TypeId,
         /// Whether the reference is mutable.
         is_mut: bool,
     },
     /// Dynamically sized slice type.
     Slice {
         /// Element type.
-        elem: TypeId,
+        elem_tid: TypeId,
     },
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elems: Vec<TypeId>,
+        elem_tids: Vec<TypeId>,
     },
 }
 
@@ -126,9 +126,9 @@ pub struct PathType<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QSelf {
     /// Self type written inside `<...>`.
-    pub self_ty: TypeId,
+    pub self_tid: TypeId,
     /// Trait path in `<Self as Trait>`, when present.
-    pub trait_ty: Option<TypeId>,
+    pub trait_tid: Option<TypeId>,
 }
 
 /// Resolution state for a non-primitive path type.
@@ -156,12 +156,15 @@ pub struct ProjectionType {
     /// Associated type definition selected for the projection.
     pub assoc_type: DefId,
     /// Self type for the projection, when represented.
-    pub self_ty: Option<TypeId>,
+    pub self_tid: Option<TypeId>,
     /// Trait type for the projection, when represented.
-    pub trait_ty: Option<TypeId>,
+    pub trait_tid: Option<TypeId>,
 }
 
-/// Type path used by inference.
+/// Plain path segments used by inference.
+///
+/// Qualified self metadata belongs to [`PathType`]; this payload only stores the source-order
+/// segments shared by qualified and unqualified type paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path<'cx> {
     /// Path segments in source order.
@@ -174,12 +177,12 @@ pub struct PathSegment<'cx> {
     /// Segment name.
     pub name: syn_sem_name::Name<'cx>,
     /// Generic arguments on this segment.
-    pub args: Vec<GenericArgument<'cx>>,
+    pub args: Vec<GenericArg<'cx>>,
 }
 
 /// Generic argument shape used by inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GenericArgument<'cx> {
+pub enum GenericArg<'cx> {
     /// Type argument.
     Type(TypeId),
     /// Const expression argument.
@@ -189,7 +192,7 @@ pub enum GenericArgument<'cx> {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Assigned type.
-        ty: TypeId,
+        tid: TypeId,
     },
     /// Associated const equality.
     AssocConst {
@@ -203,7 +206,7 @@ pub enum GenericArgument<'cx> {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Source bounds.
-        bounds: TypeBounds<'cx>,
+        bounds: Vec<TypeParamBound<'cx>>,
     },
     /// Unsupported argument form.
     Unsupported,
@@ -256,25 +259,11 @@ impl<'cx> Lit<'cx> {
     }
 }
 
-/// Type bounds attached to an associated type constraint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeBounds<'cx> {
-    /// Bounds in source order.
-    pub bounds: Vec<TypeParamBound<'cx>>,
-}
-
 /// Type parameter bound shape used by inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
-    Trait(TraitBound<'cx>),
+    Trait(Path<'cx>),
     /// Unsupported bound form.
     Unsupported,
-}
-
-/// Trait bound shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraitBound<'cx> {
-    /// Trait path.
-    pub path: Path<'cx>,
 }

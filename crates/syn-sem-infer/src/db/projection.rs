@@ -48,11 +48,11 @@ impl ProjectionDb {
     /// Returns normalization results for one projection type occurrence.
     pub(crate) fn normalizations_for(
         &self,
-        projection: TypeId,
+        projection_tid: TypeId,
     ) -> impl Iterator<Item = &ProjectionNormalization> {
         self.normalizations
             .iter()
-            .filter(move |normalization| normalization.projection == projection)
+            .filter(move |normalization| normalization.projection_tid == projection_tid)
     }
 
     /// Returns the unique normalized value type for one associated type projection.
@@ -62,11 +62,11 @@ impl ProjectionDb {
     #[cfg(test)]
     pub(crate) fn normalized_type(
         &self,
-        projection: TypeId,
+        projection_tid: TypeId,
         is_projection: bool,
     ) -> Option<TypeId> {
-        match self.normalization(projection, is_projection) {
-            ProjectionNormalizationResult::Known(value_ty) => Some(value_ty),
+        match self.normalization(projection_tid, is_projection) {
+            ProjectionNormalizationResult::Known(value_tid) => Some(value_tid),
             ProjectionNormalizationResult::NotProjection
             | ProjectionNormalizationResult::NoNormalization
             | ProjectionNormalizationResult::Ambiguous => None,
@@ -76,24 +76,24 @@ impl ProjectionDb {
     /// Returns the normalization query result for one associated type projection.
     pub fn normalization(
         &self,
-        projection: TypeId,
+        projection_tid: TypeId,
         is_projection: bool,
     ) -> ProjectionNormalizationResult {
         if !is_projection {
             return ProjectionNormalizationResult::NotProjection;
         }
 
-        let mut normalizations = self.normalizations_for(projection);
-        let Some(value_ty) = normalizations
+        let mut normalizations = self.normalizations_for(projection_tid);
+        let Some(value_tid) = normalizations
             .next()
-            .map(|normalization| normalization.value_ty)
+            .map(|normalization| normalization.value_tid)
         else {
             return ProjectionNormalizationResult::NoNormalization;
         };
         if normalizations.next().is_some() {
             return ProjectionNormalizationResult::Ambiguous;
         }
-        ProjectionNormalizationResult::Known(value_ty)
+        ProjectionNormalizationResult::Known(value_tid)
     }
 }
 
@@ -111,10 +111,10 @@ impl ProjectionCollector {
                 continue;
             };
             projections.obligations.push(ProjectionObligation {
-                projection: TypeId::new(index),
+                projection_tid: TypeId::new(index),
                 assoc_type: projection.assoc_type,
-                self_ty: projection.self_ty,
-                trait_ty: projection.trait_ty,
+                self_tid: projection.self_tid,
+                trait_tid: projection.trait_tid,
             });
         }
 
@@ -126,54 +126,54 @@ impl ProjectionCollector {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionObligation {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
+    pub(crate) projection_tid: TypeId,
     /// Associated type definition selected by name lookup.
     pub(crate) assoc_type: DefId,
     /// Self type for the projection, when represented.
-    pub(crate) self_ty: Option<TypeId>,
+    pub(crate) self_tid: Option<TypeId>,
     /// Trait type for the projection, when represented.
-    pub(crate) trait_ty: Option<TypeId>,
+    pub(crate) trait_tid: Option<TypeId>,
 }
 
 /// Candidate trait selected for an associated type projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionCandidate {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
+    pub(crate) projection_tid: TypeId,
     /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
+    pub(crate) self_tid: TypeId,
     /// Associated type definition selected by name lookup.
     pub(crate) assoc_type: DefId,
     /// Candidate trait type that may provide the associated type.
-    pub(crate) trait_ty: TypeId,
+    pub(crate) trait_tid: TypeId,
 }
 
 /// Associated type projection matched against a concrete trait member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionMatch {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
+    pub(crate) projection_tid: TypeId,
     /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
+    pub(crate) self_tid: TypeId,
     /// Associated type member found in the candidate trait.
     pub(crate) assoc_type: DefId,
     /// Trait type that provides the associated type member.
-    pub(crate) trait_ty: TypeId,
+    pub(crate) trait_tid: TypeId,
 }
 
 /// Associated type projection normalized to an impl-provided value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionNormalization {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection: TypeId,
+    pub(crate) projection_tid: TypeId,
     /// Self type for the projection.
-    pub(crate) self_ty: TypeId,
+    pub(crate) self_tid: TypeId,
     /// Associated type member used for normalization.
     pub(crate) assoc_type: DefId,
     /// Trait type that provides the associated type member.
-    pub(crate) trait_ty: TypeId,
+    pub(crate) trait_tid: TypeId,
     /// Type assigned by the matching impl item.
-    pub(crate) value_ty: TypeId,
+    pub(crate) value_tid: TypeId,
 }
 
 /// Result of asking whether one projection type can normalize to a value type.

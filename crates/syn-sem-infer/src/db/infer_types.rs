@@ -1,8 +1,8 @@
 //! Inference-owned type storage and HIR type lowering.
 
 use crate::{
-    ArrayLen, ConstArg, GenericArgument, Path, PathSegment, PathType, PathTypeResolution,
-    PrimitiveType, ProjectionType, QSelf, TraitBound, Type, TypeBounds, TypeId, TypeParamBound,
+    ArrayLen, ConstArg, GenericArg, Path, PathSegment, PathType, PathTypeResolution, PrimitiveType,
+    ProjectionType, QSelf, Type, TypeId, TypeParamBound,
 };
 use std::ops::Index;
 use syn_sem_common::Map;
@@ -10,22 +10,28 @@ use syn_sem_hir as hir;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
 
 /// Inference-owned type arena and HIR type occurrence map.
+///
+/// HIR type ids name source occurrences, so lowering keeps each HIR occurrence mapped to its own
+/// inference type id. Occurrence-insensitive helper types may still be interned when that is safe.
+/// Distinct inference type ids can end up denoting the same final type after solving; for example,
+/// a generic parameter path `T` and a concrete path `u32` remain distinct stored types even if
+/// later obligations infer `T = u32`.
 #[derive(Debug, Default)]
 pub(crate) struct InferTypes<'cx> {
     types: Vec<Type<'cx>>,
-    hir_types: Map<hir::TypeId, TypeId>,
+    hir_to_infer: Map<hir::TypeId, TypeId>,
 }
 
 impl<'cx> InferTypes<'cx> {
     pub(super) fn collect_hir_types(&mut self, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) {
-        let mut lowerer = TypeLowerer::new(hir, names, self);
+        let mut ty_lowerer = TypeLowerer::new(hir, names, self);
         for ty in hir.types() {
-            lowerer.lower_hir_type(ty.id);
+            ty_lowerer.lower_hir_type(ty.tid);
         }
     }
 
-    pub(super) fn type_for_hir_type(&self, hir_type: hir::TypeId) -> Option<TypeId> {
-        self.hir_types.get(&hir_type).copied()
+    pub(super) fn type_for_hir_type(&self, hir_tid: hir::TypeId) -> Option<TypeId> {
+        self.hir_to_infer.get(&hir_tid).copied()
     }
 
     pub(super) fn as_slice(&self) -> &[Type<'cx>] {
@@ -40,21 +46,283 @@ impl<'cx> InferTypes<'cx> {
         self.types.len()
     }
 
-    fn next_type_id(&self) -> TypeId {
-        TypeId::new(self.types.len())
+    pub(crate) fn bind_hir_type(&mut self, hir_tid: hir::TypeId, tid: TypeId) {
+        self.hir_to_infer.insert(hir_tid, tid);
     }
 
-    pub(super) fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
-        let id = self.next_type_id();
-        self.types.push(ty);
-        id
-    }
-
-    pub(super) fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
-        if let Some(index) = self.types.iter().position(|existing| existing == &ty) {
-            return TypeId::new(index);
-        }
+    pub(crate) fn insert_fresh_type(&mut self, ty: Type<'cx>) -> TypeId {
         self.push_type(ty)
+    }
+
+    pub(crate) fn intern_type(&mut self, ty: Type<'cx>) -> TypeId {
+        let sharing = TypeSharing::new(&self.types);
+        for index in 0..self.types.len() {
+            let existing = TypeId::new(index);
+            if sharing.can_share_type_with(existing, &ty) {
+                return existing;
+            }
+        }
+
+        self.push_type(ty)
+    }
+
+    fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
+        let tid = TypeId::new(self.types.len());
+        self.types.push(ty);
+        tid
+    }
+}
+
+struct TypeSharing<'a, 'cx> {
+    types: &'a [Type<'cx>],
+}
+
+impl<'a, 'cx> TypeSharing<'a, 'cx> {
+    fn new(types: &'a [Type<'cx>]) -> Self {
+        Self { types }
+    }
+
+    fn can_share_type_with(&self, existing: TypeId, candidate: &Type<'cx>) -> bool {
+        self.can_share_type_with_inner(existing, candidate, &mut Vec::new())
+    }
+
+    fn can_share_type_ids(
+        &self,
+        left: TypeId,
+        right: TypeId,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        if seen.contains(&(left, right)) {
+            return true;
+        }
+        seen.push((left, right));
+        self.can_share_type_with_inner(left, &self.types[right.index()], seen)
+    }
+
+    fn can_share_type_with_inner(
+        &self,
+        existing: TypeId,
+        candidate: &Type<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (&self.types[existing.index()], candidate) {
+            (
+                Type::Array {
+                    elem_tid: left_elem,
+                    len: left_len,
+                },
+                Type::Array {
+                    elem_tid: right_elem,
+                    len: right_len,
+                },
+            ) => left_len == right_len && self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (Type::Infer, Type::Infer) => false,
+            (Type::Primitive(left), Type::Primitive(right)) => left == right,
+            (Type::Path(left), Type::Path(right)) => self.can_share_path_types(left, right, seen),
+            (
+                Type::Reference {
+                    elem_tid: left_elem,
+                    is_mut: left_mut,
+                },
+                Type::Reference {
+                    elem_tid: right_elem,
+                    is_mut: right_mut,
+                },
+            ) => left_mut == right_mut && self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (
+                Type::Slice {
+                    elem_tid: left_elem,
+                },
+                Type::Slice {
+                    elem_tid: right_elem,
+                },
+            ) => self.can_share_type_ids(*left_elem, *right_elem, seen),
+            (Type::Tuple { elem_tids: left }, Type::Tuple { elem_tids: right }) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| self.can_share_type_ids(*left, *right, seen))
+            }
+            _ => false,
+        }
+    }
+
+    fn can_share_path_types(
+        &self,
+        left: &PathType<'cx>,
+        right: &PathType<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        if !self.can_share_paths(&left.path, &right.path, seen)
+            || !self.can_share_path_resolutions(&left.resolution, &right.resolution, seen)
+        {
+            return false;
+        }
+        match (left.qself, right.qself) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_qself(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_path_resolutions(
+        &self,
+        left: &PathTypeResolution,
+        right: &PathTypeResolution,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (PathTypeResolution::Nominal(left), PathTypeResolution::Nominal(right)) => {
+                left == right
+            }
+            (PathTypeResolution::GenericParam(left), PathTypeResolution::GenericParam(right)) => {
+                left == right
+            }
+            (PathTypeResolution::Projection(left), PathTypeResolution::Projection(right)) => {
+                self.can_share_projection_types(left, right, seen)
+            }
+            (
+                PathTypeResolution::Ambiguous(_) | PathTypeResolution::Unresolved,
+                PathTypeResolution::Ambiguous(_) | PathTypeResolution::Unresolved,
+            ) => false,
+            _ => false,
+        }
+    }
+
+    fn can_share_projection_types(
+        &self,
+        left: &ProjectionType,
+        right: &ProjectionType,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.assoc_type == right.assoc_type
+            && self.can_share_optional_type_ids(left.self_tid, right.self_tid, seen)
+            && self.can_share_optional_type_ids(left.trait_tid, right.trait_tid, seen)
+    }
+
+    fn can_share_qself(&self, left: QSelf, right: QSelf, seen: &mut Vec<(TypeId, TypeId)>) -> bool {
+        if !self.can_share_type_ids(left.self_tid, right.self_tid, seen) {
+            return false;
+        }
+        match (left.trait_tid, right.trait_tid) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_type_ids(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_optional_type_ids(
+        &self,
+        left: Option<TypeId>,
+        right: Option<TypeId>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (None, None) => true,
+            (Some(left), Some(right)) => self.can_share_type_ids(left, right, seen),
+            _ => false,
+        }
+    }
+
+    fn can_share_paths(
+        &self,
+        left: &Path<'cx>,
+        right: &Path<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.segments.len() == right.segments.len()
+            && left
+                .segments
+                .iter()
+                .zip(&right.segments)
+                .all(|(left, right)| self.can_share_path_segments(left, right, seen))
+    }
+
+    fn can_share_path_segments(
+        &self,
+        left: &PathSegment<'cx>,
+        right: &PathSegment<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        left.name == right.name
+            && left.args.len() == right.args.len()
+            && left
+                .args
+                .iter()
+                .zip(&right.args)
+                .all(|(left, right)| self.can_share_generic_args(left, right, seen))
+    }
+
+    fn can_share_generic_args(
+        &self,
+        left: &GenericArg<'cx>,
+        right: &GenericArg<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (GenericArg::Type(left), GenericArg::Type(right)) => {
+                self.can_share_type_ids(*left, *right, seen)
+            }
+            (GenericArg::Const(left), GenericArg::Const(right)) => left == right,
+            (
+                GenericArg::AssocType {
+                    name: left_name,
+                    tid: left_tid,
+                },
+                GenericArg::AssocType {
+                    name: right_name,
+                    tid: right_tid,
+                },
+            ) => left_name == right_name && self.can_share_type_ids(*left_tid, *right_tid, seen),
+            (
+                GenericArg::AssocConst {
+                    name: left_name,
+                    value: left_value,
+                },
+                GenericArg::AssocConst {
+                    name: right_name,
+                    value: right_value,
+                },
+            ) => left_name == right_name && left_value == right_value,
+            (
+                GenericArg::Constraint {
+                    name: left_name,
+                    bounds: left_bounds,
+                },
+                GenericArg::Constraint {
+                    name: right_name,
+                    bounds: right_bounds,
+                },
+            ) => {
+                left_name == right_name
+                    && left_bounds.len() == right_bounds.len()
+                    && left_bounds
+                        .iter()
+                        .zip(right_bounds)
+                        .all(|(left, right)| self.can_share_type_param_bounds(left, right, seen))
+            }
+            (GenericArg::Unsupported, GenericArg::Unsupported) => false,
+            _ => false,
+        }
+    }
+
+    fn can_share_type_param_bounds(
+        &self,
+        left: &TypeParamBound<'cx>,
+        right: &TypeParamBound<'cx>,
+        seen: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
+        match (left, right) {
+            (TypeParamBound::Trait(left), TypeParamBound::Trait(right)) => {
+                self.can_share_paths(left, right, seen)
+            }
+            (TypeParamBound::Unsupported, TypeParamBound::Unsupported) => false,
+            _ => false,
+        }
     }
 }
 
@@ -81,34 +349,34 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         Self { hir, names, types }
     }
 
-    pub(super) fn lower_hir_type(&mut self, hir_type: hir::TypeId) -> TypeId {
-        if let Some(id) = self.types.type_for_hir_type(hir_type) {
+    pub(super) fn lower_hir_type(&mut self, hir_tid: hir::TypeId) -> TypeId {
+        if let Some(id) = self.types.type_for_hir_type(hir_tid) {
             return id;
         }
 
-        let ty = self.lower_type(hir_type, &self.hir[hir_type].kind);
-        let id = self.types.push_type(ty);
-        self.types.hir_types.insert(hir_type, id);
-        id
+        let ty = self.lower_type(hir_tid, &self.hir[hir_tid].kind);
+        let tid = self.types.insert_fresh_type(ty);
+        self.types.bind_hir_type(hir_tid, tid);
+        tid
     }
 
-    fn lower_type(&mut self, hir_type: hir::TypeId, kind: &hir::TypeKind<'cx>) -> Type<'cx> {
+    fn lower_type(&mut self, hir_tid: hir::TypeId, kind: &hir::TypeKind<'cx>) -> Type<'cx> {
         match kind {
-            hir::TypeKind::Array { elem, len } => Type::Array {
-                elem: self.lower_hir_type(*elem),
+            hir::TypeKind::Array { elem_tid, len } => Type::Array {
+                elem_tid: self.lower_hir_type(*elem_tid),
                 len: ArrayLen::from_hir(*len),
             },
             hir::TypeKind::Infer => Type::Infer,
-            hir::TypeKind::Path(path) => self.lower_path_type(hir_type, path),
-            hir::TypeKind::Reference { elem, is_mut } => Type::Reference {
-                elem: self.lower_hir_type(*elem),
+            hir::TypeKind::Path(path) => self.lower_path_type(hir_tid, path),
+            hir::TypeKind::Reference { elem_tid, is_mut } => Type::Reference {
+                elem_tid: self.lower_hir_type(*elem_tid),
                 is_mut: *is_mut,
             },
-            hir::TypeKind::Slice { elem } => Type::Slice {
-                elem: self.lower_hir_type(*elem),
+            hir::TypeKind::Slice { elem_tid } => Type::Slice {
+                elem_tid: self.lower_hir_type(*elem_tid),
             },
-            hir::TypeKind::Tuple { elems } => Type::Tuple {
-                elems: elems
+            hir::TypeKind::Tuple { elem_tids } => Type::Tuple {
+                elem_tids: elem_tids
                     .iter()
                     .map(|elem| self.lower_hir_type(*elem))
                     .collect(),
@@ -116,20 +384,20 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         }
     }
 
-    fn lower_path_type(&mut self, hir_type: hir::TypeId, path: &hir::Path<'cx>) -> Type<'cx> {
+    fn lower_path_type(&mut self, hir_tid: hir::TypeId, path: &hir::Path<'cx>) -> Type<'cx> {
         if path.qself.is_none() {
             if let Some(primitive) = PrimitiveType::from_hir_path(&path.segments) {
                 return Type::Primitive(primitive);
             }
         }
 
-        let scope = self.hir[hir_type].scope;
+        let scope = self.hir[hir_tid].scope;
         let qself = self.lower_qself(path.qself.as_ref(), scope);
-        let resolution = self.resolve_path_value(scope, &path.segments, qself.as_ref());
+        let resolution = self.resolve_path_type(qself.as_ref(), &path.segments, scope);
 
         Type::Path(PathType {
             qself,
-            path: self.lower_path_value(&path.segments),
+            path: self.lower_plain_path(&path.segments),
             resolution,
         })
     }
@@ -140,32 +408,33 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> Option<QSelf> {
         let qself = qself?;
-        let trait_ty = (!qself.trait_path.is_empty())
-            .then(|| self.lower_path_value_as_type(&qself.trait_path, scope));
+        let trait_tid = (!qself.trait_path.is_empty())
+            .then(|| self.lower_plain_path_as_type(&qself.trait_path, scope));
         Some(QSelf {
-            self_ty: self.lower_hir_type(qself.self_ty),
-            trait_ty,
+            self_tid: self.lower_hir_type(qself.self_tid),
+            trait_tid,
         })
     }
 
-    pub(super) fn lower_path_value_as_type(
+    pub(super) fn lower_plain_path_as_type(
         &mut self,
         path: &[hir::PathSegment<'cx>],
         scope: Option<ScopeId>,
     ) -> TypeId {
+        let resolution = self.resolve_path_type(None, path, scope);
         let ty = Type::Path(PathType {
             qself: None,
-            path: self.lower_path_value(path),
-            resolution: self.resolve_path_value(scope, path, None),
+            path: self.lower_plain_path(path),
+            resolution,
         });
-        self.types.push_type(ty)
+        self.types.intern_type(ty)
     }
 
-    fn resolve_path_value(
+    fn resolve_path_type(
         &self,
-        scope: Option<ScopeId>,
-        path: &[hir::PathSegment<'cx>],
         qself: Option<&QSelf>,
+        path: &[hir::PathSegment<'cx>],
+        scope: Option<ScopeId>,
     ) -> PathTypeResolution {
         if let Some(projection) = self.resolve_qself_trait_member(path, qself) {
             return projection;
@@ -192,8 +461,8 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         qself: Option<&QSelf>,
     ) -> Option<PathTypeResolution> {
         let qself = qself?;
-        let trait_ty = qself.trait_ty?;
-        let trait_def = self.trait_def_for_type(trait_ty)?;
+        let trait_tid = qself.trait_tid?;
+        let trait_def = self.trait_def_for_type(trait_tid)?;
         let assoc_name = path.last()?.name;
         let ResolveResult::Found(assoc_type) =
             self.names.member(trait_def, Namespace::Type, assoc_name)
@@ -205,13 +474,13 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         }
         Some(PathTypeResolution::Projection(ProjectionType {
             assoc_type,
-            self_ty: Some(qself.self_ty),
-            trait_ty: Some(trait_ty),
+            self_tid: Some(qself.self_tid),
+            trait_tid: Some(trait_tid),
         }))
     }
 
-    pub(super) fn trait_def_for_type(&self, ty: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &self.types[ty.index()] else {
+    pub(super) fn trait_def_for_type(&self, tid: TypeId) -> Option<DefId> {
+        let Type::Path(path) = &self.types[tid.index()] else {
             return None;
         };
         let PathTypeResolution::Nominal(def) = path.resolution else {
@@ -233,14 +502,14 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
             DefKind::GenericType => PathTypeResolution::GenericParam(def),
             DefKind::AssocType => PathTypeResolution::Projection(ProjectionType {
                 assoc_type: def,
-                self_ty: qself.map(|qself| qself.self_ty),
-                trait_ty: qself.and_then(|qself| qself.trait_ty),
+                self_tid: qself.map(|qself| qself.self_tid),
+                trait_tid: qself.and_then(|qself| qself.trait_tid),
             }),
             _ => PathTypeResolution::Unresolved,
         }
     }
 
-    fn lower_path_value(&mut self, path: &[hir::PathSegment<'cx>]) -> Path<'cx> {
+    fn lower_plain_path(&mut self, path: &[hir::PathSegment<'cx>]) -> Path<'cx> {
         Path {
             segments: path
                 .iter()
@@ -260,48 +529,47 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
         }
     }
 
-    fn lower_generic_arg(&mut self, arg: &hir::GenericArg<'cx>) -> GenericArgument<'cx> {
+    fn lower_generic_arg(&mut self, arg: &hir::GenericArg<'cx>) -> GenericArg<'cx> {
         match arg {
-            hir::GenericArg::Type(ty) => GenericArgument::Type(self.lower_hir_type(*ty)),
-            hir::GenericArg::Const(value) => GenericArgument::Const(self.lower_const_arg(value)),
-            hir::GenericArg::AssocType { name, ty } => GenericArgument::AssocType {
+            hir::GenericArg::Type(tid) => GenericArg::Type(self.lower_hir_type(*tid)),
+            hir::GenericArg::Const(value) => GenericArg::Const(self.lower_const_arg(value)),
+            hir::GenericArg::AssocType { name, tid } => GenericArg::AssocType {
                 name: *name,
-                ty: self.lower_hir_type(*ty),
+                tid: self.lower_hir_type(*tid),
             },
-            hir::GenericArg::AssocConst { name, value } => GenericArgument::AssocConst {
+            hir::GenericArg::AssocConst { name, value } => GenericArg::AssocConst {
                 name: *name,
                 value: self.lower_const_arg(value),
             },
-            hir::GenericArg::Constraint { name, bounds } => GenericArgument::Constraint {
+            hir::GenericArg::Constraint { name, bounds } => GenericArg::Constraint {
                 name: *name,
                 bounds: self.lower_type_bounds(bounds),
             },
-            hir::GenericArg::Unsupported => GenericArgument::Unsupported,
+            hir::GenericArg::Unsupported => GenericArg::Unsupported,
         }
     }
 
     fn lower_const_arg(&mut self, arg: &hir::ConstArg<'cx>) -> ConstArg<'cx> {
         match arg {
             hir::ConstArg::Lit(lit) => ConstArg::Lit(crate::Lit::from_hir(lit)),
-            hir::ConstArg::Path(path) => ConstArg::Path(self.lower_path_value(&path.segments)),
+            hir::ConstArg::Path(path) => ConstArg::Path(self.lower_plain_path(&path.segments)),
             hir::ConstArg::Expr(expr) => ConstArg::Expr(*expr),
         }
     }
 
-    fn lower_type_bounds(&mut self, bounds: &[hir::TypeParamBound<'cx>]) -> TypeBounds<'cx> {
-        TypeBounds {
-            bounds: bounds
-                .iter()
-                .map(|bound| self.lower_type_param_bound(bound))
-                .collect(),
-        }
+    fn lower_type_bounds(
+        &mut self,
+        bounds: &[hir::TypeParamBound<'cx>],
+    ) -> Vec<TypeParamBound<'cx>> {
+        bounds
+            .iter()
+            .map(|bound| self.lower_type_param_bound(bound))
+            .collect()
     }
 
     fn lower_type_param_bound(&mut self, bound: &hir::TypeParamBound<'cx>) -> TypeParamBound<'cx> {
         match bound {
-            hir::TypeParamBound::Trait(bound) => TypeParamBound::Trait(TraitBound {
-                path: self.lower_path_value(&bound.path),
-            }),
+            hir::TypeParamBound::Trait(path) => TypeParamBound::Trait(self.lower_plain_path(path)),
             hir::TypeParamBound::Unsupported => TypeParamBound::Unsupported,
         }
     }

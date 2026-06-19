@@ -7,7 +7,7 @@ use syn_sem_name::NameDb;
 
 pub(super) struct TraitBoundFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
-    lowerer: TypeLowerer<'a, 'cx>,
+    ty_lowerer: TypeLowerer<'a, 'cx>,
     facts: Vec<TraitBoundFact>,
 }
 
@@ -19,7 +19,7 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
     ) -> Vec<TraitBoundFact> {
         Self {
             hir,
-            lowerer: TypeLowerer::new(hir, names, types),
+            ty_lowerer: TypeLowerer::new(hir, names, types),
             facts: Vec::new(),
         }
         .collect_inner()
@@ -46,18 +46,25 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
 
     fn collect_generics(&mut self, generics: &hir::Generics<'cx>) {
         for predicate in &generics.predicates {
-            let hir::WherePredicate::TypeBound { subject, bounds } = predicate else {
+            let hir::WherePredicate::TypeBound {
+                subject_tid,
+                bounds,
+            } = predicate
+            else {
                 continue;
             };
-            let subject = self.lowerer.lower_hir_type(*subject);
+            let subject_tid = self.ty_lowerer.lower_hir_type(*subject_tid);
             for bound in bounds {
-                let hir::TypeParamBound::Trait(bound) = bound else {
+                let hir::TypeParamBound::Trait(path) = bound else {
                     continue;
                 };
-                let trait_ty = self
-                    .lowerer
-                    .lower_path_value_as_type(&bound.path, generics.scope);
-                self.facts.push(TraitBoundFact { subject, trait_ty });
+                let trait_tid = self
+                    .ty_lowerer
+                    .lower_plain_path_as_type(path, generics.scope);
+                self.facts.push(TraitBoundFact {
+                    subject_tid,
+                    trait_tid,
+                });
             }
         }
     }

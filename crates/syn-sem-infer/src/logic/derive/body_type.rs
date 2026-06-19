@@ -30,8 +30,8 @@ impl<'a, 'cx> BodyTypeDeriver<'a, 'cx> {
         let subjects = body_type_subjects(self.db);
         let mut resolved = Vec::new();
         for subject in subjects {
-            for ty in logic.resolved_types(subject) {
-                let fact = ResolvedTypeFact { subject, ty };
+            for tid in logic.resolved_types(subject) {
+                let fact = ResolvedTypeFact { subject, tid };
                 if !resolved.contains(&fact) {
                     resolved.push(fact);
                 }
