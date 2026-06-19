@@ -13,11 +13,9 @@
 mod db;
 mod id;
 mod logic;
-mod obligations;
 mod types;
 
 pub use db::projection::*;
 pub use db::*;
 pub use id::*;
-pub(crate) use obligations::*;
 pub use types::*;

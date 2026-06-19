@@ -1,18 +1,18 @@
 //! Trait-bound fact collection for inference.
 
 use super::infer_types::{InferTypes, TypeLowerer};
-use crate::TraitBoundFact;
+use crate::TypeId;
 use syn_sem_hir as hir;
 use syn_sem_name::NameDb;
 
-pub(super) struct TraitBoundFactCollector<'a, 'cx> {
+pub(crate) struct TraitBoundFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
     facts: Vec<TraitBoundFact>,
 }
 
 impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
-    pub(super) fn collect(
+    pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
@@ -68,4 +68,16 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
             }
         }
     }
+}
+
+/// One trait bound fact collected as solver input.
+///
+/// A type-bound predicate can contain multiple bounds, such as `T: Debug + Clone`;
+/// inference flattens that into one fact per trait bound, e.g. `T: Debug` and `T: Clone`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TraitBoundFact {
+    /// Type constrained by the trait bound.
+    pub(crate) subject_tid: TypeId,
+    /// Trait type required by the bound.
+    pub(crate) trait_tid: TypeId,
 }

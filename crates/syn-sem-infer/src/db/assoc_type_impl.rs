@@ -1,11 +1,11 @@
 //! Associated type implementation fact collection for inference.
 
 use super::infer_types::{InferTypes, TypeLowerer};
-use crate::AssocTypeImplFact;
+use crate::TypeId;
 use syn_sem_hir as hir;
-use syn_sem_name::{NameDb, Namespace, ResolveResult};
+use syn_sem_name::{DefId, NameDb, Namespace, ResolveResult};
 
-pub(super) struct AssocTypeImplFactCollector<'a, 'cx> {
+pub(crate) struct AssocTypeImplFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
@@ -13,7 +13,7 @@ pub(super) struct AssocTypeImplFactCollector<'a, 'cx> {
 }
 
 impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
-    pub(super) fn collect(
+    pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
@@ -69,4 +69,21 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
         }
         self.facts
     }
+}
+
+/// Associated type value assigned by a trait implementation.
+///
+/// For example, `impl Iterator for Vec { type Item = u32; }` lowers to one fact whose
+/// `impl_self_tid` is `Vec`, `trait_tid` is `Iterator`, `assoc_type` is the definition of
+/// `Iterator::Item`, and `value_tid` is `u32`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AssocTypeImplFact {
+    /// Implementing self type in `impl Trait for Self`.
+    pub(crate) impl_self_tid: TypeId,
+    /// Implemented trait type in `impl Trait for Self`.
+    pub(crate) trait_tid: TypeId,
+    /// Associated type definition assigned by the impl item.
+    pub(crate) assoc_type: DefId,
+    /// Type assigned by the impl item.
+    pub(crate) value_tid: TypeId,
 }

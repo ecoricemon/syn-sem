@@ -4,20 +4,52 @@ mod infer_types;
 pub(crate) mod projection;
 mod trait_bound;
 
-use crate::{
-    logic, AssocTypeImplFact, GenericArg, Path, PathSegment, PathType, PathTypeResolution,
-    ProjectionDb, ProjectionNormalizationResult, ProjectionType, QSelf, TraitBoundFact, Type,
-    TypeId, TypeParamBound,
+pub(crate) use assoc_type_impl::{AssocTypeImplFact, AssocTypeImplFactCollector};
+pub(crate) use body_type::{
+    BodyTypeCollector, BodyTypeDb, ResolvedTypeFact, TypeEqualFact, TypeSubject,
 };
-use assoc_type_impl::AssocTypeImplFactCollector;
-use body_type::{BodyTypeCollector, BodyTypeDb};
-use infer_types::InferTypes;
-use projection::ProjectionCollector;
+pub(crate) use infer_types::InferTypes;
+pub(crate) use projection::ProjectionCollector;
+pub(crate) use trait_bound::{TraitBoundFact, TraitBoundFactCollector};
+
+use crate::{
+    logic, GenericArg, Path, PathSegment, PathType, PathTypeResolution, ProjectionDb,
+    ProjectionNormalizationResult, ProjectionType, QSelf, Type, TypeId, TypeParamBound,
+};
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb};
-use trait_bound::TraitBoundFactCollector;
+
+pub(crate) struct InferDbBuilder<'a, 'cx> {
+    hir: &'a hir::Hir<'cx>,
+    names: &'a NameDb<'cx>,
+}
+
+impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
+    pub(crate) fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
+        Self { hir, names }
+    }
+
+    pub(crate) fn build(self) -> InferDb<'cx> {
+        let mut types = InferTypes::default();
+        let trait_bound_facts = TraitBoundFactCollector::collect(self.hir, self.names, &mut types);
+        types.collect_hir_types(self.hir, self.names);
+        let assoc_type_impl_facts =
+            AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
+        let body_types = BodyTypeCollector::collect(self.hir, self.names, &mut types);
+        let projections = ProjectionCollector::collect(&types);
+
+        InferDb {
+            types,
+            projections,
+            body_types,
+            trait_bound_facts,
+            assoc_type_impl_facts,
+            recursive_normalizations: Map::default(),
+        }
+    }
+}
 
 /// Type information collected for upper semantic inference.
 #[derive(Debug, Default)]
@@ -358,36 +390,6 @@ impl<'cx> Index<TypeId> for InferDb<'cx> {
 
     fn index(&self, id: TypeId) -> &Self::Output {
         &self.types[id.index()]
-    }
-}
-
-pub(crate) struct InferDbBuilder<'a, 'cx> {
-    hir: &'a hir::Hir<'cx>,
-    names: &'a NameDb<'cx>,
-}
-
-impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
-    pub(crate) fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
-        Self { hir, names }
-    }
-
-    pub(crate) fn build(self) -> InferDb<'cx> {
-        let mut types = InferTypes::default();
-        let trait_bound_facts = TraitBoundFactCollector::collect(self.hir, self.names, &mut types);
-        types.collect_hir_types(self.hir, self.names);
-        let assoc_type_impl_facts =
-            AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
-        let projections = ProjectionCollector::collect(types.as_slice());
-        let body_types = BodyTypeCollector::collect(self.hir, self.names, &mut types);
-
-        InferDb {
-            types,
-            projections,
-            body_types,
-            trait_bound_facts,
-            assoc_type_impl_facts,
-            recursive_normalizations: Map::default(),
-        }
     }
 }
 

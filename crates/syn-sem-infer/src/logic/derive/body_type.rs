@@ -82,11 +82,11 @@ impl<'a, 'cx> BodyTypeLogic<'a, 'cx> {
         for fact in &self.infer.body_types.equalities {
             self.insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (index, ty) in self.infer.types.iter().enumerate() {
+        for (tid, ty) in self.infer.types.iter() {
             if matches!(ty, Type::Infer) {
                 continue;
             }
-            self.insert_clause(term::concrete_type_clause(self.ccx, TypeId::new(index)));
+            self.insert_clause(term::concrete_type_clause(self.ccx, tid));
         }
         self.db.commit();
     }

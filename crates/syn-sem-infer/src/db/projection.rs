@@ -1,10 +1,34 @@
 //! Projection-specific facts and query helpers for inference.
 
-use crate::{
-    ImplSelfMatch, PathTypeResolution, ProjectionType, Type, TypeBindingFact, TypeId,
-    TypeSubstitution,
-};
+use crate::{InferTypes, PathType, PathTypeResolution, ProjectionType, Type, TypeId};
 use syn_sem_name::DefId;
+
+pub(crate) struct ProjectionCollector;
+
+impl ProjectionCollector {
+    pub(crate) fn collect(types: &InferTypes<'_>) -> ProjectionDb {
+        let mut projections = ProjectionDb::default();
+
+        for (tid, ty) in types.iter() {
+            let Type::Path(PathType {
+                resolution: PathTypeResolution::Projection(projection),
+                ..
+            }) = ty
+            else {
+                continue;
+            };
+
+            projections.obligations.push(ProjectionObligation {
+                projection_tid: tid,
+                assoc_type: projection.assoc_type,
+                self_tid: projection.self_tid,
+                trait_tid: projection.trait_tid,
+            });
+        }
+
+        projections
+    }
+}
 
 /// Associated type projection facts owned by inference.
 ///
@@ -97,31 +121,6 @@ impl ProjectionDb {
     }
 }
 
-pub(super) struct ProjectionCollector;
-
-impl ProjectionCollector {
-    pub(super) fn collect(types: &[Type<'_>]) -> ProjectionDb {
-        let mut projections = ProjectionDb::default();
-
-        for (index, ty) in types.iter().enumerate() {
-            let Type::Path(path) = ty else {
-                continue;
-            };
-            let PathTypeResolution::Projection(projection) = &path.resolution else {
-                continue;
-            };
-            projections.obligations.push(ProjectionObligation {
-                projection_tid: TypeId::new(index),
-                assoc_type: projection.assoc_type,
-                self_tid: projection.self_tid,
-                trait_tid: projection.trait_tid,
-            });
-        }
-
-        projections
-    }
-}
-
 /// Associated type projection that needs solver work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionObligation {
@@ -159,6 +158,45 @@ pub(crate) struct ProjectionMatch {
     pub(crate) assoc_type: DefId,
     /// Trait type that provides the associated type member.
     pub(crate) trait_tid: TypeId,
+}
+
+/// Impl self type pattern matched against a projection self type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImplSelfMatch {
+    /// Self type from the projection, such as `Vec<u32>`.
+    pub(crate) projection_self_tid: TypeId,
+    /// Self type from the impl header, such as `Vec<T>`.
+    pub(crate) impl_self_tid: TypeId,
+}
+
+/// Generic type binding discovered while matching an impl self type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeBindingFact {
+    /// Self type from the projection, such as `Vec<u32>`.
+    pub(crate) projection_self_tid: TypeId,
+    /// Self type from the impl header, such as `Vec<T>`.
+    pub(crate) impl_self_tid: TypeId,
+    /// Generic type occurrence from the impl self type, such as `T`.
+    pub(crate) generic_tid: TypeId,
+    /// Type argument matched for the generic, such as `u32`.
+    pub(crate) arg_tid: TypeId,
+}
+
+/// Type substitution fact used while normalizing associated type projections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeSubstitution {
+    /// Self type from the projection that requested the substitution.
+    pub(crate) projection_self_tid: TypeId,
+    /// Self type from the impl header whose value type is substituted.
+    pub(crate) impl_self_tid: TypeId,
+    /// Type before substitution, such as `T`.
+    pub(crate) value_tid: TypeId,
+    /// Generic type occurrence being substituted, such as `T`.
+    pub(crate) generic_tid: TypeId,
+    /// Type argument used for the generic, such as `u32`.
+    pub(crate) arg_tid: TypeId,
+    /// Type after substitution, such as `u32`.
+    pub(crate) substituted_tid: TypeId,
 }
 
 /// Associated type projection normalized to an impl-provided value type.
