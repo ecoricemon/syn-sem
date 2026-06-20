@@ -9,7 +9,7 @@
 //! - Hides direct AST traversal from upper semantic phases.
 //! - Preserves Rust source declaration, type, block, statement, local binding, pattern, and
 //!   expression spine through stable id-based arenas.
-//! - Owns lowered semantic inputs such as generic predicates and body facts for upper-phase
+//! - Owns lowered semantic inputs such as generic predicates and lowered blocks for upper-phase
 //!   consumers.
 //! - Stores connection ids such as `DefId` and `ScopeId`, while leaving resolved name, import,
 //!   visibility, and type facts to other semantic phases.

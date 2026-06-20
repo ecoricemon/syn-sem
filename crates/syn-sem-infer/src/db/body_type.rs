@@ -55,7 +55,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         for expr in self.hir.exprs() {
             match &expr.kind {
                 hir::ExprKind::Block { block } | hir::ExprKind::Const { block } => {
-                    if let Some(tail_expr) = self.hir.body()[*block].tail_expr {
+                    if let Some(tail_expr) = self.hir.lowered_blocks()[*block].tail_expr {
                         self.intern_type_equal(
                             TypeSubject::Expr(expr.id),
                             TypeSubject::Expr(tail_expr),
@@ -114,7 +114,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             else {
                 continue;
             };
-            let Some(tail_expr) = self.hir.body()[block].tail_expr else {
+            let Some(tail_expr) = self.hir.lowered_blocks()[block].tail_expr else {
                 continue;
             };
             let Some(return_param) = self.hir[signature].params.first() else {
@@ -131,7 +131,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     }
 
     fn collect_body_facts(&mut self) {
-        for block in self.hir.body().blocks() {
+        for block in self.hir.lowered_blocks().blocks() {
             for stmt in &block.stmts {
                 let hir::lower::Stmt::Local(local) = stmt else {
                     continue;
@@ -373,7 +373,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected local statement followed by tail expression");
         };
@@ -414,7 +414,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(int_local), hir::lower::Stmt::Local(float_local)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected two local statements");
         };
@@ -496,7 +496,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(typed_local), hir::lower::Stmt::Local(untyped_local)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected two local statements");
         };
@@ -534,7 +534,7 @@ mod tests {
         );
 
         let block = function_block(&hir, "f");
-        let [hir::lower::Stmt::Local(local)] = hir.body()[block].stmts.as_slice() else {
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
             panic!("expected one local statement");
         };
         let init = local.init.expect("local should have initializer");
@@ -556,7 +556,7 @@ mod tests {
     ) {
         let block = function_block(hir, name);
         let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected local statement followed by tail expression");
         };
