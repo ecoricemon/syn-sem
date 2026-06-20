@@ -1,109 +1,29 @@
 //! Body-local type facts and resolved type mappings for inference.
 
 use super::infer_types::InferTypes;
-use crate::{
-    BodyBlockFact, BodyLocalFact, PrimitiveType, ResolvedTypeFact, Type, TypeEqualFact, TypeId,
-    TypeSubject,
-};
+use crate::{PrimitiveType, Type, TypeId};
 use syn_sem_common::Map;
 use syn_sem_hir as hir;
-use syn_sem_name::{DefId, NameDb, ResolveResult};
+use syn_sem_name as name;
 
-/// Body-local type facts owned by inference.
-#[derive(Debug, Default)]
-pub(crate) struct BodyTypeDb {
-    /// Lowered block facts collected from HIR body lowering.
-    pub(crate) blocks: Vec<BodyBlockFact>,
-    /// Lowered local facts collected from HIR body lowering.
-    pub(crate) locals: Vec<BodyLocalFact>,
-    /// Body-local type equality facts.
-    pub(crate) equalities: Vec<TypeEqualFact>,
-    /// Concrete body-local type resolutions derived from equality facts.
-    pub(crate) resolved: Vec<ResolvedTypeFact>,
-    /// Resolved concrete types linked to HIR expression occurrences.
-    pub(crate) expr_types: Map<hir::ExprId, TypeId>,
-    /// Resolved concrete types linked to definitions.
-    pub(crate) def_types: Map<DefId, TypeId>,
-}
-
-impl BodyTypeDb {
-    /// Returns the resolved concrete type linked to a HIR expression occurrence.
-    pub(crate) fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
-        self.expr_types.get(&hir_expr).copied()
-    }
-
-    /// Returns the resolved concrete type linked to a definition.
-    pub(crate) fn type_for_def(&self, def: DefId) -> Option<TypeId> {
-        self.def_types.get(&def).copied()
-    }
-
-    /// Records a body-local type equality fact.
-    pub(crate) fn push_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
-        let fact = TypeEqualFact { left, right };
-        if !self.equalities.contains(&fact) {
-            self.equalities.push(fact);
-        }
-    }
-
-    /// Records resolved concrete types derived from equality facts.
-    pub(crate) fn extend_resolved(&mut self, resolved: Vec<ResolvedTypeFact>) {
-        for fact in &resolved {
-            match fact.subject {
-                TypeSubject::Def(def) => {
-                    self.def_types.entry(def).or_insert(fact.tid);
-                }
-                TypeSubject::Expr(expr) => {
-                    self.expr_types.entry(expr).or_insert(fact.tid);
-                }
-                TypeSubject::Type(_) => {}
-            }
-        }
-        self.resolved.extend(resolved);
-    }
-
-    /// Returns lowered block facts collected from HIR body lowering.
-    #[cfg(test)]
-    pub(crate) fn blocks(&self) -> &[BodyBlockFact] {
-        &self.blocks
-    }
-
-    /// Returns lowered local facts collected from HIR body lowering.
-    #[cfg(test)]
-    pub(crate) fn locals(&self) -> &[BodyLocalFact] {
-        &self.locals
-    }
-
-    /// Returns body-local type equality facts.
-    #[cfg(test)]
-    pub(crate) fn equalities(&self) -> &[TypeEqualFact] {
-        &self.equalities
-    }
-
-    /// Returns concrete body-local type resolutions derived from equality facts.
-    #[cfg(test)]
-    pub(crate) fn resolved(&self) -> &[ResolvedTypeFact] {
-        &self.resolved
-    }
-}
-
-pub(super) struct BodyTypeCollector<'a, 'cx> {
+pub(crate) struct BodyTypeCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
-    names: &'a NameDb<'cx>,
+    names: &'a name::NameDb<'cx>,
     types: &'a mut InferTypes<'cx>,
-    body_types: BodyTypeDb,
+    body_equalities: Vec<TypeEqualFact>,
 }
 
 impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
-    pub(super) fn collect(
+    pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
-        names: &'a NameDb<'cx>,
+        names: &'a name::NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
     ) -> BodyTypeDb {
         Self {
             hir,
             names,
             types,
-            body_types: BodyTypeDb::default(),
+            body_equalities: Vec::new(),
         }
         .collect_inner()
     }
@@ -112,13 +32,21 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         self.collect_signature_facts();
         self.collect_expr_facts();
         self.collect_body_facts();
-        self.body_types
+
+        BodyTypeDb {
+            equalities: self.body_equalities,
+            resolved: Vec::new(),
+            expr_types: Map::default(),
+            def_types: Map::default(),
+        }
     }
 
     fn collect_signature_facts(&mut self) {
         for signature in self.hir.signatures() {
             for param in signature.params.iter().skip(1) {
-                self.collect_pat_type_facts(param.pat, param.tid);
+                if let Some(pat) = param.pat {
+                    self.collect_pat_type_facts(pat, param.ty_id);
+                }
             }
         }
     }
@@ -128,32 +56,38 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             match &expr.kind {
                 hir::ExprKind::Block { block } | hir::ExprKind::Const { block } => {
                     if let Some(tail_expr) = self.hir.body()[*block].tail_expr {
-                        self.push_type_equal(
+                        self.intern_type_equal(
                             TypeSubject::Expr(expr.id),
                             TypeSubject::Expr(tail_expr),
                         );
                     }
                 }
-                hir::ExprKind::Cast { tid, .. } => {
-                    self.push_type_equal(
+                hir::ExprKind::Cast { ty_id, .. } => {
+                    self.intern_type_equal(
                         TypeSubject::Expr(expr.id),
                         TypeSubject::Type(
-                            self.type_for_hir_type(*tid)
+                            self.types
+                                .type_for_hir_type(*ty_id)
                                 .expect("HIR types are lowered before body facts"),
                         ),
                     );
                 }
                 hir::ExprKind::Lit(lit) => {
-                    if let Some(ty) = self.lit_type(lit) {
-                        self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Type(ty));
+                    if let Some(ty_id) = self.lit_type(lit) {
+                        self.intern_type_equal(
+                            TypeSubject::Expr(expr.id),
+                            TypeSubject::Type(ty_id),
+                        );
                     }
                 }
                 hir::ExprKind::Paren { expr: inner } => {
-                    self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Expr(*inner));
+                    self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Expr(*inner));
                 }
                 hir::ExprKind::Path(path) => {
-                    if let Some(def) = resolve_value_path(self.names, expr.scope, &path.segments) {
-                        self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Def(def));
+                    if let Some(def) =
+                        Self::resolve_value_path(self.names, expr.scope, &path.segments)
+                    {
+                        self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Def(def));
                     }
                 }
                 hir::ExprKind::Array { .. }
@@ -186,30 +120,22 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             let Some(return_param) = self.hir[signature].params.first() else {
                 continue;
             };
-            let Some(return_tid) = self.type_for_hir_type(return_param.tid) else {
+            let Some(return_ty_id) = self.types.type_for_hir_type(return_param.ty_id) else {
                 continue;
             };
-            self.push_type_equal(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_tid));
+            self.intern_type_equal(
+                TypeSubject::Expr(tail_expr),
+                TypeSubject::Type(return_ty_id),
+            );
         }
     }
 
     fn collect_body_facts(&mut self) {
         for block in self.hir.body().blocks() {
-            self.body_types.blocks.push(BodyBlockFact {
-                block: block.block,
-                tail_expr: block.tail_expr,
-            });
-
             for stmt in &block.stmts {
                 let hir::lower::Stmt::Local(local) = stmt else {
                     continue;
                 };
-                self.body_types.locals.push(BodyLocalFact {
-                    block: block.block,
-                    local: local.local,
-                    bindings: local.bindings.clone(),
-                    init: local.init,
-                });
                 self.collect_local_facts(local);
             }
         }
@@ -221,23 +147,19 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn collect_pat_type_facts(&mut self, pat: Option<hir::PatId>, hir_tid: hir::TypeId) {
-        let Some(pat) = pat else {
-            return;
-        };
-        let Some(tid) = self.type_for_hir_type(hir_tid) else {
-            return;
-        };
-        self.bind_pat_to_type(pat, tid);
+    fn collect_pat_type_facts(&mut self, pat: hir::PatId, hir_ty_id: hir::TypeId) {
+        if let Some(ty_id) = self.types.type_for_hir_type(hir_ty_id) {
+            self.bind_pat_to_type(pat, ty_id);
+        }
     }
 
-    fn bind_pat_to_type(&mut self, pat: hir::PatId, tid: TypeId) {
+    fn bind_pat_to_type(&mut self, pat: hir::PatId, ty_id: TypeId) {
         match &self.hir[pat].kind {
             hir::PatKind::Ident { def: Some(def), .. } => {
-                self.push_type_equal(TypeSubject::Def(*def), TypeSubject::Type(tid));
+                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Type(ty_id));
             }
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
-                self.bind_pat_to_type(*pat, tid);
+                self.bind_pat_to_type(*pat, ty_id);
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
@@ -257,15 +179,15 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     fn bind_pat_to_expr(&mut self, pat: hir::PatId, expr: hir::ExprId) {
         match &self.hir[pat].kind {
             hir::PatKind::Ident { def: Some(def), .. } => {
-                self.push_type_equal(TypeSubject::Def(*def), TypeSubject::Expr(expr));
+                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Expr(expr));
             }
             hir::PatKind::Reference { pat, .. } => self.bind_pat_to_expr(*pat, expr),
-            hir::PatKind::Type { pat, tid } => {
-                let Some(tid) = self.type_for_hir_type(*tid) else {
+            hir::PatKind::Type { pat, ty_id } => {
+                let Some(ty_id) = self.types.type_for_hir_type(*ty_id) else {
                     return;
                 };
-                self.bind_pat_to_type(*pat, tid);
-                self.push_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(tid));
+                self.bind_pat_to_type(*pat, ty_id);
+                self.intern_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(ty_id));
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
@@ -275,32 +197,120 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn type_for_hir_type(&self, hir_tid: hir::TypeId) -> Option<TypeId> {
-        self.types.type_for_hir_type(hir_tid)
-    }
-
     fn lit_type(&mut self, lit: &hir::Lit<'cx>) -> Option<TypeId> {
         match lit {
             hir::Lit::Bool(_) => Some(self.types.intern_type(Type::Primitive(PrimitiveType::Bool))),
-            hir::Lit::Int(_) | hir::Lit::Float(_) => None,
+            hir::Lit::Int(_) => Some(
+                self.types
+                    .insert_fresh_type(Type::Primitive(PrimitiveType::AbstractInt)),
+            ),
+            hir::Lit::Float(_) => Some(
+                self.types
+                    .insert_fresh_type(Type::Primitive(PrimitiveType::AbstractFloat)),
+            ),
         }
     }
 
-    fn push_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
-        self.body_types.push_type_equal(left, right);
+    fn intern_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
+        let fact = TypeEqualFact { left, right };
+        if !self.body_equalities.contains(&fact) {
+            self.body_equalities.push(fact);
+        }
+    }
+
+    fn resolve_value_path(
+        names: &name::NameDb<'cx>,
+        scope: Option<syn_sem_name::ScopeId>,
+        path: &[hir::PathSegment<'cx>],
+    ) -> Option<syn_sem_name::DefId> {
+        let scope = scope?;
+        match names.resolve_value_path(scope, path.iter().map(|segment| segment.name)) {
+            name::ResolveResult::Found(def) => Some(def),
+            name::ResolveResult::Ambiguous(_) | name::ResolveResult::NotFound => None,
+        }
     }
 }
 
-fn resolve_value_path<'cx>(
-    names: &NameDb<'cx>,
-    scope: Option<syn_sem_name::ScopeId>,
-    path: &[hir::PathSegment<'cx>],
-) -> Option<syn_sem_name::DefId> {
-    let scope = scope?;
-    match names.resolve_value_path(scope, path.iter().map(|segment| segment.name)) {
-        ResolveResult::Found(def) => Some(def),
-        ResolveResult::Ambiguous(_) | ResolveResult::NotFound => None,
+/// Body-local type facts owned by inference.
+#[derive(Debug, Default)]
+pub(crate) struct BodyTypeDb {
+    /// Body-local type equality facts.
+    pub(crate) equalities: Vec<TypeEqualFact>,
+    /// Body-local type resolutions derived from equality facts.
+    pub(crate) resolved: Vec<ResolvedTypeFact>,
+    /// Resolved types linked to HIR expression occurrences.
+    pub(crate) expr_types: Map<hir::ExprId, TypeId>,
+    /// Resolved types linked to definitions.
+    pub(crate) def_types: Map<name::DefId, TypeId>,
+}
+
+impl BodyTypeDb {
+    /// Returns the resolved type linked to a HIR expression occurrence.
+    pub(crate) fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
+        self.expr_types.get(&hir_expr).copied()
     }
+
+    /// Returns the resolved type linked to a definition.
+    pub(crate) fn type_for_def(&self, def: name::DefId) -> Option<TypeId> {
+        self.def_types.get(&def).copied()
+    }
+
+    /// Records resolved body-local types derived from equality facts.
+    pub(crate) fn extend_resolved(&mut self, resolved: Vec<ResolvedTypeFact>) {
+        for fact in &resolved {
+            match fact.subject {
+                TypeSubject::Def(def) => {
+                    self.def_types.entry(def).or_insert(fact.ty_id);
+                }
+                TypeSubject::Expr(expr) => {
+                    self.expr_types.entry(expr).or_insert(fact.ty_id);
+                }
+                TypeSubject::Type(_) => {}
+            }
+        }
+        self.resolved.extend(resolved);
+    }
+
+    /// Returns body-local type equality facts.
+    #[cfg(test)]
+    pub(crate) fn equalities(&self) -> &[TypeEqualFact] {
+        &self.equalities
+    }
+
+    /// Returns body-local type resolutions derived from equality facts.
+    #[cfg(test)]
+    pub(crate) fn resolved(&self) -> &[ResolvedTypeFact] {
+        &self.resolved
+    }
+}
+
+/// Body-local type equality edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TypeEqualFact {
+    /// Left side of the equality edge.
+    pub(crate) left: TypeSubject,
+    /// Right side of the equality edge.
+    pub(crate) right: TypeSubject,
+}
+
+/// Resolved type found for a body-local subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedTypeFact {
+    /// Subject being resolved.
+    pub(crate) subject: TypeSubject,
+    /// Inference type selected for the subject through equality edges.
+    pub(crate) ty_id: TypeId,
+}
+
+/// Subject whose type can participate in body-local type equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TypeSubject {
+    /// A definition such as a parameter or local binding.
+    Def(name::DefId),
+    /// A HIR expression occurrence.
+    Expr(hir::ExprId),
+    /// An inference type.
+    Type(TypeId),
 }
 
 #[cfg(test)]
@@ -347,44 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn consumes_hir_lowered_body_facts() {
-        let ccx = CommonCx::default();
-        let scx = SyntaxCx::new(&ccx);
-        let (names, hir, infer) = analyze(
-            &ccx,
-            &scx,
-            r#"
-            fn f(pair: (usize, usize)) -> usize {
-                let (a, b) = pair;
-                a
-            }
-            "#,
-        );
-
-        let block = function_block(&hir, "f");
-        let block_fact = infer
-            .body_types
-            .blocks()
-            .iter()
-            .find(|fact| fact.block == block)
-            .expect("expected function block fact");
-        assert_eq!(block_fact.tail_expr, hir.body()[block].tail_expr);
-
-        let local_fact = infer
-            .body_types
-            .locals()
-            .iter()
-            .find(|fact| fact.block == block)
-            .expect("expected local fact");
-        assert_eq!(local_fact.bindings.len(), 2);
-        assert!(local_fact.init.is_some());
-        assert!(local_fact
-            .bindings
-            .iter()
-            .all(|def| names[*def].kind == DefKind::Local));
-    }
-
-    #[test]
     fn resolves_simple_body_types_through_logic_equalities() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
@@ -417,16 +389,195 @@ mod tests {
         }));
         assert_usize(&infer, infer.type_for_def(local_def));
         assert_usize(&infer, infer.type_for_hir_expr(init));
-        let tail_tid = infer.type_for_hir_expr(*tail);
-        assert_usize(&infer, tail_tid);
+        let tail_ty_id = infer.type_for_hir_expr(*tail);
+        assert_usize(&infer, tail_ty_id);
         assert!(infer.body_types.resolved().iter().any(|fact| {
-            fact.subject == TypeSubject::Expr(*tail) && Some(fact.tid) == tail_tid
+            fact.subject == TypeSubject::Expr(*tail) && Some(fact.ty_id) == tail_ty_id
         }));
         assert!(matches!(names[local_def].kind, DefKind::Local));
     }
 
-    fn assert_usize(infer: &InferDb<'_>, tid: Option<TypeId>) {
-        let tid = tid.expect("expected a resolved type");
-        assert_eq!(infer[tid], Type::Primitive(PrimitiveType::Usize));
+    #[test]
+    fn keeps_unconstrained_numeric_literals_abstract() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a = 1;
+                let b = 1.0;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(int_local), hir::lower::Stmt::Local(float_local)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let int_init = int_local.init.expect("int local should have initializer");
+        let int_def = int_local
+            .bindings
+            .first()
+            .copied()
+            .expect("int local should introduce a binding");
+        let float_init = float_local
+            .init
+            .expect("float local should have initializer");
+        let float_def = float_local
+            .bindings
+            .first()
+            .copied()
+            .expect("float local should introduce a binding");
+
+        assert_primitive(
+            &infer,
+            infer.type_for_def(int_def),
+            PrimitiveType::AbstractInt,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_hir_expr(int_init),
+            PrimitiveType::AbstractInt,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_def(float_def),
+            PrimitiveType::AbstractFloat,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_hir_expr(float_init),
+            PrimitiveType::AbstractFloat,
+        );
+    }
+
+    #[test]
+    fn refines_abstract_numeric_literals_to_concrete_primitives() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() -> i32 {
+                let a: i32 = 1;
+                a
+            }
+
+            fn g() -> f64 {
+                let b: f64 = 1.0;
+                b
+            }
+            "#,
+        );
+
+        assert_typed_numeric_local(&hir, &infer, "f", PrimitiveType::I32);
+        assert_typed_numeric_local(&hir, &infer, "g", PrimitiveType::F64);
+    }
+
+    #[test]
+    fn keeps_fresh_abstract_numeric_literals_separate() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a: i32 = 1;
+                let b = 2;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(typed_local), hir::lower::Stmt::Local(untyped_local)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let typed_def = typed_local
+            .bindings
+            .first()
+            .copied()
+            .expect("typed local should introduce a binding");
+        let untyped_def = untyped_local
+            .bindings
+            .first()
+            .copied()
+            .expect("untyped local should introduce a binding");
+
+        assert_primitive(&infer, infer.type_for_def(typed_def), PrimitiveType::I32);
+        assert_primitive(
+            &infer,
+            infer.type_for_def(untyped_def),
+            PrimitiveType::AbstractInt,
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_abstract_numeric_resolution() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a: bool = 1;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(local)] = hir.body()[block].stmts.as_slice() else {
+            panic!("expected one local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let def = local
+            .bindings
+            .first()
+            .copied()
+            .expect("local should introduce a binding");
+
+        assert_eq!(infer.type_for_def(def), None);
+        assert_eq!(infer.type_for_hir_expr(init), None);
+    }
+
+    fn assert_typed_numeric_local(
+        hir: &Hir<'_>,
+        infer: &InferDb<'_>,
+        name: &str,
+        expected: PrimitiveType,
+    ) {
+        let block = function_block(hir, name);
+        let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected local statement followed by tail expression");
+        };
+        let init = local.init.expect("local should have initializer");
+        let def = local
+            .bindings
+            .first()
+            .copied()
+            .expect("local should introduce a binding");
+
+        assert_primitive(infer, infer.type_for_def(def), expected);
+        assert_primitive(infer, infer.type_for_hir_expr(init), expected);
+        assert_primitive(infer, infer.type_for_hir_expr(*tail), expected);
+    }
+
+    fn assert_usize(infer: &InferDb<'_>, ty_id: Option<TypeId>) {
+        assert_primitive(infer, ty_id, PrimitiveType::Usize);
+    }
+
+    fn assert_primitive(infer: &InferDb<'_>, ty_id: Option<TypeId>, expected: PrimitiveType) {
+        let ty_id = ty_id.expect("expected a resolved type");
+        assert_eq!(infer[ty_id], Type::Primitive(expected));
     }
 }

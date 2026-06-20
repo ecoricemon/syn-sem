@@ -270,7 +270,7 @@ pub enum ItemKind<'cx> {
     /// Constant item.
     Const {
         /// Constant type.
-        tid: TypeId,
+        ty_id: TypeId,
         /// Initializer expression.
         init: ExprId,
     },
@@ -297,7 +297,7 @@ pub enum ItemKind<'cx> {
         /// Implemented trait path, if this is a trait impl.
         trait_: Option<Vec<PathSegment<'cx>>>,
         /// Implementing self type.
-        self_tid: TypeId,
+        self_ty_id: TypeId,
         /// Represented associated items.
         items: Vec<AssocItemId>,
     },
@@ -329,7 +329,7 @@ pub enum ItemKind<'cx> {
         /// Source generics.
         generics: Generics<'cx>,
         /// Aliased type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Use item.
     Use {
@@ -370,7 +370,7 @@ pub struct TypeParam<'cx> {
     /// Parameter name.
     pub name: Name<'cx>,
     /// Default type, when present.
-    pub default_tid: Option<TypeId>,
+    pub default_ty_id: Option<TypeId>,
 }
 
 /// HIR-native const generic parameter.
@@ -379,7 +379,7 @@ pub struct ConstParam<'cx> {
     /// Parameter name.
     pub name: Name<'cx>,
     /// Parameter type.
-    pub tid: TypeId,
+    pub ty_id: TypeId,
 }
 
 /// HIR-native type parameter bound.
@@ -397,7 +397,7 @@ pub enum WherePredicate<'cx> {
     /// Type bound predicate.
     TypeBound {
         /// Type being constrained.
-        subject_tid: TypeId,
+        subject_ty_id: TypeId,
         /// Bounds applied to the type.
         bounds: Vec<TypeParamBound<'cx>>,
     },
@@ -425,7 +425,7 @@ pub struct Signature {
 #[derive(Debug)]
 pub struct SignatureParam {
     /// Parameter type.
-    pub tid: TypeId,
+    pub ty_id: TypeId,
     /// Source pattern for this parameter.
     ///
     /// This is `None` for the output parameter at `Signature::params[0]` and `Some` for input
@@ -488,7 +488,7 @@ pub enum PatKind<'cx> {
         /// Inner pattern.
         pat: PatId,
         /// Annotated type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Pattern form not represented natively yet.
     ///
@@ -529,7 +529,7 @@ pub struct Field<'cx> {
     /// Field visibility.
     pub visibility: Visibility<'cx>,
     /// Field type.
-    pub tid: TypeId,
+    pub ty_id: TypeId,
     /// Source field kind.
     pub source: FieldSource,
 }
@@ -577,7 +577,7 @@ pub enum AssocItemKind {
     /// Impl associated const.
     ImplConst {
         /// Associated const type.
-        tid: TypeId,
+        ty_id: TypeId,
         /// Initializer expression.
         init: ExprId,
     },
@@ -591,12 +591,12 @@ pub enum AssocItemKind {
     /// Impl associated type.
     ImplType {
         /// Assigned type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Trait associated const.
     TraitConst {
         /// Associated const type.
-        tid: TypeId,
+        ty_id: TypeId,
         /// Optional default expression.
         default: Option<ExprId>,
     },
@@ -610,7 +610,7 @@ pub enum AssocItemKind {
     /// Trait associated type.
     TraitType {
         /// Optional default type.
-        default_tid: Option<TypeId>,
+        default_ty_id: Option<TypeId>,
     },
 }
 
@@ -790,7 +790,7 @@ pub enum ExprKind<'cx> {
         /// Expression being cast.
         expr: ExprId,
         /// Target type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Closure expression.
     Closure {
@@ -889,7 +889,7 @@ pub struct ExprStructField<'cx> {
 #[derive(Debug)]
 pub struct Type<'cx> {
     /// Type id in HIR.
-    pub tid: TypeId,
+    pub id: TypeId,
     /// Original semantic AST type, when this type came directly from source syntax.
     ///
     /// This is `None` for synthetic types introduced by HIR lowering.
@@ -908,7 +908,7 @@ pub enum TypeKind<'cx> {
     /// Fixed-length array type.
     Array {
         /// Element type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
         /// Array length expression shape.
         len: ArrayLen,
     },
@@ -919,19 +919,19 @@ pub enum TypeKind<'cx> {
     /// Borrowed reference type.
     Reference {
         /// Referenced type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
         /// Whether the reference is mutable.
         is_mut: bool,
     },
     /// Dynamically sized slice type.
     Slice {
         /// Element type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
     },
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elem_tids: Vec<TypeId>,
+        elem_ids: Vec<TypeId>,
     },
 }
 
@@ -952,7 +952,7 @@ pub struct Path<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QSelf<'cx> {
     /// Self type: `T` in `<T as a::b::Trait>::Assoc`.
-    pub self_tid: TypeId,
+    pub self_ty_id: TypeId,
     /// Trait path segments: `a::b::Trait` in `<T as a::b::Trait>::Assoc`.
     ///
     /// This is empty when the source used `<T>::Assoc` without an explicit trait path.
@@ -984,7 +984,7 @@ pub enum GenericArg<'cx> {
         /// Associated type name.
         name: Name<'cx>,
         /// Assigned type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Associated const equality.
     AssocConst {

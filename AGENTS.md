@@ -11,8 +11,7 @@
 
 ## Instruction Files
 
-- Keep `AGENTS.md` files short, stable, and action-oriented.
-- Do not use `AGENTS.md` as a design log.
+- Keep `AGENTS.md` files short, stable, action-oriented, and not a design log.
 - Follow the user's latest explicit task instruction over stale guidance here.
 - Update `AGENTS.md` only for decisions expected to last across many tasks.
 
@@ -33,6 +32,11 @@
 - Write the top-level root as `TopCx<'tcx>`.
 - Write non-top-level context types with `'cx`, for example `FooCx<'cx>`.
 - Use referent-specific lifetimes elsewhere, for example `&'ccx CommonCx`.
+- Keep names concise but unambiguous.
+- Use common short names: `ty`, `pat`, `expr`.
+- Use `data`/`data_id` only when both may be confused; shorten fields when the
+  owner gives context, for example `Type { id }` and `Array { elem_id }`.
+- Do not add data prefixes when the scope is clear, for example `left: TypeId`.
 
 ## Crate Boundaries
 
@@ -49,9 +53,7 @@
 - Keep the `syn-sem-name` core model syntax-agnostic, but allow its collection
   layer to consume already parsed `syn-sem-ast` inputs.
 - Do not make `syn-sem-name` read files or depend on `TopCx`.
-- Let upper semantic phases depend on both HIR and `syn-sem-name`: traverse HIR
-  source spine and lowered facts, then query name facts through focused
-  `NameDb` APIs using ids stored in HIR.
+- Let upper phases traverse HIR and query name facts through focused `NameDb` APIs.
 - Extract reusable infrastructure before wiring it deeply into `syn-sem`.
 - Let `PathTree` remain temporarily, but move new name-resolution work toward `syn-sem-name`.
 

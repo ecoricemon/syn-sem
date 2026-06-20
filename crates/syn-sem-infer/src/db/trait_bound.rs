@@ -1,18 +1,18 @@
 //! Trait-bound fact collection for inference.
 
 use super::infer_types::{InferTypes, TypeLowerer};
-use crate::TraitBoundFact;
+use crate::TypeId;
 use syn_sem_hir as hir;
 use syn_sem_name::NameDb;
 
-pub(super) struct TraitBoundFactCollector<'a, 'cx> {
+pub(crate) struct TraitBoundFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
     facts: Vec<TraitBoundFact>,
 }
 
 impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
-    pub(super) fn collect(
+    pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
@@ -47,25 +47,37 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
     fn collect_generics(&mut self, generics: &hir::Generics<'cx>) {
         for predicate in &generics.predicates {
             let hir::WherePredicate::TypeBound {
-                subject_tid,
+                subject_ty_id,
                 bounds,
             } = predicate
             else {
                 continue;
             };
-            let subject_tid = self.ty_lowerer.lower_hir_type(*subject_tid);
+            let subject_ty_id = self.ty_lowerer.lower_hir_type(*subject_ty_id);
             for bound in bounds {
                 let hir::TypeParamBound::Trait(path) = bound else {
                     continue;
                 };
-                let trait_tid = self
+                let trait_ty_id = self
                     .ty_lowerer
                     .lower_plain_path_as_type(path, generics.scope);
                 self.facts.push(TraitBoundFact {
-                    subject_tid,
-                    trait_tid,
+                    subject_ty_id,
+                    trait_ty_id,
                 });
             }
         }
     }
+}
+
+/// One trait bound fact collected as solver input.
+///
+/// A type-bound predicate can contain multiple bounds, such as `T: Debug + Clone`;
+/// inference flattens that into one fact per trait bound, e.g. `T: Debug` and `T: Clone`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TraitBoundFact {
+    /// Type constrained by the trait bound.
+    pub(crate) subject_ty_id: TypeId,
+    /// Trait type required by the bound.
+    pub(crate) trait_ty_id: TypeId,
 }

@@ -4,20 +4,52 @@ mod infer_types;
 pub(crate) mod projection;
 mod trait_bound;
 
-use crate::{
-    logic, AssocTypeImplFact, GenericArg, Path, PathSegment, PathType, PathTypeResolution,
-    ProjectionDb, ProjectionNormalizationResult, ProjectionType, QSelf, TraitBoundFact, Type,
-    TypeId, TypeParamBound,
+pub(crate) use assoc_type_impl::{AssocTypeImplFact, AssocTypeImplFactCollector};
+pub(crate) use body_type::{
+    BodyTypeCollector, BodyTypeDb, ResolvedTypeFact, TypeEqualFact, TypeSubject,
 };
-use assoc_type_impl::AssocTypeImplFactCollector;
-use body_type::{BodyTypeCollector, BodyTypeDb};
-use infer_types::InferTypes;
-use projection::ProjectionCollector;
+pub(crate) use infer_types::InferTypes;
+pub(crate) use projection::ProjectionCollector;
+pub(crate) use trait_bound::{TraitBoundFact, TraitBoundFactCollector};
+
+use crate::{
+    logic, GenericArg, Path, PathSegment, PathType, PathTypeResolution, ProjectionDb,
+    ProjectionNormalizationResult, ProjectionType, QSelf, Type, TypeId, TypeParamBound,
+};
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb};
-use trait_bound::TraitBoundFactCollector;
+
+pub(crate) struct InferDbBuilder<'a, 'cx> {
+    hir: &'a hir::Hir<'cx>,
+    names: &'a NameDb<'cx>,
+}
+
+impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
+    pub(crate) fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
+        Self { hir, names }
+    }
+
+    pub(crate) fn build(self) -> InferDb<'cx> {
+        let mut types = InferTypes::default();
+        let trait_bound_facts = TraitBoundFactCollector::collect(self.hir, self.names, &mut types);
+        types.collect_hir_types(self.hir, self.names);
+        let assoc_type_impl_facts =
+            AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
+        let body_types = BodyTypeCollector::collect(self.hir, self.names, &mut types);
+        let projections = ProjectionCollector::collect(&types);
+
+        InferDb {
+            types,
+            projections,
+            body_types,
+            trait_bound_facts,
+            assoc_type_impl_facts,
+            recursive_normalizations: Map::default(),
+        }
+    }
+}
 
 /// Type information collected for upper semantic inference.
 #[derive(Debug, Default)]
@@ -39,8 +71,8 @@ impl<'cx> InferDb<'cx> {
     }
 
     /// Returns the inference type linked to a HIR type occurrence.
-    pub fn type_for_hir_type(&self, hir_tid: hir::TypeId) -> Option<TypeId> {
-        self.types.type_for_hir_type(hir_tid)
+    pub fn type_for_hir_type(&self, hir_ty_id: hir::TypeId) -> Option<TypeId> {
+        self.types.type_for_hir_type(hir_ty_id)
     }
 
     /// Returns the resolved concrete type linked to a HIR expression occurrence.
@@ -59,9 +91,9 @@ impl<'cx> InferDb<'cx> {
     #[cfg(test)]
     pub(crate) fn shallow_normalized_type_for_hir_type(
         &self,
-        hir_tid: hir::TypeId,
+        hir_ty_id: hir::TypeId,
     ) -> Option<TypeId> {
-        self.type_for_hir_type(hir_tid)
+        self.type_for_hir_type(hir_ty_id)
             .map(|ty| self.shallow_normalized_type(ty))
     }
 
@@ -72,17 +104,17 @@ impl<'cx> InferDb<'cx> {
     #[cfg(test)]
     pub(crate) fn normalized_projection_type_for_hir_type(
         &self,
-        hir_tid: hir::TypeId,
+        hir_ty_id: hir::TypeId,
     ) -> Option<TypeId> {
-        let ty = self.type_for_hir_type(hir_tid)?;
+        let ty = self.type_for_hir_type(hir_ty_id)?;
         self.normalized_projection_type(ty)
     }
 
     /// Returns the recursively normalized inference type linked to a HIR type occurrence.
     ///
     /// This returns `None` when the HIR type occurrence was not lowered.
-    pub fn normalized_type_for_hir_type(&mut self, hir_tid: hir::TypeId) -> Option<TypeId> {
-        let ty = self.type_for_hir_type(hir_tid)?;
+    pub fn normalized_type_for_hir_type(&mut self, hir_ty_id: hir::TypeId) -> Option<TypeId> {
+        let ty = self.type_for_hir_type(hir_ty_id)?;
         Some(self.normalized_type(ty))
     }
 
@@ -91,18 +123,22 @@ impl<'cx> InferDb<'cx> {
     /// Returns `None` when the projection has no known normalization or when multiple
     /// normalizations are currently possible.
     #[cfg(test)]
-    pub(crate) fn normalized_projection_type(&self, projection_tid: TypeId) -> Option<TypeId> {
-        self.projections
-            .normalized_type(projection_tid, self.projection(projection_tid).is_some())
+    pub(crate) fn normalized_projection_type(&self, projection_ty_id: TypeId) -> Option<TypeId> {
+        self.projections.normalized_type(
+            projection_ty_id,
+            self.projection(projection_ty_id).is_some(),
+        )
     }
 
     /// Returns the normalization query result for one associated type projection.
     pub fn projection_normalization(
         &self,
-        projection_tid: TypeId,
+        projection_ty_id: TypeId,
     ) -> ProjectionNormalizationResult {
-        self.projections
-            .normalization(projection_tid, self.projection(projection_tid).is_some())
+        self.projections.normalization(
+            projection_ty_id,
+            self.projection(projection_ty_id).is_some(),
+        )
     }
 
     /// Returns the shallow normalized form of an inference type.
@@ -110,25 +146,25 @@ impl<'cx> InferDb<'cx> {
     /// This only normalizes the type itself when it is an associated type projection. It does not
     /// recursively rewrite nested type arguments.
     #[cfg(test)]
-    pub(crate) fn shallow_normalized_type(&self, tid: TypeId) -> TypeId {
-        if self.projection(tid).is_some() {
-            if let Some(value_tid) = self.normalized_projection_type(tid) {
-                return value_tid;
+    pub(crate) fn shallow_normalized_type(&self, ty_id: TypeId) -> TypeId {
+        if self.projection(ty_id).is_some() {
+            if let Some(value_ty_id) = self.normalized_projection_type(ty_id) {
+                return value_ty_id;
             }
         }
-        tid
+        ty_id
     }
 
     /// Returns the recursively normalized form of an inference type.
     ///
     /// This rewrites associated type projections in the type itself and in nested type positions
     /// for the currently supported type shapes.
-    pub fn normalized_type(&mut self, tid: TypeId) -> TypeId {
-        if let Some(normalized) = self.recursive_normalizations.get(&tid).copied() {
+    pub fn normalized_type(&mut self, ty_id: TypeId) -> TypeId {
+        if let Some(normalized) = self.recursive_normalizations.get(&ty_id).copied() {
             return normalized;
         }
-        let normalized = self.normalized_type_inner(tid, &mut Vec::new());
-        self.recursive_normalizations.insert(tid, normalized);
+        let normalized = self.normalized_type_inner(ty_id, &mut Vec::new());
+        self.recursive_normalizations.insert(ty_id, normalized);
         normalized
     }
 
@@ -137,44 +173,44 @@ impl<'cx> InferDb<'cx> {
     }
 
     /// Returns the path resolution for a path type.
-    pub fn path_resolution(&self, tid: TypeId) -> Option<&PathTypeResolution> {
-        let Type::Path(path) = &self[tid] else {
+    pub fn path_resolution(&self, ty_id: TypeId) -> Option<&PathTypeResolution> {
+        let Type::Path(path) = &self[ty_id] else {
             return None;
         };
         Some(&path.resolution)
     }
 
     /// Returns the nominal definition named by a type, when the type is a nominal path.
-    pub fn nominal_def(&self, tid: TypeId) -> Option<DefId> {
-        let PathTypeResolution::Nominal(def) = self.path_resolution(tid)? else {
+    pub fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
+        let PathTypeResolution::Nominal(def) = self.path_resolution(ty_id)? else {
             return None;
         };
         Some(*def)
     }
 
     /// Returns the generic parameter definition named by a type, when the type is a generic path.
-    pub fn generic_param_def(&self, tid: TypeId) -> Option<DefId> {
-        let PathTypeResolution::GenericParam(def) = self.path_resolution(tid)? else {
+    pub fn generic_param_def(&self, ty_id: TypeId) -> Option<DefId> {
+        let PathTypeResolution::GenericParam(def) = self.path_resolution(ty_id)? else {
             return None;
         };
         Some(*def)
     }
 
     /// Returns associated type projection metadata for a projection path type.
-    pub fn projection(&self, tid: TypeId) -> Option<&ProjectionType> {
-        self.projections.projection(self.path_resolution(tid))
+    pub fn projection(&self, ty_id: TypeId) -> Option<&ProjectionType> {
+        self.projections.projection(self.path_resolution(ty_id))
     }
 
-    fn normalized_type_inner(&mut self, tid: TypeId, active: &mut Vec<TypeId>) -> TypeId {
-        if active.contains(&tid) {
-            return tid;
+    fn normalized_type_inner(&mut self, ty_id: TypeId, active_ids: &mut Vec<TypeId>) -> TypeId {
+        if active_ids.contains(&ty_id) {
+            return ty_id;
         }
-        active.push(tid);
+        active_ids.push(ty_id);
 
-        match self.projection_normalization(tid) {
-            ProjectionNormalizationResult::Known(value_tid) if value_tid != tid => {
-                let normalized = self.normalized_type_inner(value_tid, active);
-                active.pop();
+        match self.projection_normalization(ty_id) {
+            ProjectionNormalizationResult::Known(value_ty_id) if value_ty_id != ty_id => {
+                let normalized = self.normalized_type_inner(value_ty_id, active_ids);
+                active_ids.pop();
                 return normalized;
             }
             ProjectionNormalizationResult::Known(_)
@@ -183,44 +219,44 @@ impl<'cx> InferDb<'cx> {
             | ProjectionNormalizationResult::Ambiguous => {}
         }
 
-        let normalized = match self[tid].clone() {
-            Type::Array { elem_tid, len } => {
-                let elem_tid = self.normalized_type_inner(elem_tid, active);
-                self.intern_changed_type(tid, Type::Array { elem_tid, len })
+        let normalized = match self[ty_id].clone() {
+            Type::Array { elem_id, len } => {
+                let elem_id = self.normalized_type_inner(elem_id, active_ids);
+                self.intern_changed_type(ty_id, Type::Array { elem_id, len })
             }
-            Type::Infer | Type::Primitive(_) => tid,
+            Type::Infer | Type::Primitive(_) => ty_id,
             Type::Path(path) => {
-                let (path, changed) = self.normalized_path_type(path, active);
+                let (path, changed) = self.normalized_path_type(path, active_ids);
                 if changed {
                     self.intern_type(Type::Path(path))
                 } else {
-                    tid
+                    ty_id
                 }
             }
-            Type::Reference { elem_tid, is_mut } => {
-                let elem_tid = self.normalized_type_inner(elem_tid, active);
-                self.intern_changed_type(tid, Type::Reference { elem_tid, is_mut })
+            Type::Reference { elem_id, is_mut } => {
+                let elem_id = self.normalized_type_inner(elem_id, active_ids);
+                self.intern_changed_type(ty_id, Type::Reference { elem_id, is_mut })
             }
-            Type::Slice { elem_tid } => {
-                let elem_tid = self.normalized_type_inner(elem_tid, active);
-                self.intern_changed_type(tid, Type::Slice { elem_tid })
+            Type::Slice { elem_id } => {
+                let elem_id = self.normalized_type_inner(elem_id, active_ids);
+                self.intern_changed_type(ty_id, Type::Slice { elem_id })
             }
-            Type::Tuple { elem_tids } => {
-                let elem_tids = elem_tids
+            Type::Tuple { elem_ids } => {
+                let elem_ids = elem_ids
                     .into_iter()
-                    .map(|elem| self.normalized_type_inner(elem, active))
+                    .map(|elem_id| self.normalized_type_inner(elem_id, active_ids))
                     .collect();
-                self.intern_changed_type(tid, Type::Tuple { elem_tids })
+                self.intern_changed_type(ty_id, Type::Tuple { elem_ids })
             }
         };
 
-        active.pop();
+        active_ids.pop();
         normalized
     }
 
-    fn intern_changed_type(&mut self, original: TypeId, ty: Type<'cx>) -> TypeId {
-        if self[original] == ty {
-            return original;
+    fn intern_changed_type(&mut self, original_id: TypeId, ty: Type<'cx>) -> TypeId {
+        if self[original_id] == ty {
+            return original_id;
         }
         self.intern_type(ty)
     }
@@ -232,16 +268,16 @@ impl<'cx> InferDb<'cx> {
     ) -> (PathType<'cx>, bool) {
         let mut changed = false;
         let qself = path.qself.map(|qself| {
-            let self_tid = self.normalized_type_inner(qself.self_tid, active);
-            changed |= self_tid != qself.self_tid;
-            let trait_tid = qself.trait_tid.map(|trait_tid| {
-                let normalized = self.normalized_type_inner(trait_tid, active);
-                changed |= normalized != trait_tid;
+            let self_ty_id = self.normalized_type_inner(qself.self_ty_id, active);
+            changed |= self_ty_id != qself.self_ty_id;
+            let trait_ty_id = qself.trait_ty_id.map(|trait_ty_id| {
+                let normalized = self.normalized_type_inner(trait_ty_id, active);
+                changed |= normalized != trait_ty_id;
                 normalized
             });
             QSelf {
-                self_tid,
-                trait_tid,
+                self_ty_id,
+                trait_ty_id,
             }
         });
         let segments = path
@@ -283,12 +319,12 @@ impl<'cx> InferDb<'cx> {
                 *changed |= normalized != ty;
                 GenericArg::Type(normalized)
             }
-            GenericArg::AssocType { name, tid } => {
-                let normalized = self.normalized_type_inner(tid, active);
-                *changed |= normalized != tid;
+            GenericArg::AssocType { name, ty_id } => {
+                let normalized = self.normalized_type_inner(ty_id, active);
+                *changed |= normalized != ty_id;
                 GenericArg::AssocType {
                     name,
-                    tid: normalized,
+                    ty_id: normalized,
                 }
             }
             GenericArg::Const(arg) => GenericArg::Const(arg),
@@ -361,36 +397,6 @@ impl<'cx> Index<TypeId> for InferDb<'cx> {
     }
 }
 
-pub(crate) struct InferDbBuilder<'a, 'cx> {
-    hir: &'a hir::Hir<'cx>,
-    names: &'a NameDb<'cx>,
-}
-
-impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
-    pub(crate) fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
-        Self { hir, names }
-    }
-
-    pub(crate) fn build(self) -> InferDb<'cx> {
-        let mut types = InferTypes::default();
-        let trait_bound_facts = TraitBoundFactCollector::collect(self.hir, self.names, &mut types);
-        types.collect_hir_types(self.hir, self.names);
-        let assoc_type_impl_facts =
-            AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
-        let projections = ProjectionCollector::collect(types.as_slice());
-        let body_types = BodyTypeCollector::collect(self.hir, self.names, &mut types);
-
-        InferDb {
-            types,
-            projections,
-            body_types,
-            trait_bound_facts,
-            assoc_type_impl_facts,
-            recursive_normalizations: Map::default(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -401,7 +407,7 @@ mod tests {
         collect::NameCollector, AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
     };
 
-    fn infer_tids<'cx>(
+    fn infer_ty_ids<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
         source_text: &str,
@@ -465,7 +471,7 @@ mod tests {
             .iter()
             .find(|source| matches!(source.source, hir::TypeSource::StructField))
             .unwrap();
-        infer.type_for_hir_type(hir_type.tid).unwrap()
+        infer.type_for_hir_type(hir_type.id).unwrap()
     }
 
     fn struct_field_hir_types<'cx>(hir: &hir::Hir<'cx>, struct_name: &str) -> Vec<hir::TypeId> {
@@ -477,7 +483,7 @@ mod tests {
         let hir::ItemKind::Struct { fields, .. } = &item.kind else {
             panic!("item should be represented as a struct");
         };
-        fields.iter().map(|field| hir[*field].tid).collect()
+        fields.iter().map(|field| hir[*field].ty_id).collect()
     }
 
     fn struct_field_path_resolution<'cx>(
@@ -491,7 +497,7 @@ mod tests {
     fn lowers_single_segment_primitives_to_primitive_types() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_tids(
+        let (hir, infer) = infer_ty_ids(
             &ccx,
             &scx,
             "fn f(a: bool, b: char, c: str, d: i32, e: usize, f: f64) {}",
@@ -500,7 +506,7 @@ mod tests {
         let lowered: Vec<_> = hir
             .types()
             .iter()
-            .filter_map(|hir_tid| infer.type_for_hir_type(hir_tid.tid))
+            .filter_map(|hir_type| infer.type_for_hir_type(hir_type.id))
             .map(|id| &infer[id])
             .filter_map(|ty| match ty {
                 Type::Primitive(primitive) => Some(*primitive),
@@ -520,14 +526,14 @@ mod tests {
     fn keeps_non_primitive_paths_as_paths() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_tids(&ccx, &scx, "struct S { field: crate::usize }");
+        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: crate::usize }");
 
         let hir_type = hir
             .types()
             .iter()
             .find(|source| matches!(source.source, hir::TypeSource::StructField))
             .unwrap();
-        let id = infer.type_for_hir_type(hir_type.tid).unwrap();
+        let id = infer.type_for_hir_type(hir_type.id).unwrap();
         let Type::Path(path) = &infer[id] else {
             panic!("qualified primitive-looking path should remain a path");
         };
@@ -542,10 +548,10 @@ mod tests {
     fn keeps_distinct_infer_type_occurrences_separate() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_tids(&ccx, &scx, "struct S { first: _, second: _ }");
+        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { first: _, second: _ }");
 
-        let field_tids = struct_field_hir_types(&hir, "S");
-        let [first, second] = field_tids.as_slice() else {
+        let field_ty_ids = struct_field_hir_types(&hir, "S");
+        let [first, second] = field_ty_ids.as_slice() else {
             panic!("struct should have two field types");
         };
         let first = infer.type_for_hir_type(*first).unwrap();
@@ -563,7 +569,7 @@ mod tests {
     fn interning_keeps_unresolved_paths_separate() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_, mut infer) = infer_tids(&ccx, &scx, "struct S;");
+        let (_, mut infer) = infer_ty_ids(&ccx, &scx, "struct S;");
         let unresolved = || {
             Type::Path(PathType {
                 qself: None,
@@ -590,10 +596,10 @@ mod tests {
     fn interning_deeply_shares_container_types() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, mut infer) = infer_tids(&ccx, &scx, "struct S { first: u32, second: u32 }");
+        let (hir, mut infer) = infer_ty_ids(&ccx, &scx, "struct S { first: u32, second: u32 }");
 
-        let field_tids = struct_field_hir_types(&hir, "S");
-        let [first, second] = field_tids.as_slice() else {
+        let field_ty_ids = struct_field_hir_types(&hir, "S");
+        let [first, second] = field_ty_ids.as_slice() else {
             panic!("struct should have two field types");
         };
         let first = infer.type_for_hir_type(*first).unwrap();
@@ -601,11 +607,11 @@ mod tests {
         assert_ne!(first, second, "HIR occurrences should remain distinct");
 
         let first_ref = infer.intern_type(Type::Reference {
-            elem_tid: first,
+            elem_id: first,
             is_mut: false,
         });
         let second_ref = infer.intern_type(Type::Reference {
-            elem_tid: second,
+            elem_id: second,
             is_mut: false,
         });
 
@@ -676,8 +682,8 @@ mod tests {
             struct_field_path_resolution(&hir, &infer),
             PathTypeResolution::Projection(ProjectionType {
                 assoc_type: item_def,
-                self_tid: None,
-                trait_tid: None,
+                self_ty_id: None,
+                trait_ty_id: None,
             })
         );
     }
@@ -744,8 +750,8 @@ mod tests {
         let path = struct_field_path_type(&hir, &infer);
         let projection = struct_field_type_id(&hir, &infer);
         let qself = path.qself.expect("qualified path should lower qself");
-        let trait_tid = qself
-            .trait_tid
+        let trait_ty_id = qself
+            .trait_ty_id
             .expect("qualified path should lower trait path");
 
         assert_eq!(path.path.segments.len(), 4);
@@ -754,13 +760,13 @@ mod tests {
         assert_eq!(path.path.segments[2].name.as_ref(), "Trait");
         assert_eq!(path.path.segments[3].name.as_ref(), "Item");
         assert!(matches!(
-            infer[qself.self_tid],
+            infer[qself.self_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::GenericParam(def),
                 ..
             }) if def == t_def
         ));
-        let Type::Path(lowered_trait_path) = &infer[trait_tid] else {
+        let Type::Path(lowered_trait_path) = &infer[trait_ty_id] else {
             panic!("qself trait type should lower to path type");
         };
         assert_eq!(lowered_trait_path.path.segments.len(), 3);
@@ -768,7 +774,7 @@ mod tests {
         assert_eq!(lowered_trait_path.path.segments[1].name.as_ref(), "b");
         assert_eq!(lowered_trait_path.path.segments[2].name.as_ref(), "Trait");
         assert!(matches!(
-            infer[trait_tid],
+            infer[trait_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
@@ -778,26 +784,26 @@ mod tests {
             path.resolution,
             PathTypeResolution::Projection(ProjectionType {
                 assoc_type: item_def,
-                self_tid: Some(qself.self_tid),
-                trait_tid: Some(trait_tid),
+                self_ty_id: Some(qself.self_ty_id),
+                trait_ty_id: Some(trait_ty_id),
             })
         );
         assert_eq!(
             infer.projections.candidates,
             &[ProjectionCandidate {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: item_def,
-                trait_tid,
+                trait_ty_id,
             }]
         );
         assert_eq!(
             infer.projections.matches,
             &[ProjectionMatch {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: item_def,
-                trait_tid,
+                trait_ty_id,
             }]
         );
     }
@@ -856,9 +862,9 @@ mod tests {
 
         assert_eq!(path.path.segments.len(), 1);
         assert_eq!(path.path.segments[0].name.as_ref(), "Item");
-        assert_eq!(qself.trait_tid, None);
+        assert_eq!(qself.trait_ty_id, None);
         assert!(matches!(
-            infer[qself.self_tid],
+            infer[qself.self_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::GenericParam(def),
                 ..
@@ -868,31 +874,31 @@ mod tests {
             path.resolution,
             PathTypeResolution::Projection(ProjectionType {
                 assoc_type: item_def,
-                self_tid: Some(qself.self_tid),
-                trait_tid: None,
+                self_ty_id: Some(qself.self_ty_id),
+                trait_ty_id: None,
             })
         );
         assert_eq!(
             infer.projections.obligations,
             &[ProjectionObligation {
-                projection_tid: projection,
+                projection_ty_id: projection,
                 assoc_type: item_def,
-                self_tid: Some(qself.self_tid),
-                trait_tid: None,
+                self_ty_id: Some(qself.self_ty_id),
+                trait_ty_id: None,
             }]
         );
         let [bound] = infer.trait_bound_facts.as_slice() else {
             panic!("expected one trait bound fact");
         };
         assert!(matches!(
-            infer[bound.subject_tid],
+            infer[bound.subject_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::GenericParam(def),
                 ..
             }) if def == t_def
         ));
         assert!(matches!(
-            infer[bound.trait_tid],
+            infer[bound.trait_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
@@ -901,19 +907,19 @@ mod tests {
         assert_eq!(
             infer.projections.candidates,
             &[ProjectionCandidate {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: item_def,
-                trait_tid: bound.trait_tid,
+                trait_ty_id: bound.trait_ty_id,
             }]
         );
         assert_eq!(
             infer.projections.matches,
             &[ProjectionMatch {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: iterator_item_def,
-                trait_tid: bound.trait_tid,
+                trait_ty_id: bound.trait_ty_id,
             }]
         );
     }
@@ -963,7 +969,7 @@ mod tests {
             .qself
             .expect("traitless qualified path should lower qself");
         assert!(matches!(
-            infer[qself.self_tid],
+            infer[qself.self_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::GenericParam(def),
                 ..
@@ -973,7 +979,7 @@ mod tests {
             panic!("expected one trait bound fact");
         };
         assert!(matches!(
-            infer[bound.trait_tid],
+            infer[bound.trait_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
@@ -982,10 +988,10 @@ mod tests {
         assert_eq!(
             infer.projections.candidates,
             &[ProjectionCandidate {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: item_def,
-                trait_tid: bound.trait_tid,
+                trait_ty_id: bound.trait_ty_id,
             }]
         );
         assert_eq!(infer.projections.matches, &[]);
@@ -1063,7 +1069,7 @@ mod tests {
 
         let hir::ItemKind::Impl {
             trait_,
-            self_tid,
+            self_ty_id,
             items,
             ..
         } = &hir.items()[2].kind
@@ -1081,24 +1087,24 @@ mod tests {
         assert_eq!(hir[*assoc_item].def, Some(impl_item_def));
         assert_eq!(fact.assoc_type, trait_assoc_def);
         assert_eq!(
-            fact.impl_self_tid,
-            infer.type_for_hir_type(*self_tid).unwrap()
+            fact.impl_self_ty_id,
+            infer.type_for_hir_type(*self_ty_id).unwrap()
         );
         assert!(matches!(
-            infer[fact.impl_self_tid],
+            infer[fact.impl_self_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
             }) if def == vec_def
         ));
         assert!(matches!(
-            infer[fact.trait_tid],
+            infer[fact.trait_ty_id],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
             }) if def == iterator_def
         ));
-        assert_eq!(infer[fact.value_tid], Type::Primitive(PrimitiveType::U32));
+        assert_eq!(infer[fact.value_ty_id], Type::Primitive(PrimitiveType::U32));
 
         let projection_path = struct_field_path_type(&hir, &infer);
         let qself = projection_path
@@ -1108,11 +1114,11 @@ mod tests {
         assert_eq!(
             infer.projections.normalizations,
             &[ProjectionNormalization {
-                projection_tid: projection,
-                self_tid: qself.self_tid,
+                projection_ty_id: projection,
+                self_ty_id: qself.self_ty_id,
                 assoc_type: trait_assoc_def,
-                trait_tid: qself.trait_tid.unwrap(),
-                value_tid: fact.value_tid,
+                trait_ty_id: qself.trait_ty_id.unwrap(),
+                value_ty_id: fact.value_ty_id,
             }]
         );
         let normalizations = infer
@@ -1121,7 +1127,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(normalizations.len(), 1);
         assert_eq!(
-            infer[normalizations[0].value_tid],
+            infer[normalizations[0].value_ty_id],
             Type::Primitive(PrimitiveType::U32)
         );
     }
@@ -1151,10 +1157,10 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Output");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Output should have one field type");
         };
-        let projection = infer.type_for_hir_type(*field_tid).unwrap();
+        let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
         let [impl_self_match] = infer.projections.impl_self_matches.as_slice() else {
             panic!("generic impl self should match projection self once");
         };
@@ -1166,29 +1172,29 @@ mod tests {
         };
 
         assert_eq!(
-            binding.projection_self_tid,
-            impl_self_match.projection_self_tid
+            binding.projection_self_ty_id,
+            impl_self_match.projection_self_ty_id
         );
-        assert_eq!(binding.impl_self_tid, impl_self_match.impl_self_tid);
+        assert_eq!(binding.impl_self_ty_id, impl_self_match.impl_self_ty_id);
         assert_eq!(
-            substitution.projection_self_tid,
-            binding.projection_self_tid
+            substitution.projection_self_ty_id,
+            binding.projection_self_ty_id
         );
-        assert_eq!(substitution.impl_self_tid, binding.impl_self_tid);
-        assert_eq!(substitution.generic_tid, binding.generic_tid);
-        assert_eq!(substitution.arg_tid, binding.arg_tid);
-        assert_eq!(substitution.substituted_tid, binding.arg_tid);
+        assert_eq!(substitution.impl_self_ty_id, binding.impl_self_ty_id);
+        assert_eq!(substitution.generic_ty_id, binding.generic_ty_id);
+        assert_eq!(substitution.arg_ty_id, binding.arg_ty_id);
+        assert_eq!(substitution.substituted_ty_id, binding.arg_ty_id);
         assert_eq!(
             infer.normalized_projection_type(projection),
-            Some(substitution.substituted_tid)
+            Some(substitution.substituted_ty_id)
         );
         assert_eq!(
-            infer[substitution.substituted_tid],
+            infer[substitution.substituted_ty_id],
             Type::Primitive(PrimitiveType::U32)
         );
         assert_eq!(
             infer.projection_normalization(projection),
-            ProjectionNormalizationResult::Known(substitution.substituted_tid)
+            ProjectionNormalizationResult::Known(substitution.substituted_ty_id)
         );
     }
 
@@ -1218,11 +1224,11 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [projected_tid, plain_tid] = fields.as_slice() else {
+        let [projected_ty_id, plain_ty_id] = fields.as_slice() else {
             panic!("Result should have two field types");
         };
-        let projection = infer.type_for_hir_type(*projected_tid).unwrap();
-        let plain = infer.type_for_hir_type(*plain_tid).unwrap();
+        let projection = infer.type_for_hir_type(*projected_ty_id).unwrap();
+        let plain = infer.type_for_hir_type(*plain_ty_id).unwrap();
         let known = infer
             .normalized_projection_type(projection)
             .expect("projection should have one normalization");
@@ -1236,7 +1242,7 @@ mod tests {
             ProjectionNormalizationResult::NotProjection
         );
 
-        let ambiguous_value_tid = infer.intern_type(Type::Primitive(PrimitiveType::Bool));
+        let ambiguous_value_ty_id = infer.intern_type(Type::Primitive(PrimitiveType::Bool));
         let ProjectionNormalizationResult::Known(_) = infer.projection_normalization(projection)
         else {
             panic!("projection should start with one known normalization");
@@ -1246,7 +1252,7 @@ mod tests {
             .projections
             .normalizations
             .push(ProjectionNormalization {
-                value_tid: ambiguous_value_tid,
+                value_ty_id: ambiguous_value_ty_id,
                 ..existing
             });
         assert_eq!(
@@ -1278,10 +1284,10 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let projection = infer.type_for_hir_type(*field_tid).unwrap();
+        let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
 
         assert_eq!(
             infer.projection_normalization(projection),
@@ -1316,7 +1322,7 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let [_first_binding, _second_binding] = infer.projections.type_bindings.as_slice() else {
@@ -1327,17 +1333,17 @@ mod tests {
         };
 
         assert!(infer.projections.type_bindings.iter().any(|binding| {
-            substitution.projection_self_tid == binding.projection_self_tid
-                && substitution.impl_self_tid == binding.impl_self_tid
-                && substitution.generic_tid == binding.generic_tid
-                && substitution.arg_tid == binding.arg_tid
+            substitution.projection_self_ty_id == binding.projection_self_ty_id
+                && substitution.impl_self_ty_id == binding.impl_self_ty_id
+                && substitution.generic_ty_id == binding.generic_ty_id
+                && substitution.arg_ty_id == binding.arg_ty_id
         }));
         assert_eq!(
-            infer.normalized_projection_type_for_hir_type(*field_tid),
-            Some(substitution.substituted_tid)
+            infer.normalized_projection_type_for_hir_type(*field_ty_id),
+            Some(substitution.substituted_ty_id)
         );
         assert_eq!(
-            infer[substitution.substituted_tid],
+            infer[substitution.substituted_ty_id],
             Type::Primitive(PrimitiveType::Bool)
         );
     }
@@ -1368,7 +1374,7 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let [_binding] = infer.projections.type_bindings.as_slice() else {
@@ -1379,18 +1385,18 @@ mod tests {
         };
 
         assert_eq!(
-            substitution.projection_self_tid,
-            infer.projections.type_bindings[0].projection_self_tid
+            substitution.projection_self_ty_id,
+            infer.projections.type_bindings[0].projection_self_ty_id
         );
         assert_eq!(
-            substitution.impl_self_tid,
-            infer.projections.type_bindings[0].impl_self_tid
+            substitution.impl_self_ty_id,
+            infer.projections.type_bindings[0].impl_self_ty_id
         );
         assert_eq!(
-            infer.normalized_projection_type_for_hir_type(*field_tid),
-            Some(substitution.substituted_tid)
+            infer.normalized_projection_type_for_hir_type(*field_ty_id),
+            Some(substitution.substituted_ty_id)
         );
-        assert_option_of(&infer, substitution.substituted_tid, PrimitiveType::U32);
+        assert_option_of(&infer, substitution.substituted_ty_id, PrimitiveType::U32);
     }
 
     #[test]
@@ -1419,14 +1425,14 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let shallow = infer
-            .shallow_normalized_type_for_hir_type(*field_tid)
+            .shallow_normalized_type_for_hir_type(*field_ty_id)
             .expect("Result.field type should be lowered");
         let normalized = infer
-            .normalized_type_for_hir_type(*field_tid)
+            .normalized_type_for_hir_type(*field_ty_id)
             .expect("Result.field type should be lowered");
 
         assert_ne!(shallow, normalized);
@@ -1461,44 +1467,45 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [reference_tid, tuple_tid, array_tid, slice_ref_tid] = fields.as_slice() else {
+        let [reference_ty_id, tuple_ty_id, array_ty_id, slice_ref_ty_id] = fields.as_slice() else {
             panic!("Result should have four field types");
         };
 
-        let reference = infer.normalized_type_for_hir_type(*reference_tid).unwrap();
-        let Type::Reference { elem_tid, is_mut } = infer[reference] else {
+        let reference = infer
+            .normalized_type_for_hir_type(*reference_ty_id)
+            .unwrap();
+        let Type::Reference { elem_id, is_mut } = infer[reference] else {
             panic!("reference field should normalize to a reference type");
         };
         assert!(!is_mut);
-        assert_primitive_type(&infer, elem_tid, PrimitiveType::U32);
+        assert_primitive_type(&infer, elem_id, PrimitiveType::U32);
 
-        let tuple = infer.normalized_type_for_hir_type(*tuple_tid).unwrap();
-        let Type::Tuple { elem_tids } = &infer[tuple] else {
+        let tuple = infer.normalized_type_for_hir_type(*tuple_ty_id).unwrap();
+        let Type::Tuple { elem_ids } = &infer[tuple] else {
             panic!("tuple field should normalize to a tuple type");
         };
-        let [first, second] = elem_tids.as_slice() else {
+        let [first, second] = elem_ids.as_slice() else {
             panic!("tuple field should have two elements");
         };
         assert_primitive_type(&infer, *first, PrimitiveType::U32);
         assert_primitive_type(&infer, *second, PrimitiveType::Bool);
 
-        let array = infer.normalized_type_for_hir_type(*array_tid).unwrap();
-        let Type::Array { elem_tid, .. } = infer[array] else {
+        let array = infer.normalized_type_for_hir_type(*array_ty_id).unwrap();
+        let Type::Array { elem_id, .. } = infer[array] else {
             panic!("array field should normalize to an array type");
         };
-        assert_primitive_type(&infer, elem_tid, PrimitiveType::U32);
+        assert_primitive_type(&infer, elem_id, PrimitiveType::U32);
 
-        let slice_ref = infer.normalized_type_for_hir_type(*slice_ref_tid).unwrap();
-        let Type::Reference {
-            elem_tid: slice, ..
-        } = infer[slice_ref]
-        else {
+        let slice_ref = infer
+            .normalized_type_for_hir_type(*slice_ref_ty_id)
+            .unwrap();
+        let Type::Reference { elem_id: slice, .. } = infer[slice_ref] else {
             panic!("slice_ref field should normalize to a reference type");
         };
-        let Type::Slice { elem_tid } = infer[slice] else {
+        let Type::Slice { elem_id } = infer[slice] else {
             panic!("slice_ref element should normalize to a slice type");
         };
-        assert_primitive_type(&infer, elem_tid, PrimitiveType::U32);
+        assert_primitive_type(&infer, elem_id, PrimitiveType::U32);
     }
 
     #[test]
@@ -1527,13 +1534,13 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [field_tid] = fields.as_slice() else {
+        let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
         let before = infer.types.len();
-        let first = infer.normalized_type_for_hir_type(*field_tid).unwrap();
+        let first = infer.normalized_type_for_hir_type(*field_ty_id).unwrap();
         let after_first = infer.types.len();
-        let second = infer.normalized_type_for_hir_type(*field_tid).unwrap();
+        let second = infer.normalized_type_for_hir_type(*field_ty_id).unwrap();
         let after_second = infer.types.len();
 
         assert_eq!(first, second);
@@ -1573,7 +1580,7 @@ mod tests {
         );
 
         let fields = struct_field_hir_types(&hir, "Result");
-        let [vec_field_tid, box_field_tid] = fields.as_slice() else {
+        let [vec_field_ty_id, box_field_ty_id] = fields.as_slice() else {
             panic!("Result should have two field types");
         };
         let [_vec_substitution, _box_substitution] =
@@ -1584,24 +1591,24 @@ mod tests {
 
         for substitution in &infer.projections.type_substitutions {
             assert!(infer.projections.type_bindings.iter().any(|binding| {
-                substitution.projection_self_tid == binding.projection_self_tid
-                    && substitution.impl_self_tid == binding.impl_self_tid
-                    && substitution.generic_tid == binding.generic_tid
-                    && substitution.arg_tid == binding.arg_tid
+                substitution.projection_self_ty_id == binding.projection_self_ty_id
+                    && substitution.impl_self_ty_id == binding.impl_self_ty_id
+                    && substitution.generic_ty_id == binding.generic_ty_id
+                    && substitution.arg_ty_id == binding.arg_ty_id
             }));
         }
-        let vec_normalized_tid = infer
-            .normalized_projection_type_for_hir_type(*vec_field_tid)
+        let vec_normalized_ty_id = infer
+            .normalized_projection_type_for_hir_type(*vec_field_ty_id)
             .expect("Vec projection should have one context-matched normalization");
-        let box_normalized_tid = infer
-            .normalized_projection_type_for_hir_type(*box_field_tid)
+        let box_normalized_ty_id = infer
+            .normalized_projection_type_for_hir_type(*box_field_ty_id)
             .expect("Box projection should have one context-matched normalization");
-        assert_option_of(&infer, vec_normalized_tid, PrimitiveType::U32);
-        assert_option_of(&infer, box_normalized_tid, PrimitiveType::Bool);
+        assert_option_of(&infer, vec_normalized_ty_id, PrimitiveType::U32);
+        assert_option_of(&infer, box_normalized_ty_id, PrimitiveType::Bool);
     }
 
-    fn assert_option_of(infer: &InferDb<'_>, tid: TypeId, expected: PrimitiveType) {
-        let Type::Path(path) = &infer[tid] else {
+    fn assert_option_of(infer: &InferDb<'_>, ty_id: TypeId, expected: PrimitiveType) {
+        let Type::Path(path) = &infer[ty_id] else {
             panic!("normalized projection value should lower to path type");
         };
         let [segment] = path.path.segments.as_slice() else {
@@ -1614,26 +1621,26 @@ mod tests {
         assert_eq!(infer[*arg], Type::Primitive(expected));
     }
 
-    fn assert_primitive_type(infer: &InferDb<'_>, tid: TypeId, expected: PrimitiveType) {
-        assert_eq!(infer[tid], Type::Primitive(expected));
+    fn assert_primitive_type(infer: &InferDb<'_>, ty_id: TypeId, expected: PrimitiveType) {
+        assert_eq!(infer[ty_id], Type::Primitive(expected));
     }
 
     #[test]
     fn preserves_array_length_expression_id() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_tids(&ccx, &scx, "struct S { field: [u8; 3] }");
-        let hir_tid = struct_field_hir_types(&hir, "S")[0];
-        let infer_tid = infer.type_for_hir_type(hir_tid).unwrap();
+        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: [u8; 3] }");
+        let hir_ty_id = struct_field_hir_types(&hir, "S")[0];
+        let infer_ty_id = infer.type_for_hir_type(hir_ty_id).unwrap();
 
-        let Type::Array { len, .. } = &infer[infer_tid] else {
+        let Type::Array { len, .. } = &infer[infer_ty_id] else {
             panic!("array field should lower to an array type");
         };
         let ArrayLen::Expr(expr) = len;
         let hir::TypeKind::Array {
             len: hir::ArrayLen::Expr(hir_expr),
             ..
-        } = hir[hir_tid].kind
+        } = hir[hir_ty_id].kind
         else {
             panic!("HIR field should be an array type");
         };
@@ -1644,15 +1651,15 @@ mod tests {
     fn preserves_const_generic_arguments() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_tids(
+        let (hir, infer) = infer_ty_ids(
             &ccx,
             &scx,
             "struct Array<T, const N: usize> { field: T } struct S { field: Array<u8, 3> }",
         );
-        let hir_tid = struct_field_hir_types(&hir, "S")[0];
-        let infer_tid = infer.type_for_hir_type(hir_tid).unwrap();
+        let hir_ty_id = struct_field_hir_types(&hir, "S")[0];
+        let infer_ty_id = infer.type_for_hir_type(hir_ty_id).unwrap();
 
-        let Type::Path(path) = &infer[infer_tid] else {
+        let Type::Path(path) = &infer[infer_ty_id] else {
             panic!("field should lower to a path type");
         };
         let [segment] = path.path.segments.as_slice() else {
@@ -1670,7 +1677,7 @@ mod tests {
     fn preserves_associated_const_arguments() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_hir, infer) = infer_tids(
+        let (_hir, infer) = infer_ty_ids(
             &ccx,
             &scx,
             r#"
@@ -1684,10 +1691,10 @@ mod tests {
             "#,
         );
         let fact = infer.trait_bound_facts.first().unwrap();
-        let Type::Path(trait_tid) = &infer[fact.trait_tid] else {
+        let Type::Path(trait_ty_id) = &infer[fact.trait_ty_id] else {
             panic!("trait bound should lower to a path type");
         };
-        let [GenericArg::AssocConst { name, value }] = trait_tid.path.segments[0].args.as_slice()
+        let [GenericArg::AssocConst { name, value }] = trait_ty_id.path.segments[0].args.as_slice()
         else {
             panic!("trait bound should preserve associated const argument");
         };
@@ -1699,7 +1706,7 @@ mod tests {
     fn preserves_associated_type_constraint_bounds() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_hir, infer) = infer_tids(
+        let (_hir, infer) = infer_ty_ids(
             &ccx,
             &scx,
             r#"
@@ -1709,10 +1716,11 @@ mod tests {
             "#,
         );
         let fact = infer.trait_bound_facts.first().unwrap();
-        let Type::Path(trait_tid) = &infer[fact.trait_tid] else {
+        let Type::Path(trait_ty_id) = &infer[fact.trait_ty_id] else {
             panic!("trait bound should lower to a path type");
         };
-        let [GenericArg::Constraint { name, bounds }] = trait_tid.path.segments[0].args.as_slice()
+        let [GenericArg::Constraint { name, bounds }] =
+            trait_ty_id.path.segments[0].args.as_slice()
         else {
             panic!("trait bound should preserve associated type constraint");
         };
@@ -1752,7 +1760,7 @@ mod tests {
             PathTypeResolution::Ambiguous(vec![first, second])
         );
 
-        let (hir, infer) = infer_tids(&ccx, &scx, "struct S { field: Missing }");
+        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: Missing }");
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),

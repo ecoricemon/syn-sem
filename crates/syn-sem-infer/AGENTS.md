@@ -3,17 +3,14 @@
 ## Role
 
 - Own type inference for upper semantic phases.
-- Complete inference inside this crate; use solver/logic modules as internal
-  implementation pieces when trait, impl, bound, or projection solving is needed.
-- Use HIR from the current `syn-sem-hir` crate for source spine and lowered
-  inference input.
-- Use `syn-sem-name` for definition, scope, resolution, and semantic visibility facts.
+- Keep solver/logic modules internal to inference.
+- Use HIR for source and lowered inference input.
+- Query `syn-sem-name` for definition, scope, resolution, and visibility facts.
 
 ## Boundaries
 
 - Do not depend on `syn`, `syn-sem-ast`, or raw syntax trees.
-- Do not expose logic as a separate upper phase over inference; keep it behind
-  inference-owned APIs.
+- Do not expose logic as a separate upper phase.
 - Do not add constant evaluation, monomorphization, backend lowering, or diagnostics ownership here.
 - Treat missing inference inputs as possible HIR requirements before adding workarounds.
 
@@ -22,21 +19,14 @@
 - Start with expression type inference needs.
 - Keep inference inputs explicit and query owning crates for facts.
 - Prefer `*_hir_type` query names for HIR-linked inference facts.
-- Preserve Rust type path syntax during lowering; do not treat name lookup as
-  final type resolution.
-- Keep generic substitution, qualified paths, projections, and trait-based
-  associated item lookup solver-friendly.
-- Keep logic-backed solving modular internally, but feed it HIR, `syn-sem-name`,
-  and inference facts rather than raw syntax.
+- Preserve Rust type path syntax during lowering; name lookup is not final type resolution.
+- Keep generic substitution, qualified paths, projections, and trait-based associated
+  lookup solver-friendly.
+- Feed logic-backed solving HIR, `syn-sem-name`, and inference facts, not raw syntax.
 - Prefer small vertical slices that reveal HIR requirements.
 
 ## Primary Public Items
 
-- `InferDb`: entry point and focused query surface for HIR type occurrences.
-- `Type`, `TypeId`: inference type shapes and stable ids returned by queries.
-- `PathType`, `QSelf`, `PathTypeResolution`: source-shaped path types plus
-  current solver-friendly resolution classification.
-- `ProjectionType`: associated type projection metadata for projection path types.
-- `ProjectionNormalizationResult`: public result of asking whether a projection
-  has a known normalized value type.
-- `PrimitiveType`: primitive Rust type classification stored as `Type::Primitive`.
+- `InferDb`, `Type`, `TypeId`, `PrimitiveType`.
+- `PathType`, `QSelf`, `PathTypeResolution`, `ProjectionType`.
+- `ProjectionNormalizationResult`.

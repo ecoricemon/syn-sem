@@ -41,37 +41,37 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
         let bounds = self.db.trait_bound_facts.clone();
         let mut candidates = Vec::new();
         for obligation in obligations {
-            let Some(self_tid) = obligation.self_tid else {
+            let Some(self_ty_id) = obligation.self_ty_id else {
                 continue;
             };
-            if let Some(trait_tid) = obligation.trait_tid {
+            if let Some(trait_ty_id) = obligation.trait_ty_id {
                 if logic.proves_candidate(
-                    obligation.projection_tid,
-                    self_tid,
+                    obligation.projection_ty_id,
+                    self_ty_id,
                     obligation.assoc_type,
-                    trait_tid,
+                    trait_ty_id,
                 ) {
                     candidates.push(ProjectionCandidate {
-                        projection_tid: obligation.projection_tid,
-                        self_tid,
+                        projection_ty_id: obligation.projection_ty_id,
+                        self_ty_id,
                         assoc_type: obligation.assoc_type,
-                        trait_tid,
+                        trait_ty_id,
                     });
                 }
                 continue;
             }
             for bound in &bounds {
                 if logic.proves_candidate(
-                    obligation.projection_tid,
-                    self_tid,
+                    obligation.projection_ty_id,
+                    self_ty_id,
                     obligation.assoc_type,
-                    bound.trait_tid,
+                    bound.trait_ty_id,
                 ) {
                     candidates.push(ProjectionCandidate {
-                        projection_tid: obligation.projection_tid,
-                        self_tid,
+                        projection_ty_id: obligation.projection_ty_id,
+                        self_ty_id,
                         assoc_type: obligation.assoc_type,
-                        trait_tid: bound.trait_tid,
+                        trait_ty_id: bound.trait_ty_id,
                     });
                 }
             }
@@ -91,16 +91,16 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
                 .filter(|member| member.matches_candidate(candidate))
             {
                 if logic.proves_match(
-                    candidate.projection_tid,
-                    candidate.self_tid,
+                    candidate.projection_ty_id,
+                    candidate.self_ty_id,
                     member.member_assoc_type,
-                    candidate.trait_tid,
+                    candidate.trait_ty_id,
                 ) {
                     matches.push(ProjectionMatch {
-                        projection_tid: candidate.projection_tid,
-                        self_tid: candidate.self_tid,
+                        projection_ty_id: candidate.projection_ty_id,
+                        self_ty_id: candidate.self_ty_id,
                         assoc_type: member.member_assoc_type,
-                        trait_tid: candidate.trait_tid,
+                        trait_ty_id: candidate.trait_ty_id,
                     });
                 }
             }
@@ -116,18 +116,18 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
         for projection_match in matches {
             for impl_fact in &impl_facts {
                 if projection_match.assoc_type != impl_fact.assoc_type
-                    || !self.same_type(projection_match.trait_tid, impl_fact.trait_tid)
+                    || !self.same_type(projection_match.trait_ty_id, impl_fact.trait_ty_id)
                 {
                     continue;
                 }
                 let Some(bindings) =
-                    self.type_bindings(projection_match.self_tid, impl_fact.impl_self_tid)
+                    self.type_bindings(projection_match.self_ty_id, impl_fact.impl_self_ty_id)
                 else {
                     continue;
                 };
                 let match_ = ImplSelfMatch {
-                    projection_self_tid: projection_match.self_tid,
-                    impl_self_tid: impl_fact.impl_self_tid,
+                    projection_self_ty_id: projection_match.self_ty_id,
+                    impl_self_ty_id: impl_fact.impl_self_ty_id,
                 };
                 if !impl_self_matches.contains(&match_) {
                     impl_self_matches.push(match_);
@@ -154,36 +154,36 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
             let mut contexts = Vec::new();
             for binding in bindings
                 .iter()
-                .filter(|binding| binding.impl_self_tid == impl_fact.impl_self_tid)
+                .filter(|binding| binding.impl_self_ty_id == impl_fact.impl_self_ty_id)
             {
-                let context = (binding.projection_self_tid, binding.impl_self_tid);
+                let context = (binding.projection_self_ty_id, binding.impl_self_ty_id);
                 if !contexts.contains(&context) {
                     contexts.push(context);
                 }
             }
 
-            for (projection_self_tid, impl_self_tid) in contexts {
+            for (projection_self_ty_id, impl_self_ty_id) in contexts {
                 let impl_bindings = bindings
                     .iter()
                     .filter(|binding| {
-                        binding.projection_self_tid == projection_self_tid
-                            && binding.impl_self_tid == impl_self_tid
+                        binding.projection_self_ty_id == projection_self_ty_id
+                            && binding.impl_self_ty_id == impl_self_ty_id
                     })
                     .copied()
                     .collect::<Vec<_>>();
-                let Some((substituted_tid, used_bindings)) =
-                    self.substitute_type(impl_fact.value_tid, &impl_bindings)
+                let Some((substituted_ty_id, used_bindings)) =
+                    self.substitute_type(impl_fact.value_ty_id, &impl_bindings)
                 else {
                     continue;
                 };
                 for binding in used_bindings {
                     let substitution = TypeSubstitution {
-                        projection_self_tid: binding.projection_self_tid,
-                        impl_self_tid: binding.impl_self_tid,
-                        value_tid: impl_fact.value_tid,
-                        generic_tid: binding.generic_tid,
-                        arg_tid: binding.arg_tid,
-                        substituted_tid,
+                        projection_self_ty_id: binding.projection_self_ty_id,
+                        impl_self_ty_id: binding.impl_self_ty_id,
+                        value_ty_id: impl_fact.value_ty_id,
+                        generic_ty_id: binding.generic_ty_id,
+                        arg_ty_id: binding.arg_ty_id,
+                        substituted_ty_id,
                     };
                     if !substitutions.contains(&substitution) {
                         substitutions.push(substitution);
@@ -206,25 +206,26 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
                 let substituted_values = substitutions
                     .iter()
                     .filter(|substitution| {
-                        substitution.projection_self_tid == projection_match.self_tid
-                            && substitution.impl_self_tid == impl_fact.impl_self_tid
-                            && substitution.value_tid == impl_fact.value_tid
+                        substitution.projection_self_ty_id == projection_match.self_ty_id
+                            && substitution.impl_self_ty_id == impl_fact.impl_self_ty_id
+                            && substitution.value_ty_id == impl_fact.value_ty_id
                     })
-                    .map(|substitution| substitution.substituted_tid);
-                for value_tid in std::iter::once(impl_fact.value_tid).chain(substituted_values) {
+                    .map(|substitution| substitution.substituted_ty_id);
+                for value_ty_id in std::iter::once(impl_fact.value_ty_id).chain(substituted_values)
+                {
                     if logic.proves_normalization(
-                        projection_match.projection_tid,
-                        projection_match.self_tid,
+                        projection_match.projection_ty_id,
+                        projection_match.self_ty_id,
                         projection_match.assoc_type,
-                        projection_match.trait_tid,
-                        value_tid,
+                        projection_match.trait_ty_id,
+                        value_ty_id,
                     ) {
                         let normalization = ProjectionNormalization {
-                            projection_tid: projection_match.projection_tid,
-                            self_tid: projection_match.self_tid,
+                            projection_ty_id: projection_match.projection_ty_id,
+                            self_ty_id: projection_match.self_ty_id,
                             assoc_type: projection_match.assoc_type,
-                            trait_tid: projection_match.trait_tid,
-                            value_tid,
+                            trait_ty_id: projection_match.trait_ty_id,
+                            value_ty_id,
                         };
                         if !normalizations.contains(&normalization) {
                             normalizations.push(normalization);
@@ -246,7 +247,7 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
     }
 
     fn trait_member(&self, candidate: ProjectionCandidate) -> Option<TraitMember> {
-        let trait_def = self.nominal_def(candidate.trait_tid)?;
+        let trait_def = self.nominal_def(candidate.trait_ty_id)?;
         if self.names[trait_def].kind != DefKind::Trait {
             return None;
         }
@@ -260,14 +261,14 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
             return None;
         }
         Some(TraitMember {
-            trait_tid: candidate.trait_tid,
+            trait_ty_id: candidate.trait_ty_id,
             requested_assoc_type: candidate.assoc_type,
             member_assoc_type,
         })
     }
 
-    fn nominal_def(&self, tid: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &self.db.types[tid.index()] else {
+    fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
+        let Type::Path(path) = &self.db.types[ty_id.index()] else {
             return None;
         };
         let PathTypeResolution::Nominal(def) = path.resolution else {
@@ -282,12 +283,12 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
     fn type_bindings(
         &self,
-        projection_self_tid: TypeId,
-        impl_self_tid: TypeId,
+        projection_self_ty_id: TypeId,
+        impl_self_ty_id: TypeId,
     ) -> Option<Vec<TypeBindingFact>> {
-        let projection_path = self.path_type(projection_self_tid)?;
-        let impl_path = self.path_type(impl_self_tid)?;
-        if self.nominal_def(projection_self_tid)? != self.nominal_def(impl_self_tid)? {
+        let projection_path = self.path_type(projection_self_ty_id)?;
+        let impl_path = self.path_type(impl_self_ty_id)?;
+        if self.nominal_def(projection_self_ty_id)? != self.nominal_def(impl_self_ty_id)? {
             return None;
         }
 
@@ -303,18 +304,18 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
         let mut bindings = Vec::new();
         for (projection_arg, impl_arg) in projection_segment.args.iter().zip(&impl_segment.args) {
-            let GenericArg::Type(arg_tid) = projection_arg else {
+            let GenericArg::Type(arg_ty_id) = projection_arg else {
                 return None;
             };
-            let GenericArg::Type(generic_tid) = impl_arg else {
+            let GenericArg::Type(generic_ty_id) = impl_arg else {
                 return None;
             };
-            self.generic_def(*generic_tid)?;
+            self.generic_def(*generic_ty_id)?;
             bindings.push(TypeBindingFact {
-                projection_self_tid,
-                impl_self_tid,
-                generic_tid: *generic_tid,
-                arg_tid: *arg_tid,
+                projection_self_ty_id,
+                impl_self_ty_id,
+                generic_ty_id: *generic_ty_id,
+                arg_ty_id: *arg_ty_id,
             });
         }
 
@@ -323,40 +324,40 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
     fn substitute_type(
         &mut self,
-        tid: TypeId,
+        ty_id: TypeId,
         bindings: &[TypeBindingFact],
     ) -> Option<(TypeId, Vec<TypeBindingFact>)> {
-        if let Some(binding) = self.binding_for_generic(tid, bindings) {
-            return Some((binding.arg_tid, vec![binding]));
+        if let Some(binding) = self.binding_for_generic(ty_id, bindings) {
+            return Some((binding.arg_ty_id, vec![binding]));
         }
 
-        match self.db.types[tid.index()].clone() {
-            Type::Array { elem_tid, len } => {
-                let (elem_tid, used) = self.substitute_type(elem_tid, bindings)?;
-                Some((self.db.intern_type(Type::Array { elem_tid, len }), used))
+        match self.db.types[ty_id.index()].clone() {
+            Type::Array { elem_id, len } => {
+                let (elem_id, used) = self.substitute_type(elem_id, bindings)?;
+                Some((self.db.intern_type(Type::Array { elem_id, len }), used))
             }
             Type::Infer | Type::Primitive(_) => None,
             Type::Path(path) => {
                 let (path, used) = self.substitute_path_type(path, bindings)?;
                 Some((self.db.intern_type(Type::Path(path)), used))
             }
-            Type::Reference { elem_tid, is_mut } => {
-                let (elem_tid, used) = self.substitute_type(elem_tid, bindings)?;
+            Type::Reference { elem_id, is_mut } => {
+                let (elem_id, used) = self.substitute_type(elem_id, bindings)?;
                 Some((
-                    self.db.intern_type(Type::Reference { elem_tid, is_mut }),
+                    self.db.intern_type(Type::Reference { elem_id, is_mut }),
                     used,
                 ))
             }
-            Type::Slice { elem_tid } => {
-                let (elem_tid, used) = self.substitute_type(elem_tid, bindings)?;
-                Some((self.db.intern_type(Type::Slice { elem_tid }), used))
+            Type::Slice { elem_id } => {
+                let (elem_id, used) = self.substitute_type(elem_id, bindings)?;
+                Some((self.db.intern_type(Type::Slice { elem_id }), used))
             }
-            Type::Tuple { elem_tids } => {
-                let (elem_tids, used) = self.substitute_type_ids(elem_tids, bindings);
+            Type::Tuple { elem_ids } => {
+                let (elem_ids, used) = self.substitute_type_ids(elem_ids, bindings);
                 if used.is_empty() {
                     return None;
                 }
-                Some((self.db.intern_type(Type::Tuple { elem_tids }), used))
+                Some((self.db.intern_type(Type::Tuple { elem_ids }), used))
             }
         }
     }
@@ -368,16 +369,16 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
     ) -> Option<(PathType<'cx>, Vec<TypeBindingFact>)> {
         let mut used = Vec::new();
         let qself = path.qself.map(|qself| {
-            let (self_tid, self_used) = self.substitute_type_id(qself.self_tid, bindings);
+            let (self_ty_id, self_used) = self.substitute_type_id(qself.self_ty_id, bindings);
             used.extend(self_used);
-            let trait_tid = qself.trait_tid.map(|trait_tid| {
-                let (trait_tid, trait_used) = self.substitute_type_id(trait_tid, bindings);
+            let trait_ty_id = qself.trait_ty_id.map(|trait_ty_id| {
+                let (trait_ty_id, trait_used) = self.substitute_type_id(trait_ty_id, bindings);
                 used.extend(trait_used);
-                trait_tid
+                trait_ty_id
             });
             crate::QSelf {
-                self_tid,
-                trait_tid,
+                self_ty_id,
+                trait_ty_id,
             }
         });
         let segments = path
@@ -423,10 +424,10 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
                 used.extend(ty_used);
                 GenericArg::Type(ty)
             }
-            GenericArg::AssocType { name, tid } => {
-                let (tid, ty_used) = self.substitute_type_id(tid, bindings);
+            GenericArg::AssocType { name, ty_id } => {
+                let (ty_id, ty_used) = self.substitute_type_id(ty_id, bindings);
                 used.extend(ty_used);
-                GenericArg::AssocType { name, tid }
+                GenericArg::AssocType { name, ty_id }
             }
             GenericArg::Const(arg) => GenericArg::Const(arg),
             GenericArg::AssocConst { name, value } => GenericArg::AssocConst { name, value },
@@ -518,25 +519,25 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
     fn substitute_type_id(
         &self,
-        tid: TypeId,
+        ty_id: TypeId,
         bindings: &[TypeBindingFact],
     ) -> (TypeId, Vec<TypeBindingFact>) {
-        if let Some(binding) = self.binding_for_generic(tid, bindings) {
-            return (binding.arg_tid, vec![binding]);
+        if let Some(binding) = self.binding_for_generic(ty_id, bindings) {
+            return (binding.arg_ty_id, vec![binding]);
         }
-        (tid, Vec::new())
+        (ty_id, Vec::new())
     }
 
     fn binding_for_generic(
         &self,
-        tid: TypeId,
+        ty_id: TypeId,
         bindings: &[TypeBindingFact],
     ) -> Option<TypeBindingFact> {
-        let generic_def = self.generic_def(tid)?;
+        let generic_def = self.generic_def(ty_id)?;
         bindings
             .iter()
             .copied()
-            .find(|binding| self.generic_def(binding.generic_tid) == Some(generic_def))
+            .find(|binding| self.generic_def(binding.generic_ty_id) == Some(generic_def))
     }
 
     fn unique_bindings(bindings: Vec<TypeBindingFact>) -> Vec<TypeBindingFact> {
@@ -549,15 +550,15 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
         unique
     }
 
-    fn path_type(&self, tid: TypeId) -> Option<&PathType<'cx>> {
-        let Type::Path(path) = &self.db.types[tid.index()] else {
+    fn path_type(&self, ty_id: TypeId) -> Option<&PathType<'cx>> {
+        let Type::Path(path) = &self.db.types[ty_id.index()] else {
             return None;
         };
         Some(path)
     }
 
-    fn generic_def(&self, tid: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &self.db.types[tid.index()] else {
+    fn generic_def(&self, ty_id: TypeId) -> Option<DefId> {
+        let Type::Path(path) = &self.db.types[ty_id.index()] else {
             return None;
         };
         let PathTypeResolution::GenericParam(def) = path.resolution else {
@@ -569,14 +570,15 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
 
 #[derive(Clone, Copy)]
 struct TraitMember {
-    trait_tid: TypeId,
+    trait_ty_id: TypeId,
     requested_assoc_type: DefId,
     member_assoc_type: DefId,
 }
 
 impl TraitMember {
     fn matches_candidate(self, candidate: ProjectionCandidate) -> bool {
-        self.trait_tid == candidate.trait_tid && self.requested_assoc_type == candidate.assoc_type
+        self.trait_ty_id == candidate.trait_ty_id
+            && self.requested_assoc_type == candidate.assoc_type
     }
 }
 
@@ -648,13 +650,13 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     fn insert_projection_obligations(&mut self) {
         for obligation in &self.infer.projections.obligations {
-            let Some(self_tid) = obligation.self_tid else {
+            let Some(self_ty_id) = obligation.self_ty_id else {
                 continue;
             };
             self.insert_clause(term::projection_obligation_clause(
                 self.ccx,
                 *obligation,
-                self_tid,
+                self_ty_id,
             ));
         }
     }
@@ -696,7 +698,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         for member in trait_members {
             self.insert_clause(term::trait_member_clause(
                 self.ccx,
-                member.trait_tid,
+                member.trait_ty_id,
                 member.requested_assoc_type,
                 member.member_assoc_type,
             ));
@@ -729,56 +731,56 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     fn proves_candidate(
         &mut self,
-        projection_tid: TypeId,
-        self_tid: TypeId,
+        projection_ty_id: TypeId,
+        self_ty_id: TypeId,
         assoc_type: DefId,
-        trait_tid: TypeId,
+        trait_ty_id: TypeId,
     ) -> bool {
         self.db
             .query(term::projection_candidate_query(
                 self.ccx,
-                projection_tid,
-                self_tid,
+                projection_ty_id,
+                self_ty_id,
                 assoc_type,
-                trait_tid,
+                trait_ty_id,
             ))
             .is_true()
     }
 
     fn proves_match(
         &mut self,
-        projection_tid: TypeId,
-        self_tid: TypeId,
+        projection_ty_id: TypeId,
+        self_ty_id: TypeId,
         assoc_type: DefId,
-        trait_tid: TypeId,
+        trait_ty_id: TypeId,
     ) -> bool {
         self.db
             .query(term::projection_match_query(
                 self.ccx,
-                projection_tid,
-                self_tid,
+                projection_ty_id,
+                self_ty_id,
                 assoc_type,
-                trait_tid,
+                trait_ty_id,
             ))
             .is_true()
     }
 
     fn proves_normalization(
         &mut self,
-        projection_tid: TypeId,
-        self_tid: TypeId,
+        projection_ty_id: TypeId,
+        self_ty_id: TypeId,
         assoc_type: DefId,
-        trait_tid: TypeId,
-        value_tid: TypeId,
+        trait_ty_id: TypeId,
+        value_ty_id: TypeId,
     ) -> bool {
         self.db
             .query(term::projection_normalization_query(
                 self.ccx,
-                projection_tid,
-                self_tid,
+                projection_ty_id,
+                self_ty_id,
                 assoc_type,
-                trait_tid,
-                value_tid,
+                trait_ty_id,
+                value_ty_id,
             ))
             .is_true()
     }

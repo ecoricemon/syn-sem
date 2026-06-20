@@ -1,11 +1,11 @@
 //! Associated type implementation fact collection for inference.
 
 use super::infer_types::{InferTypes, TypeLowerer};
-use crate::AssocTypeImplFact;
+use crate::TypeId;
 use syn_sem_hir as hir;
-use syn_sem_name::{NameDb, Namespace, ResolveResult};
+use syn_sem_name::{DefId, NameDb, Namespace, ResolveResult};
 
-pub(super) struct AssocTypeImplFactCollector<'a, 'cx> {
+pub(crate) struct AssocTypeImplFactCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
@@ -13,7 +13,7 @@ pub(super) struct AssocTypeImplFactCollector<'a, 'cx> {
 }
 
 impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
-    pub(super) fn collect(
+    pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
@@ -31,7 +31,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
         for item in self.hir.items() {
             let hir::ItemKind::Impl {
                 trait_,
-                self_tid,
+                self_ty_id,
                 items,
                 ..
             } = &item.kind
@@ -41,15 +41,15 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
             let Some(trait_) = trait_ else {
                 continue;
             };
-            let impl_self_tid = self.ty_lowerer.lower_hir_type(*self_tid);
-            let trait_tid = self
+            let impl_self_ty_id = self.ty_lowerer.lower_hir_type(*self_ty_id);
+            let trait_ty_id = self
                 .ty_lowerer
                 .lower_plain_path_as_type(trait_, item.parent_scope);
-            let Some(trait_def) = self.ty_lowerer.trait_def_for_type(trait_tid) else {
+            let Some(trait_def) = self.ty_lowerer.trait_def_for_type(trait_ty_id) else {
                 continue;
             };
             for assoc_item in items.iter().map(|id| &self.hir[*id]) {
-                let hir::AssocItemKind::ImplType { tid } = assoc_item.kind else {
+                let hir::AssocItemKind::ImplType { ty_id } = assoc_item.kind else {
                     continue;
                 };
                 let ResolveResult::Found(assoc_type) =
@@ -58,15 +58,32 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
                 else {
                     continue;
                 };
-                let value_tid = self.ty_lowerer.lower_hir_type(tid);
+                let value_ty_id = self.ty_lowerer.lower_hir_type(ty_id);
                 self.facts.push(AssocTypeImplFact {
-                    impl_self_tid,
-                    trait_tid,
+                    impl_self_ty_id,
+                    trait_ty_id,
                     assoc_type,
-                    value_tid,
+                    value_ty_id,
                 });
             }
         }
         self.facts
     }
+}
+
+/// Associated type value assigned by a trait implementation.
+///
+/// For example, `impl Iterator for Vec { type Item = u32; }` lowers to one fact whose
+/// `impl_self_ty_id` is `Vec`, `trait_ty_id` is `Iterator`, `assoc_type` is the definition of
+/// `Iterator::Item`, and `value_ty_id` is `u32`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AssocTypeImplFact {
+    /// Implementing self type in `impl Trait for Self`.
+    pub(crate) impl_self_ty_id: TypeId,
+    /// Implemented trait type in `impl Trait for Self`.
+    pub(crate) trait_ty_id: TypeId,
+    /// Associated type definition assigned by the impl item.
+    pub(crate) assoc_type: DefId,
+    /// Type assigned by the impl item.
+    pub(crate) value_ty_id: TypeId,
 }
