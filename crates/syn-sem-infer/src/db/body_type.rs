@@ -54,14 +54,14 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             match &expr.kind {
                 hir::ExprKind::Block { block } | hir::ExprKind::Const { block } => {
                     if let Some(tail_expr) = self.hir.body()[*block].tail_expr {
-                        self.push_type_equal(
+                        self.intern_type_equal(
                             TypeSubject::Expr(expr.id),
                             TypeSubject::Expr(tail_expr),
                         );
                     }
                 }
                 hir::ExprKind::Cast { tid, .. } => {
-                    self.push_type_equal(
+                    self.intern_type_equal(
                         TypeSubject::Expr(expr.id),
                         TypeSubject::Type(
                             self.type_for_hir_type(*tid)
@@ -71,17 +71,17 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                 }
                 hir::ExprKind::Lit(lit) => {
                     if let Some(ty) = self.lit_type(lit) {
-                        self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Type(ty));
+                        self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Type(ty));
                     }
                 }
                 hir::ExprKind::Paren { expr: inner } => {
-                    self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Expr(*inner));
+                    self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Expr(*inner));
                 }
                 hir::ExprKind::Path(path) => {
                     if let Some(def) =
                         Self::resolve_value_path(self.names, expr.scope, &path.segments)
                     {
-                        self.push_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Def(def));
+                        self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Def(def));
                     }
                 }
                 hir::ExprKind::Array { .. }
@@ -117,7 +117,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             let Some(return_tid) = self.type_for_hir_type(return_param.tid) else {
                 continue;
             };
-            self.push_type_equal(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_tid));
+            self.intern_type_equal(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_tid));
         }
     }
 
@@ -151,7 +151,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     fn bind_pat_to_type(&mut self, pat: hir::PatId, tid: TypeId) {
         match &self.hir[pat].kind {
             hir::PatKind::Ident { def: Some(def), .. } => {
-                self.push_type_equal(TypeSubject::Def(*def), TypeSubject::Type(tid));
+                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Type(tid));
             }
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
                 self.bind_pat_to_type(*pat, tid);
@@ -174,7 +174,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     fn bind_pat_to_expr(&mut self, pat: hir::PatId, expr: hir::ExprId) {
         match &self.hir[pat].kind {
             hir::PatKind::Ident { def: Some(def), .. } => {
-                self.push_type_equal(TypeSubject::Def(*def), TypeSubject::Expr(expr));
+                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Expr(expr));
             }
             hir::PatKind::Reference { pat, .. } => self.bind_pat_to_expr(*pat, expr),
             hir::PatKind::Type { pat, tid } => {
@@ -182,7 +182,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                     return;
                 };
                 self.bind_pat_to_type(*pat, tid);
-                self.push_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(tid));
+                self.intern_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(tid));
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
@@ -203,7 +203,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn push_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
+    fn intern_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
         let fact = TypeEqualFact { left, right };
         if !self.body_equalities.contains(&fact) {
             self.body_equalities.push(fact);
