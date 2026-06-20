@@ -44,7 +44,9 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     fn collect_signature_facts(&mut self) {
         for signature in self.hir.signatures() {
             for param in signature.params.iter().skip(1) {
-                self.collect_pat_type_facts(param.pat, param.tid);
+                if let Some(pat) = param.pat {
+                    self.collect_pat_type_facts(pat, param.tid);
+                }
             }
         }
     }
@@ -64,7 +66,8 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                     self.intern_type_equal(
                         TypeSubject::Expr(expr.id),
                         TypeSubject::Type(
-                            self.type_for_hir_type(*tid)
+                            self.types
+                                .type_for_hir_type(*tid)
                                 .expect("HIR types are lowered before body facts"),
                         ),
                     );
@@ -114,7 +117,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             let Some(return_param) = self.hir[signature].params.first() else {
                 continue;
             };
-            let Some(return_tid) = self.type_for_hir_type(return_param.tid) else {
+            let Some(return_tid) = self.types.type_for_hir_type(return_param.tid) else {
                 continue;
             };
             self.intern_type_equal(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_tid));
@@ -138,14 +141,10 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn collect_pat_type_facts(&mut self, pat: Option<hir::PatId>, hir_tid: hir::TypeId) {
-        let Some(pat) = pat else {
-            return;
-        };
-        let Some(tid) = self.type_for_hir_type(hir_tid) else {
-            return;
-        };
-        self.bind_pat_to_type(pat, tid);
+    fn collect_pat_type_facts(&mut self, pat: hir::PatId, hir_tid: hir::TypeId) {
+        if let Some(tid) = self.types.type_for_hir_type(hir_tid) {
+            self.bind_pat_to_type(pat, tid);
+        }
     }
 
     fn bind_pat_to_type(&mut self, pat: hir::PatId, tid: TypeId) {
@@ -178,7 +177,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             }
             hir::PatKind::Reference { pat, .. } => self.bind_pat_to_expr(*pat, expr),
             hir::PatKind::Type { pat, tid } => {
-                let Some(tid) = self.type_for_hir_type(*tid) else {
+                let Some(tid) = self.types.type_for_hir_type(*tid) else {
                     return;
                 };
                 self.bind_pat_to_type(*pat, tid);
@@ -192,14 +191,17 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn type_for_hir_type(&self, hir_tid: hir::TypeId) -> Option<TypeId> {
-        self.types.type_for_hir_type(hir_tid)
-    }
-
     fn lit_type(&mut self, lit: &hir::Lit<'cx>) -> Option<TypeId> {
         match lit {
             hir::Lit::Bool(_) => Some(self.types.intern_type(Type::Primitive(PrimitiveType::Bool))),
-            hir::Lit::Int(_) | hir::Lit::Float(_) => None,
+            hir::Lit::Int(_) => Some(
+                self.types
+                    .insert_fresh_type(Type::Primitive(PrimitiveType::AbstractInt)),
+            ),
+            hir::Lit::Float(_) => Some(
+                self.types
+                    .insert_fresh_type(Type::Primitive(PrimitiveType::AbstractFloat)),
+            ),
         }
     }
 
@@ -228,26 +230,26 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
 pub(crate) struct BodyTypeDb {
     /// Body-local type equality facts.
     pub(crate) equalities: Vec<TypeEqualFact>,
-    /// Concrete body-local type resolutions derived from equality facts.
+    /// Body-local type resolutions derived from equality facts.
     pub(crate) resolved: Vec<ResolvedTypeFact>,
-    /// Resolved concrete types linked to HIR expression occurrences.
+    /// Resolved types linked to HIR expression occurrences.
     pub(crate) expr_types: Map<hir::ExprId, TypeId>,
-    /// Resolved concrete types linked to definitions.
+    /// Resolved types linked to definitions.
     pub(crate) def_types: Map<name::DefId, TypeId>,
 }
 
 impl BodyTypeDb {
-    /// Returns the resolved concrete type linked to a HIR expression occurrence.
+    /// Returns the resolved type linked to a HIR expression occurrence.
     pub(crate) fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
         self.expr_types.get(&hir_expr).copied()
     }
 
-    /// Returns the resolved concrete type linked to a definition.
+    /// Returns the resolved type linked to a definition.
     pub(crate) fn type_for_def(&self, def: name::DefId) -> Option<TypeId> {
         self.def_types.get(&def).copied()
     }
 
-    /// Records resolved concrete types derived from equality facts.
+    /// Records resolved body-local types derived from equality facts.
     pub(crate) fn extend_resolved(&mut self, resolved: Vec<ResolvedTypeFact>) {
         for fact in &resolved {
             match fact.subject {
@@ -269,7 +271,7 @@ impl BodyTypeDb {
         &self.equalities
     }
 
-    /// Returns concrete body-local type resolutions derived from equality facts.
+    /// Returns body-local type resolutions derived from equality facts.
     #[cfg(test)]
     pub(crate) fn resolved(&self) -> &[ResolvedTypeFact] {
         &self.resolved
@@ -285,12 +287,12 @@ pub(crate) struct TypeEqualFact {
     pub(crate) right: TypeSubject,
 }
 
-/// Resolved concrete type found for a body-local subject.
+/// Resolved type found for a body-local subject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResolvedTypeFact {
     /// Subject being resolved.
     pub(crate) subject: TypeSubject,
-    /// Concrete inference type reachable from the subject through equality edges.
+    /// Inference type selected for the subject through equality edges.
     pub(crate) tid: TypeId,
 }
 
@@ -301,7 +303,7 @@ pub(crate) enum TypeSubject {
     Def(name::DefId),
     /// A HIR expression occurrence.
     Expr(hir::ExprId),
-    /// A concrete inference type.
+    /// An inference type.
     Type(TypeId),
 }
 
@@ -389,8 +391,187 @@ mod tests {
         assert!(matches!(names[local_def].kind, DefKind::Local));
     }
 
+    #[test]
+    fn keeps_unconstrained_numeric_literals_abstract() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a = 1;
+                let b = 1.0;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(int_local), hir::lower::Stmt::Local(float_local)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let int_init = int_local.init.expect("int local should have initializer");
+        let int_def = int_local
+            .bindings
+            .first()
+            .copied()
+            .expect("int local should introduce a binding");
+        let float_init = float_local
+            .init
+            .expect("float local should have initializer");
+        let float_def = float_local
+            .bindings
+            .first()
+            .copied()
+            .expect("float local should introduce a binding");
+
+        assert_primitive(
+            &infer,
+            infer.type_for_def(int_def),
+            PrimitiveType::AbstractInt,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_hir_expr(int_init),
+            PrimitiveType::AbstractInt,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_def(float_def),
+            PrimitiveType::AbstractFloat,
+        );
+        assert_primitive(
+            &infer,
+            infer.type_for_hir_expr(float_init),
+            PrimitiveType::AbstractFloat,
+        );
+    }
+
+    #[test]
+    fn refines_abstract_numeric_literals_to_concrete_primitives() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() -> i32 {
+                let a: i32 = 1;
+                a
+            }
+
+            fn g() -> f64 {
+                let b: f64 = 1.0;
+                b
+            }
+            "#,
+        );
+
+        assert_typed_numeric_local(&hir, &infer, "f", PrimitiveType::I32);
+        assert_typed_numeric_local(&hir, &infer, "g", PrimitiveType::F64);
+    }
+
+    #[test]
+    fn keeps_fresh_abstract_numeric_literals_separate() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a: i32 = 1;
+                let b = 2;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(typed_local), hir::lower::Stmt::Local(untyped_local)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let typed_def = typed_local
+            .bindings
+            .first()
+            .copied()
+            .expect("typed local should introduce a binding");
+        let untyped_def = untyped_local
+            .bindings
+            .first()
+            .copied()
+            .expect("untyped local should introduce a binding");
+
+        assert_primitive(&infer, infer.type_for_def(typed_def), PrimitiveType::I32);
+        assert_primitive(
+            &infer,
+            infer.type_for_def(untyped_def),
+            PrimitiveType::AbstractInt,
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_abstract_numeric_resolution() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let a: bool = 1;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(local)] = hir.body()[block].stmts.as_slice() else {
+            panic!("expected one local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let def = local
+            .bindings
+            .first()
+            .copied()
+            .expect("local should introduce a binding");
+
+        assert_eq!(infer.type_for_def(def), None);
+        assert_eq!(infer.type_for_hir_expr(init), None);
+    }
+
+    fn assert_typed_numeric_local(
+        hir: &Hir<'_>,
+        infer: &InferDb<'_>,
+        name: &str,
+        expected: PrimitiveType,
+    ) {
+        let block = function_block(hir, name);
+        let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
+            hir.body()[block].stmts.as_slice()
+        else {
+            panic!("expected local statement followed by tail expression");
+        };
+        let init = local.init.expect("local should have initializer");
+        let def = local
+            .bindings
+            .first()
+            .copied()
+            .expect("local should introduce a binding");
+
+        assert_primitive(infer, infer.type_for_def(def), expected);
+        assert_primitive(infer, infer.type_for_hir_expr(init), expected);
+        assert_primitive(infer, infer.type_for_hir_expr(*tail), expected);
+    }
+
     fn assert_usize(infer: &InferDb<'_>, tid: Option<TypeId>) {
+        assert_primitive(infer, tid, PrimitiveType::Usize);
+    }
+
+    fn assert_primitive(infer: &InferDb<'_>, tid: Option<TypeId>, expected: PrimitiveType) {
         let tid = tid.expect("expected a resolved type");
-        assert_eq!(infer[tid], Type::Primitive(PrimitiveType::Usize));
+        assert_eq!(infer[tid], Type::Primitive(expected));
     }
 }

@@ -6,8 +6,8 @@ use syn_sem_common::CommonCx;
 
 use crate::logic::term;
 
-/// Uses [`BodyTypeLogic`] to resolve body-local equality subjects, then stores the derived concrete
-/// type facts in [`InferDb`].
+/// Uses [`BodyTypeLogic`] to resolve body-local equality subjects, then stores the derived type facts
+/// in [`InferDb`].
 pub(super) struct BodyTypeDeriver<'a, 'cx> {
     ccx: &'cx CommonCx,
     db: &'a mut InferDb<'cx>,
@@ -30,14 +30,53 @@ impl<'a, 'cx> BodyTypeDeriver<'a, 'cx> {
         let subjects = body_type_subjects(self.db);
         let mut resolved = Vec::new();
         for subject in subjects {
-            for tid in logic.resolved_types(subject) {
-                let fact = ResolvedTypeFact { subject, tid };
-                if !resolved.contains(&fact) {
-                    resolved.push(fact);
-                }
+            let candidates = logic.resolved_types(subject);
+            if let Some(tid) = self.canonical_type(&candidates) {
+                resolved.push(ResolvedTypeFact { subject, tid });
             }
         }
         resolved
+    }
+
+    fn canonical_type(&self, candidates: &[TypeId]) -> Option<TypeId> {
+        candidates
+            .iter()
+            .copied()
+            .try_fold(None, |selected, candidate| match selected {
+                None => Some(Some(candidate)),
+                Some(selected) => self.merge_candidates(selected, candidate).map(Some),
+            })
+            .flatten()
+    }
+
+    fn merge_candidates(&self, selected: TypeId, candidate: TypeId) -> Option<TypeId> {
+        if selected == candidate || self.db[selected] == self.db[candidate] {
+            return Some(selected);
+        }
+
+        let selected_primitive = self.primitive(selected);
+        let candidate_primitive = self.primitive(candidate);
+        match (selected_primitive, candidate_primitive) {
+            (Some(selected_primitive), Some(candidate_primitive)) => {
+                if selected_primitive.is_abstract_of(candidate_primitive) {
+                    Some(candidate)
+                } else if candidate_primitive.is_abstract_of(selected_primitive) {
+                    Some(selected)
+                } else {
+                    None
+                }
+            }
+            (Some(selected_primitive), _) if selected_primitive.is_abstract_numeric() => None,
+            (_, Some(candidate_primitive)) if candidate_primitive.is_abstract_numeric() => None,
+            _ => None,
+        }
+    }
+
+    fn primitive(&self, tid: TypeId) -> Option<crate::PrimitiveType> {
+        match &self.db[tid] {
+            Type::Primitive(primitive) => Some(*primitive),
+            _ => None,
+        }
     }
 }
 
@@ -58,8 +97,8 @@ fn body_type_subjects(db: &InferDb<'_>) -> Vec<TypeSubject> {
 ///
 /// * Loads equality rules
 /// * Loads body-local type equality facts
-/// * Loads known concrete inference types
-/// * Queries concrete types resolved for a body-local subject
+/// * Loads known inference type candidates
+/// * Queries type candidates reachable for a body-local subject
 struct BodyTypeLogic<'a, 'cx> {
     ccx: &'cx CommonCx,
     infer: &'a InferDb<'cx>,
@@ -86,7 +125,7 @@ impl<'a, 'cx> BodyTypeLogic<'a, 'cx> {
             if matches!(ty, Type::Infer) {
                 continue;
             }
-            self.insert_clause(term::concrete_type_clause(self.ccx, tid));
+            self.insert_clause(term::type_candidate_clause(self.ccx, tid));
         }
         self.db.commit();
     }

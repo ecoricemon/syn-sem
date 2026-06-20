@@ -40,6 +40,10 @@ pub enum Type<'cx> {
 /// Primitive Rust type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrimitiveType {
+    /// Unsuffixed integer literal type before it is constrained to a concrete integer primitive.
+    AbstractInt,
+    /// Unsuffixed floating-point literal type before it is constrained to a concrete float primitive.
+    AbstractFloat,
     /// `bool`.
     Bool,
     /// `char`.
@@ -77,6 +81,31 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
+    pub(crate) fn is_abstract_numeric(self) -> bool {
+        matches!(self, Self::AbstractInt | Self::AbstractFloat)
+    }
+
+    pub(crate) fn is_abstract_of(self, concrete: Self) -> bool {
+        matches!(
+            (self, concrete),
+            (
+                Self::AbstractInt,
+                Self::I8
+                    | Self::I16
+                    | Self::I32
+                    | Self::I64
+                    | Self::I128
+                    | Self::Isize
+                    | Self::U8
+                    | Self::U16
+                    | Self::U32
+                    | Self::U64
+                    | Self::U128
+                    | Self::Usize
+            ) | (Self::AbstractFloat, Self::F32 | Self::F64)
+        )
+    }
+
     pub(crate) fn from_hir_path(path: &[hir::PathSegment<'_>]) -> Option<Self> {
         let [segment] = path else {
             return None;
