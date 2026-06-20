@@ -31,8 +31,8 @@ impl<'a, 'cx> BodyTypeDeriver<'a, 'cx> {
         let mut resolved = Vec::new();
         for subject in subjects {
             let candidates = logic.resolved_types(subject);
-            if let Some(tid) = self.canonical_type(&candidates) {
-                resolved.push(ResolvedTypeFact { subject, tid });
+            if let Some(ty_id) = self.canonical_type(&candidates) {
+                resolved.push(ResolvedTypeFact { subject, ty_id });
             }
         }
         resolved
@@ -72,8 +72,8 @@ impl<'a, 'cx> BodyTypeDeriver<'a, 'cx> {
         }
     }
 
-    fn primitive(&self, tid: TypeId) -> Option<crate::PrimitiveType> {
-        match &self.db[tid] {
+    fn primitive(&self, ty_id: TypeId) -> Option<crate::PrimitiveType> {
+        match &self.db[ty_id] {
             Type::Primitive(primitive) => Some(*primitive),
             _ => None,
         }
@@ -121,11 +121,11 @@ impl<'a, 'cx> BodyTypeLogic<'a, 'cx> {
         for fact in &self.infer.body_types.equalities {
             self.insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (tid, ty) in self.infer.types.iter() {
+        for (ty_id, ty) in self.infer.types.iter() {
             if matches!(ty, Type::Infer) {
                 continue;
             }
-            self.insert_clause(term::type_candidate_clause(self.ccx, tid));
+            self.insert_clause(term::type_candidate_clause(self.ccx, ty_id));
         }
         self.db.commit();
     }

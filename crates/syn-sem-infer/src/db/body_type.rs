@@ -45,7 +45,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         for signature in self.hir.signatures() {
             for param in signature.params.iter().skip(1) {
                 if let Some(pat) = param.pat {
-                    self.collect_pat_type_facts(pat, param.tid);
+                    self.collect_pat_type_facts(pat, param.ty_id);
                 }
             }
         }
@@ -62,19 +62,22 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                         );
                     }
                 }
-                hir::ExprKind::Cast { tid, .. } => {
+                hir::ExprKind::Cast { ty_id, .. } => {
                     self.intern_type_equal(
                         TypeSubject::Expr(expr.id),
                         TypeSubject::Type(
                             self.types
-                                .type_for_hir_type(*tid)
+                                .type_for_hir_type(*ty_id)
                                 .expect("HIR types are lowered before body facts"),
                         ),
                     );
                 }
                 hir::ExprKind::Lit(lit) => {
-                    if let Some(ty) = self.lit_type(lit) {
-                        self.intern_type_equal(TypeSubject::Expr(expr.id), TypeSubject::Type(ty));
+                    if let Some(ty_id) = self.lit_type(lit) {
+                        self.intern_type_equal(
+                            TypeSubject::Expr(expr.id),
+                            TypeSubject::Type(ty_id),
+                        );
                     }
                 }
                 hir::ExprKind::Paren { expr: inner } => {
@@ -117,10 +120,13 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             let Some(return_param) = self.hir[signature].params.first() else {
                 continue;
             };
-            let Some(return_tid) = self.types.type_for_hir_type(return_param.tid) else {
+            let Some(return_ty_id) = self.types.type_for_hir_type(return_param.ty_id) else {
                 continue;
             };
-            self.intern_type_equal(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_tid));
+            self.intern_type_equal(
+                TypeSubject::Expr(tail_expr),
+                TypeSubject::Type(return_ty_id),
+            );
         }
     }
 
@@ -141,19 +147,19 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn collect_pat_type_facts(&mut self, pat: hir::PatId, hir_tid: hir::TypeId) {
-        if let Some(tid) = self.types.type_for_hir_type(hir_tid) {
-            self.bind_pat_to_type(pat, tid);
+    fn collect_pat_type_facts(&mut self, pat: hir::PatId, hir_ty_id: hir::TypeId) {
+        if let Some(ty_id) = self.types.type_for_hir_type(hir_ty_id) {
+            self.bind_pat_to_type(pat, ty_id);
         }
     }
 
-    fn bind_pat_to_type(&mut self, pat: hir::PatId, tid: TypeId) {
+    fn bind_pat_to_type(&mut self, pat: hir::PatId, ty_id: TypeId) {
         match &self.hir[pat].kind {
             hir::PatKind::Ident { def: Some(def), .. } => {
-                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Type(tid));
+                self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Type(ty_id));
             }
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
-                self.bind_pat_to_type(*pat, tid);
+                self.bind_pat_to_type(*pat, ty_id);
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
@@ -176,12 +182,12 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                 self.intern_type_equal(TypeSubject::Def(*def), TypeSubject::Expr(expr));
             }
             hir::PatKind::Reference { pat, .. } => self.bind_pat_to_expr(*pat, expr),
-            hir::PatKind::Type { pat, tid } => {
-                let Some(tid) = self.types.type_for_hir_type(*tid) else {
+            hir::PatKind::Type { pat, ty_id } => {
+                let Some(ty_id) = self.types.type_for_hir_type(*ty_id) else {
                     return;
                 };
-                self.bind_pat_to_type(*pat, tid);
-                self.intern_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(tid));
+                self.bind_pat_to_type(*pat, ty_id);
+                self.intern_type_equal(TypeSubject::Expr(expr), TypeSubject::Type(ty_id));
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
@@ -254,10 +260,10 @@ impl BodyTypeDb {
         for fact in &resolved {
             match fact.subject {
                 TypeSubject::Def(def) => {
-                    self.def_types.entry(def).or_insert(fact.tid);
+                    self.def_types.entry(def).or_insert(fact.ty_id);
                 }
                 TypeSubject::Expr(expr) => {
-                    self.expr_types.entry(expr).or_insert(fact.tid);
+                    self.expr_types.entry(expr).or_insert(fact.ty_id);
                 }
                 TypeSubject::Type(_) => {}
             }
@@ -293,7 +299,7 @@ pub(crate) struct ResolvedTypeFact {
     /// Subject being resolved.
     pub(crate) subject: TypeSubject,
     /// Inference type selected for the subject through equality edges.
-    pub(crate) tid: TypeId,
+    pub(crate) ty_id: TypeId,
 }
 
 /// Subject whose type can participate in body-local type equality.
@@ -383,10 +389,10 @@ mod tests {
         }));
         assert_usize(&infer, infer.type_for_def(local_def));
         assert_usize(&infer, infer.type_for_hir_expr(init));
-        let tail_tid = infer.type_for_hir_expr(*tail);
-        assert_usize(&infer, tail_tid);
+        let tail_ty_id = infer.type_for_hir_expr(*tail);
+        assert_usize(&infer, tail_ty_id);
         assert!(infer.body_types.resolved().iter().any(|fact| {
-            fact.subject == TypeSubject::Expr(*tail) && Some(fact.tid) == tail_tid
+            fact.subject == TypeSubject::Expr(*tail) && Some(fact.ty_id) == tail_ty_id
         }));
         assert!(matches!(names[local_def].kind, DefKind::Local));
     }
@@ -566,12 +572,12 @@ mod tests {
         assert_primitive(infer, infer.type_for_hir_expr(*tail), expected);
     }
 
-    fn assert_usize(infer: &InferDb<'_>, tid: Option<TypeId>) {
-        assert_primitive(infer, tid, PrimitiveType::Usize);
+    fn assert_usize(infer: &InferDb<'_>, ty_id: Option<TypeId>) {
+        assert_primitive(infer, ty_id, PrimitiveType::Usize);
     }
 
-    fn assert_primitive(infer: &InferDb<'_>, tid: Option<TypeId>, expected: PrimitiveType) {
-        let tid = tid.expect("expected a resolved type");
-        assert_eq!(infer[tid], Type::Primitive(expected));
+    fn assert_primitive(infer: &InferDb<'_>, ty_id: Option<TypeId>, expected: PrimitiveType) {
+        let ty_id = ty_id.expect("expected a resolved type");
+        assert_eq!(infer[ty_id], Type::Primitive(expected));
     }
 }

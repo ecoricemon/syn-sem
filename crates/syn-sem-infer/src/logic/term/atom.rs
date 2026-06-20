@@ -8,14 +8,14 @@ use syn_sem_name::DefId;
 // In examples below, `tyN` encodes `TypeId::new(N)`, `defN` encodes `DefId::new(N)`,
 // and `exprN` encodes `syn_sem_hir::ExprId::new(N)`.
 
-/// * id - Inference type id to encode as a logic atom
+/// * ty_id - Inference type id to encode as a logic atom
 ///
 /// # Examples
 ///
-/// * Input - `id = TypeId::new(0)`
+/// * Input - `ty_id = TypeId::new(0)`
 /// * Output - `ty0`
-pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, id: TypeId) -> LogicTerm<'cx> {
-    let value = format!("ty{}", id.index());
+pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, ty_id: TypeId) -> LogicTerm<'cx> {
+    let value = format!("ty{}", ty_id.index());
     atom(ccx, &value)
 }
 
@@ -50,7 +50,7 @@ pub(in crate::logic) fn type_subject<'cx>(
     match subject {
         TypeSubject::Def(def) => def_id(ccx, def),
         TypeSubject::Expr(expr) => expr_id(ccx, expr),
-        TypeSubject::Type(ty) => type_id(ccx, ty),
+        TypeSubject::Type(ty_id) => type_id(ccx, ty_id),
     }
 }
 

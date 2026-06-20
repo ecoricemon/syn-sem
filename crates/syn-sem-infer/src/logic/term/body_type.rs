@@ -96,10 +96,10 @@ pub(in crate::logic) fn type_equal_clause<'cx>(
 /// * Output - `type_candidate(ty0).`
 pub(in crate::logic) fn type_candidate_clause<'cx>(
     ccx: &'cx CommonCx,
-    tid: TypeId,
+    ty_id: TypeId,
 ) -> LogicClause<'cx> {
     Clause {
-        head: type_candidate(ccx, type_id(ccx, tid)),
+        head: type_candidate(ccx, type_id(ccx, ty_id)),
         body: None,
     }
 }

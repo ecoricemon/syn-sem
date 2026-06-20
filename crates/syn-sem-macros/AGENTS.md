@@ -7,8 +7,7 @@
 ## Boundaries
 
 - Keep this crate limited to small compile-time helpers.
-- Do not add runtime semantic-analysis logic here.
-- Do not add shared data models or phase-specific behavior here.
+- Do not add runtime semantic analysis, shared models, or phase behavior here.
 - Generate straightforward code with inspectable expansion behavior.
 
 ## Model
@@ -17,4 +16,4 @@
 
 ## Primary Public Items
 
-- `CheckDropless`: derive macro asserting that the target type does not need drop.
+- `CheckDropless`.

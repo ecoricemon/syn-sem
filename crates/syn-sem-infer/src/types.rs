@@ -8,7 +8,7 @@ pub enum Type<'cx> {
     /// Fixed-length array type.
     Array {
         /// Element type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
         /// Array length expression shape.
         len: ArrayLen,
     },
@@ -21,19 +21,19 @@ pub enum Type<'cx> {
     /// Borrowed reference type.
     Reference {
         /// Referenced type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
         /// Whether the reference is mutable.
         is_mut: bool,
     },
     /// Dynamically sized slice type.
     Slice {
         /// Element type.
-        elem_tid: TypeId,
+        elem_id: TypeId,
     },
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elem_tids: Vec<TypeId>,
+        elem_ids: Vec<TypeId>,
     },
 }
 
@@ -155,9 +155,9 @@ pub struct PathType<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QSelf {
     /// Self type written inside `<...>`.
-    pub self_tid: TypeId,
+    pub self_ty_id: TypeId,
     /// Trait path in `<Self as Trait>`, when present.
-    pub trait_tid: Option<TypeId>,
+    pub trait_ty_id: Option<TypeId>,
 }
 
 /// Resolution state for a non-primitive path type.
@@ -185,9 +185,9 @@ pub struct ProjectionType {
     /// Associated type definition selected for the projection.
     pub assoc_type: DefId,
     /// Self type for the projection, when represented.
-    pub self_tid: Option<TypeId>,
+    pub self_ty_id: Option<TypeId>,
     /// Trait type for the projection, when represented.
-    pub trait_tid: Option<TypeId>,
+    pub trait_ty_id: Option<TypeId>,
 }
 
 /// Plain path segments used by inference.
@@ -221,7 +221,7 @@ pub enum GenericArg<'cx> {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Assigned type.
-        tid: TypeId,
+        ty_id: TypeId,
     },
     /// Associated const equality.
     AssocConst {
