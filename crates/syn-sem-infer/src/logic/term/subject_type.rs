@@ -1,4 +1,4 @@
-//! Logic rules and predicates for body-local type equality resolution.
+//! Logic rules and predicates for subject type equality resolution.
 
 use super::atom::{term, type_id, type_subject, var, LogicAtom, LogicClause, LogicTerm};
 use crate::{TypeEqualFact, TypeId, TypeSubject};
@@ -26,7 +26,7 @@ const VAR_TYPE: &str = "Type";
 ///   `type_candidate(ty2).`
 /// * Query - `resolved_type(expr1, $Type).`
 /// * Output - `$Type = ty2`
-pub(in crate::logic) fn body_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 5] {
+pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 5] {
     [
         Clause {
             head: same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
@@ -68,7 +68,7 @@ pub(in crate::logic) fn body_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause
     ]
 }
 
-/// * fact - One body-local type equality edge
+/// * fact - One subject type equality edge
 ///
 /// # Examples
 ///
@@ -88,7 +88,7 @@ pub(in crate::logic) fn type_equal_clause<'cx>(
     }
 }
 
-/// * ty - Inference type candidate known to body type logic
+/// * ty - Inference type candidate known to subject type logic
 ///
 /// # Examples
 ///
@@ -104,7 +104,7 @@ pub(in crate::logic) fn type_candidate_clause<'cx>(
     }
 }
 
-/// * subject - Body-local subject whose type candidates are requested
+/// * subject - Subject whose type candidates are requested
 ///
 /// # Examples
 ///
@@ -121,7 +121,7 @@ pub(in crate::logic) fn resolved_type_query<'cx>(
     ))
 }
 
-/// * subject - Subject with a body-local type
+/// * subject - Subject with a resolved type
 ///
 /// # Examples
 ///
@@ -145,8 +145,8 @@ fn type_candidate<'cx>(ccx: &'cx CommonCx, ty: LogicTerm<'cx>) -> LogicTerm<'cx>
     term(ccx, PRED_TYPE_CANDIDATE, vec![ty])
 }
 
-/// * left - One body-local type subject
-/// * right - Another body-local type subject
+/// * left - One inference subject
+/// * right - Another inference subject
 ///
 /// # Examples
 ///
@@ -160,8 +160,8 @@ fn type_equal<'cx>(
     term(ccx, PRED_TYPE_EQUAL, vec![left, right])
 }
 
-/// * left - One body-local type subject
-/// * right - Another body-local type subject
+/// * left - One inference subject
+/// * right - Another inference subject
 ///
 /// # Examples
 ///

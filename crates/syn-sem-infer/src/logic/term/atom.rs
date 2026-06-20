@@ -42,7 +42,7 @@ pub(in crate::logic) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<
     atom(ccx, &value)
 }
 
-/// Encodes a body-local type subject as a logic atom.
+/// Encodes an inference subject as a logic atom.
 pub(in crate::logic) fn type_subject<'cx>(
     ccx: &'cx CommonCx,
     subject: TypeSubject,
