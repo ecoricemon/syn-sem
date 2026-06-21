@@ -3,7 +3,7 @@ name = "syn-sem-common"
 publish = false
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.66.1"
+rust-version = "1.67"
 description = "Common utilities for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 

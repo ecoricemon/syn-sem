@@ -23,19 +23,19 @@ const PRED_TRAIT_BOUND: &str = "trait_bound";
 const PRED_TYPE_BINDING: &str = "type_binding";
 const PRED_TYPE_SUBSTITUTION: &str = "type_substitution";
 
-const VAR_ARG: &str = "Arg";
-const VAR_ASSOC: &str = "Assoc";
-const VAR_GENERIC: &str = "Generic";
-const VAR_IMPL_SELF: &str = "ImplSelf";
-const VAR_IMPL_TRAIT: &str = "ImplTrait";
-const VAR_MEMBER_ASSOC: &str = "MemberAssoc";
-const VAR_PROJECTION: &str = "Projection";
-const VAR_REQUESTED_ASSOC: &str = "RequestedAssoc";
-const VAR_SELF: &str = "Self";
-const VAR_SUBJECT: &str = "Subject";
-const VAR_SUBSTITUTED: &str = "Substituted";
-const VAR_TRAIT: &str = "Trait";
-const VAR_VALUE: &str = "Value";
+const VAR_ARG: &str = "$Arg";
+const VAR_ASSOC: &str = "$Assoc";
+const VAR_GENERIC: &str = "$Generic";
+const VAR_IMPL_SELF: &str = "$ImplSelf";
+const VAR_IMPL_TRAIT: &str = "$ImplTrait";
+const VAR_MEMBER_ASSOC: &str = "$MemberAssoc";
+const VAR_PROJECTION: &str = "$Projection";
+const VAR_REQUESTED_ASSOC: &str = "$RequestedAssoc";
+const VAR_SELF: &str = "$Self";
+const VAR_SUBJECT: &str = "$Subject";
+const VAR_SUBSTITUTED: &str = "$Substituted";
+const VAR_TRAIT: &str = "$Trait";
+const VAR_VALUE: &str = "$Value";
 
 /// * Rule 0 - `projection_candidate(P, Self, Assoc, Trait) :-
 ///   explicit_projection_obligation(P, Self, Assoc, Trait).`
@@ -58,36 +58,44 @@ pub(in crate::logic) fn projection_candidate_rules<'cx>(
         Clause {
             head: projection_candidate(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_ASSOC),
-                var(ccx, VAR_TRAIT),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
             ),
             body: Some(Expr::Term(explicit_projection_obligation(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_ASSOC),
-                var(ccx, VAR_TRAIT),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
             ))),
         },
         Clause {
             head: projection_candidate(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_ASSOC),
-                var(ccx, VAR_TRAIT),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_obligation(
                     ccx,
-                    var(ccx, VAR_PROJECTION),
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_ASSOC),
+                    var(ccx.intern(VAR_PROJECTION)),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_ASSOC)),
                 )),
-                Expr::Term(trait_bound(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TRAIT))),
-                Expr::Term(same_type(ccx, var(ccx, VAR_SELF), var(ccx, VAR_SUBJECT))),
+                Expr::Term(trait_bound(
+                    ccx,
+                    var(ccx.intern(VAR_SUBJECT)),
+                    var(ccx.intern(VAR_TRAIT)),
+                )),
+                Expr::Term(same_type(
+                    ccx,
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_SUBJECT)),
+                )),
             ])),
         },
     ]
@@ -107,24 +115,24 @@ pub(in crate::logic) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [Logi
     [Clause {
         head: projection_match(
             ccx,
-            var(ccx, VAR_PROJECTION),
-            var(ccx, VAR_SELF),
-            var(ccx, VAR_MEMBER_ASSOC),
-            var(ccx, VAR_TRAIT),
+            var(ccx.intern(VAR_PROJECTION)),
+            var(ccx.intern(VAR_SELF)),
+            var(ccx.intern(VAR_MEMBER_ASSOC)),
+            var(ccx.intern(VAR_TRAIT)),
         ),
         body: Some(Expr::And(vec![
             Expr::Term(projection_candidate(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_REQUESTED_ASSOC),
-                var(ccx, VAR_TRAIT),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_REQUESTED_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
             )),
             Expr::Term(trait_member(
                 ccx,
-                var(ccx, VAR_TRAIT),
-                var(ccx, VAR_REQUESTED_ASSOC),
-                var(ccx, VAR_MEMBER_ASSOC),
+                var(ccx.intern(VAR_TRAIT)),
+                var(ccx.intern(VAR_REQUESTED_ASSOC)),
+                var(ccx.intern(VAR_MEMBER_ASSOC)),
             )),
         ])),
     }]
@@ -163,84 +171,88 @@ pub(in crate::logic) fn projection_normalization_rules<'cx>(
         Clause {
             head: projection_normalizes_to(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_ASSOC),
-                var(ccx, VAR_TRAIT),
-                var(ccx, VAR_VALUE),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
+                var(ccx.intern(VAR_VALUE)),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_match(
                     ccx,
-                    var(ccx, VAR_PROJECTION),
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_ASSOC),
-                    var(ccx, VAR_TRAIT),
+                    var(ccx.intern(VAR_PROJECTION)),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_ASSOC)),
+                    var(ccx.intern(VAR_TRAIT)),
                 )),
                 Expr::Term(impl_assoc_type(
                     ccx,
-                    var(ccx, VAR_IMPL_SELF),
-                    var(ccx, VAR_IMPL_TRAIT),
-                    var(ccx, VAR_ASSOC),
-                    var(ccx, VAR_VALUE),
+                    var(ccx.intern(VAR_IMPL_SELF)),
+                    var(ccx.intern(VAR_IMPL_TRAIT)),
+                    var(ccx.intern(VAR_ASSOC)),
+                    var(ccx.intern(VAR_VALUE)),
                 )),
-                Expr::Term(same_type(ccx, var(ccx, VAR_SELF), var(ccx, VAR_IMPL_SELF))),
                 Expr::Term(same_type(
                     ccx,
-                    var(ccx, VAR_TRAIT),
-                    var(ccx, VAR_IMPL_TRAIT),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_IMPL_SELF)),
+                )),
+                Expr::Term(same_type(
+                    ccx,
+                    var(ccx.intern(VAR_TRAIT)),
+                    var(ccx.intern(VAR_IMPL_TRAIT)),
                 )),
             ])),
         },
         Clause {
             head: projection_normalizes_to(
                 ccx,
-                var(ccx, VAR_PROJECTION),
-                var(ccx, VAR_SELF),
-                var(ccx, VAR_ASSOC),
-                var(ccx, VAR_TRAIT),
-                var(ccx, VAR_SUBSTITUTED),
+                var(ccx.intern(VAR_PROJECTION)),
+                var(ccx.intern(VAR_SELF)),
+                var(ccx.intern(VAR_ASSOC)),
+                var(ccx.intern(VAR_TRAIT)),
+                var(ccx.intern(VAR_SUBSTITUTED)),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_match(
                     ccx,
-                    var(ccx, VAR_PROJECTION),
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_ASSOC),
-                    var(ccx, VAR_TRAIT),
+                    var(ccx.intern(VAR_PROJECTION)),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_ASSOC)),
+                    var(ccx.intern(VAR_TRAIT)),
                 )),
                 Expr::Term(impl_assoc_type(
                     ccx,
-                    var(ccx, VAR_IMPL_SELF),
-                    var(ccx, VAR_IMPL_TRAIT),
-                    var(ccx, VAR_ASSOC),
-                    var(ccx, VAR_VALUE),
+                    var(ccx.intern(VAR_IMPL_SELF)),
+                    var(ccx.intern(VAR_IMPL_TRAIT)),
+                    var(ccx.intern(VAR_ASSOC)),
+                    var(ccx.intern(VAR_VALUE)),
                 )),
                 Expr::Term(same_type(
                     ccx,
-                    var(ccx, VAR_TRAIT),
-                    var(ccx, VAR_IMPL_TRAIT),
+                    var(ccx.intern(VAR_TRAIT)),
+                    var(ccx.intern(VAR_IMPL_TRAIT)),
                 )),
                 Expr::Term(impl_self_match(
                     ccx,
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_IMPL_SELF),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_IMPL_SELF)),
                 )),
                 Expr::Term(type_binding(
                     ccx,
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_IMPL_SELF),
-                    var(ccx, VAR_GENERIC),
-                    var(ccx, VAR_ARG),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_IMPL_SELF)),
+                    var(ccx.intern(VAR_GENERIC)),
+                    var(ccx.intern(VAR_ARG)),
                 )),
                 Expr::Term(type_substitution(
                     ccx,
-                    var(ccx, VAR_SELF),
-                    var(ccx, VAR_IMPL_SELF),
-                    var(ccx, VAR_VALUE),
-                    var(ccx, VAR_GENERIC),
-                    var(ccx, VAR_ARG),
-                    var(ccx, VAR_SUBSTITUTED),
+                    var(ccx.intern(VAR_SELF)),
+                    var(ccx.intern(VAR_IMPL_SELF)),
+                    var(ccx.intern(VAR_VALUE)),
+                    var(ccx.intern(VAR_GENERIC)),
+                    var(ccx.intern(VAR_ARG)),
+                    var(ccx.intern(VAR_SUBSTITUTED)),
                 )),
             ])),
         },
@@ -610,8 +622,7 @@ fn projection_candidate<'cx>(
     trait_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_PROJECTION_CANDIDATE,
+        ccx.intern(PRED_PROJECTION_CANDIDATE),
         vec![projection_ty_id, self_ty_id, assoc_type, trait_ty_id],
     )
 }
@@ -634,8 +645,7 @@ fn projection_match<'cx>(
     trait_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_PROJECTION_MATCH,
+        ccx.intern(PRED_PROJECTION_MATCH),
         vec![projection_ty_id, self_ty_id, assoc_type, trait_ty_id],
     )
 }
@@ -660,8 +670,7 @@ fn projection_normalizes_to<'cx>(
     value_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_PROJECTION_NORMALIZES_TO,
+        ccx.intern(PRED_PROJECTION_NORMALIZES_TO),
         vec![
             projection_ty_id,
             self_ty_id,
@@ -690,8 +699,7 @@ fn explicit_projection_obligation<'cx>(
     trait_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_EXPLICIT_PROJECTION_OBLIGATION,
+        ccx.intern(PRED_EXPLICIT_PROJECTION_OBLIGATION),
         vec![projection_ty_id, self_ty_id, assoc_type, trait_ty_id],
     )
 }
@@ -714,8 +722,7 @@ fn impl_assoc_type<'cx>(
     value_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_IMPL_ASSOC_TYPE,
+        ccx.intern(PRED_IMPL_ASSOC_TYPE),
         vec![impl_self_ty_id, trait_ty_id, assoc_type, value_ty_id],
     )
 }
@@ -734,8 +741,7 @@ fn impl_self_match<'cx>(
     impl_self_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_IMPL_SELF_MATCH,
+        ccx.intern(PRED_IMPL_SELF_MATCH),
         vec![projection_self_ty_id, impl_self_ty_id],
     )
 }
@@ -758,8 +764,7 @@ fn type_binding<'cx>(
     arg_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_TYPE_BINDING,
+        ccx.intern(PRED_TYPE_BINDING),
         vec![
             projection_self_ty_id,
             impl_self_ty_id,
@@ -792,8 +797,7 @@ fn type_substitution<'cx>(
     substituted_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_TYPE_SUBSTITUTION,
+        ccx.intern(PRED_TYPE_SUBSTITUTION),
         vec![
             projection_self_ty_id,
             impl_self_ty_id,
@@ -821,8 +825,7 @@ fn projection_obligation<'cx>(
     assoc_type: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_PROJECTION_OBLIGATION,
+        ccx.intern(PRED_PROJECTION_OBLIGATION),
         vec![projection_ty_id, self_ty_id, assoc_type],
     )
 }
@@ -840,7 +843,7 @@ fn trait_bound<'cx>(
     subject: LogicTerm<'cx>,
     trait_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx, PRED_TRAIT_BOUND, vec![subject, trait_ty_id])
+    term(ccx.intern(PRED_TRAIT_BOUND), vec![subject, trait_ty_id])
 }
 
 /// * trait_ty_id - Trait type that owns the member
@@ -859,8 +862,7 @@ fn trait_member<'cx>(
     member_assoc_type: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(
-        ccx,
-        PRED_TRAIT_MEMBER,
+        ccx.intern(PRED_TRAIT_MEMBER),
         vec![trait_ty_id, requested_assoc_type, member_assoc_type],
     )
 }
@@ -878,5 +880,5 @@ fn same_type<'cx>(
     left: LogicTerm<'cx>,
     right: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx, PRED_SAME_TYPE, vec![left, right])
+    term(ccx.intern(PRED_SAME_TYPE), vec![left, right])
 }

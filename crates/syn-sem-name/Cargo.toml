@@ -3,7 +3,7 @@ name = "syn-sem-name"
 publish = false
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.66.1"
+rust-version = "1.67"
 description = "Name-resolution model for syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 

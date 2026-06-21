@@ -1,10 +1,8 @@
 //! Logic-backed subject type equality derivation.
 
-use crate::{InferTypes, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject};
+use crate::{logic::term, InferTypes, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject};
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
-
-use crate::logic::term;
 
 /// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts.
 pub(crate) struct SubjectTypeDeriver<'a, 'cx> {
@@ -36,14 +34,14 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
         logic.load_subject_type_facts();
 
         let subjects = subject_type_subjects(self.subject_types);
-        let mut resolved = Vec::new();
-        for subject in subjects {
-            let candidates = logic.resolved_types(subject);
-            if let Some(ty_id) = self.canonical_type(&candidates) {
-                resolved.push(ResolvedTypeFact { subject, ty_id });
-            }
-        }
-        resolved
+        subjects
+            .into_iter()
+            .filter_map(|subject| {
+                let candidates = logic.resolved_types(subject);
+                self.canonical_type(&candidates)
+                    .map(|ty_id| ResolvedTypeFact { subject, ty_id })
+            })
+            .collect()
     }
 
     fn canonical_type(&self, candidates: &[TypeId]) -> Option<TypeId> {
@@ -108,10 +106,10 @@ fn subject_type_subjects(subject_types: &SubjectTypeDb) -> Vec<TypeSubject> {
 /// * Loads known inference type candidates
 /// * Queries type candidates reachable for an inference subject
 struct SubjectTypeLogic<'a, 'cx> {
+    db: Database<term::LogicAtom<'cx>>,
     ccx: &'cx CommonCx,
     subject_types: &'a SubjectTypeDb,
     types: &'a InferTypes<'cx>,
-    db: Database<term::LogicAtom<'cx>>,
 }
 
 impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
@@ -121,25 +119,28 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
         types: &'a InferTypes<'cx>,
     ) -> Self {
         Self {
+            db: Database::new(),
             ccx,
             subject_types,
             types,
-            db: Database::new(),
         }
     }
 
     fn load_subject_type_facts(&mut self) {
         for clause in term::subject_type_rules(self.ccx) {
-            self.insert_clause(clause);
+            self.db.insert_clause(clause);
         }
         for fact in &self.subject_types.equalities {
-            self.insert_clause(term::type_equal_clause(self.ccx, *fact));
+            self.db
+                .insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (ty_id, ty) in self.types.iter() {
-            if matches!(ty, Type::Infer) {
-                continue;
-            }
-            self.insert_clause(term::type_candidate_clause(self.ccx, ty_id));
+        for (ty_id, _) in self
+            .types
+            .iter()
+            .filter(|(_, ty)| !matches!(ty, Type::Infer))
+        {
+            self.db
+                .insert_clause(term::type_candidate_clause(self.ccx, ty_id));
         }
         self.db.commit();
     }
@@ -149,7 +150,7 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
         let mut types = Vec::new();
         while let Some(result) = query.prove_next() {
             for assignment in result {
-                if assignment.get_lhs_variable().as_ref() != "$Type" {
+                if assignment.get_lhs_variable().as_ref() != term::VAR_TYPE {
                     continue;
                 }
                 let ty = assignment.rhs();
@@ -162,9 +163,5 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
             }
         }
         types
-    }
-
-    fn insert_clause(&mut self, clause: term::LogicClause<'cx>) {
-        self.db.insert_clause(clause);
     }
 }

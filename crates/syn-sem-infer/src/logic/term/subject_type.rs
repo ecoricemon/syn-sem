@@ -10,15 +10,14 @@ const PRED_SAME_TYPE: &str = "same_type";
 const PRED_TYPE_CANDIDATE: &str = "type_candidate";
 const PRED_TYPE_EQUAL: &str = "type_equal";
 
-const VAR_ARG: &str = "Arg";
-const VAR_SUBJECT: &str = "Subject";
-const VAR_TYPE: &str = "Type";
+const VAR_ARG: &str = "$Arg";
+const VAR_SUBJECT: &str = "$Subject";
+pub(crate) const VAR_TYPE: &str = "$Type";
 
 /// * Rule 0 - `same_type(A, B) :- type_equal(A, B).`
 /// * Rule 1 - `same_type(A, B) :- type_equal(B, A).`
-/// * Rule 2 - `same_type(A, C) :- type_equal(A, B), same_type(B, C).`
-/// * Rule 3 - `same_type(A, C) :- type_equal(B, A), same_type(B, C).`
-/// * Rule 4 - `resolved_type(Subject, Type) :- same_type(Subject, Type), type_candidate(Type).`
+/// * Rule 2 - `same_type(A, C) :- same_type(A, B), same_type(B, C).`
+/// * Rule 3 - `resolved_type(Subject, Type) :- same_type(Subject, Type), type_candidate(Type).`
 ///
 /// # Examples
 ///
@@ -26,43 +25,49 @@ const VAR_TYPE: &str = "Type";
 ///   `type_candidate(ty2).`
 /// * Query - `resolved_type(expr1, $Type).`
 /// * Output - `$Type = ty2`
-pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 5] {
+pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 4] {
     [
         Clause {
-            head: same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
+            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
             body: Some(Expr::Term(type_equal(
                 ccx,
-                var(ccx, VAR_SUBJECT),
-                var(ccx, VAR_TYPE),
+                var(ccx.intern(VAR_SUBJECT)),
+                var(ccx.intern(VAR_TYPE)),
             ))),
         },
         Clause {
-            head: same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
+            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
             body: Some(Expr::Term(type_equal(
                 ccx,
-                var(ccx, VAR_TYPE),
-                var(ccx, VAR_SUBJECT),
+                var(ccx.intern(VAR_TYPE)),
+                var(ccx.intern(VAR_SUBJECT)),
             ))),
         },
         Clause {
-            head: same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
+            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
+            // Keep the recursive terms in this order for `logic-eval`'s query-time tabling.
             body: Some(Expr::And(vec![
-                Expr::Term(type_equal(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_ARG))),
-                Expr::Term(same_type(ccx, var(ccx, VAR_ARG), var(ccx, VAR_TYPE))),
+                Expr::Term(same_type(
+                    ccx,
+                    var(ccx.intern(VAR_ARG)),
+                    var(ccx.intern(VAR_TYPE)),
+                )),
+                Expr::Term(same_type(
+                    ccx,
+                    var(ccx.intern(VAR_SUBJECT)),
+                    var(ccx.intern(VAR_ARG)),
+                )),
             ])),
         },
         Clause {
-            head: same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
+            head: resolved_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
             body: Some(Expr::And(vec![
-                Expr::Term(type_equal(ccx, var(ccx, VAR_ARG), var(ccx, VAR_SUBJECT))),
-                Expr::Term(same_type(ccx, var(ccx, VAR_ARG), var(ccx, VAR_TYPE))),
-            ])),
-        },
-        Clause {
-            head: resolved_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE)),
-            body: Some(Expr::And(vec![
-                Expr::Term(same_type(ccx, var(ccx, VAR_SUBJECT), var(ccx, VAR_TYPE))),
-                Expr::Term(type_candidate(ccx, var(ccx, VAR_TYPE))),
+                Expr::Term(same_type(
+                    ccx,
+                    var(ccx.intern(VAR_SUBJECT)),
+                    var(ccx.intern(VAR_TYPE)),
+                )),
+                Expr::Term(type_candidate(ccx, var(ccx.intern(VAR_TYPE)))),
             ])),
         },
     ]
@@ -117,7 +122,7 @@ pub(in crate::logic) fn resolved_type_query<'cx>(
     Expr::Term(resolved_type(
         ccx,
         type_subject(ccx, subject),
-        var(ccx, VAR_TYPE),
+        var(ccx.intern(VAR_TYPE)),
     ))
 }
 
@@ -132,7 +137,7 @@ fn resolved_type<'cx>(
     subject: LogicTerm<'cx>,
     ty: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx, PRED_RESOLVED_TYPE, vec![subject, ty])
+    term(ccx.intern(PRED_RESOLVED_TYPE), vec![subject, ty])
 }
 
 /// * ty - Concrete inference type
@@ -142,7 +147,7 @@ fn resolved_type<'cx>(
 /// * Input - `ty = ty0`
 /// * Output - `type_candidate(ty0)`
 fn type_candidate<'cx>(ccx: &'cx CommonCx, ty: LogicTerm<'cx>) -> LogicTerm<'cx> {
-    term(ccx, PRED_TYPE_CANDIDATE, vec![ty])
+    term(ccx.intern(PRED_TYPE_CANDIDATE), vec![ty])
 }
 
 /// * left - One inference subject
@@ -157,7 +162,7 @@ fn type_equal<'cx>(
     left: LogicTerm<'cx>,
     right: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx, PRED_TYPE_EQUAL, vec![left, right])
+    term(ccx.intern(PRED_TYPE_EQUAL), vec![left, right])
 }
 
 /// * left - One inference subject
@@ -172,5 +177,5 @@ fn same_type<'cx>(
     left: LogicTerm<'cx>,
     right: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx, PRED_SAME_TYPE, vec![left, right])
+    term(ccx.intern(PRED_SAME_TYPE), vec![left, right])
 }
