@@ -3,7 +3,7 @@ name = "syn-sem-top"
 publish = false
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.66.1"
+rust-version = "1.67"
 description = "Temporary crate that will replace syn-sem"
 repository = "https://github.com/ecoricemon/syn-sem"
 

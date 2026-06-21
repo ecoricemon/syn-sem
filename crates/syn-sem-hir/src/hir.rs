@@ -23,7 +23,7 @@ pub struct Hir<'cx> {
     pats: Vec<Pat<'cx>>,
     exprs: Vec<Expr<'cx>>,
     types: Vec<Type<'cx>>,
-    body: lower::Body,
+    lowered_blocks: lower::LoweredBlocks,
 }
 
 impl<'cx> Hir<'cx> {
@@ -41,9 +41,9 @@ impl<'cx> Hir<'cx> {
             pats: arena.pats,
             exprs: arena.exprs,
             types: arena.types,
-            body: lower::Body::default(),
+            lowered_blocks: lower::LoweredBlocks::default(),
         };
-        hir.body = lower::Body::from_hir(&hir);
+        hir.lowered_blocks = lower::LoweredBlocks::from_hir(&hir);
         hir
     }
 
@@ -107,9 +107,9 @@ impl<'cx> Hir<'cx> {
         &self.types
     }
 
-    /// Returns lowered body facts derived from this HIR's source spine.
-    pub fn body(&self) -> &lower::Body {
-        &self.body
+    /// Returns lowered views derived from this HIR's source blocks.
+    pub fn lowered_blocks(&self) -> &lower::LoweredBlocks {
+        &self.lowered_blocks
     }
 }
 
@@ -674,7 +674,7 @@ pub(crate) fn item_visibility<'cx>(item: &'cx ast::Item<'cx>) -> Visibility<'cx>
 /// One braced source block.
 ///
 /// This is currently a source-spine anchor. As body lowering grows enough to own block statement
-/// facts directly, this type may shrink to source/scope linkage or be replaced by lowered body
+/// facts directly, this type may shrink to source/scope linkage or be replaced by lowered block
 /// queries for non-diagnostic consumers.
 #[derive(Debug)]
 pub struct Block<'cx> {
@@ -691,7 +691,7 @@ pub struct Block<'cx> {
 /// One represented statement occurrence.
 ///
 /// This is currently a source-spine anchor. Statement order and lowered local/item/expression
-/// facts are expected to move behind [`lower::Body`] as that model matures.
+/// facts are expected to move behind [`lower::LoweredBlocks`] as that model matures.
 #[derive(Debug)]
 pub struct Stmt<'cx> {
     /// Statement id in HIR.

@@ -1,4 +1,4 @@
 mod derive;
 mod term;
 
-pub(crate) use derive::derive;
+pub(crate) use derive::*;

@@ -3,8 +3,8 @@
 //! This module exposes lowered facts derived from the source-shaped HIR while keeping resolved
 //! name, type, and evaluation decisions in their owning semantic phases.
 
-mod body;
 mod generic_predicate;
+mod lowered_blocks;
 
-pub use body::*;
 pub(crate) use generic_predicate::*;
+pub use lowered_blocks::*;

@@ -81,10 +81,6 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub(crate) fn is_abstract_numeric(self) -> bool {
-        matches!(self, Self::AbstractInt | Self::AbstractFloat)
-    }
-
     pub(crate) fn is_abstract_of(self, concrete: Self) -> bool {
         matches!(
             (self, concrete),

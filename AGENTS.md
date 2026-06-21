@@ -33,6 +33,8 @@
 - Write non-top-level context types with `'cx`, for example `FooCx<'cx>`.
 - Use referent-specific lifetimes elsewhere, for example `&'ccx CommonCx`.
 - Keep names concise but unambiguous.
+- Avoid `Body` unless it means one function or block body; use scope-specific
+  names for whole-HIR collections.
 - Use common short names: `ty`, `pat`, `expr`.
 - Use `data`/`data_id` only when both may be confused; shorten fields when the
   owner gives context, for example `Type { id }` and `Array { elem_id }`.

@@ -311,6 +311,14 @@ impl<'cx> InferTypes<'cx> {
     }
 }
 
+impl<'cx> Index<TypeId> for InferTypes<'cx> {
+    type Output = Type<'cx>;
+
+    fn index(&self, ty_id: TypeId) -> &Self::Output {
+        &self[ty_id.index()]
+    }
+}
+
 impl<'cx> Index<usize> for InferTypes<'cx> {
     type Output = Type<'cx>;
 

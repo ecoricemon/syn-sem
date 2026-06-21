@@ -2,13 +2,13 @@ use crate::{BlockId, ExprId, Hir, ItemId, LocalId, PatId};
 use std::ops::Index;
 use syn_sem_name::DefId;
 
-/// Lowered body facts owned by [`Hir`].
+/// Lowered views for all HIR source blocks, indexed by [`BlockId`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Body {
+pub struct LoweredBlocks {
     blocks: Vec<Block>,
 }
 
-impl Body {
+impl LoweredBlocks {
     pub(crate) fn from_hir(hir: &Hir<'_>) -> Self {
         let blocks = hir
             .blocks()
@@ -24,7 +24,7 @@ impl Body {
     }
 }
 
-impl Index<BlockId> for Body {
+impl Index<BlockId> for LoweredBlocks {
     type Output = Block;
 
     fn index(&self, id: BlockId) -> &Self::Output {
@@ -32,7 +32,11 @@ impl Index<BlockId> for Body {
     }
 }
 
-/// Lowered facts for one HIR block.
+/// Lowered view for one HIR source block.
+///
+/// Unlike [`crate::Block`], this does not retain the original AST block or scope linkage.
+/// It keeps the statement shape and tail expression that upper semantic phases need after the
+/// source-spine block has been built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     /// Source block id.
@@ -68,7 +72,10 @@ impl Block {
     }
 }
 
-/// Lowered body statement.
+/// Lowered view of one HIR source statement.
+///
+/// Unlike [`crate::Stmt`], this has no AST statement reference or statement-local scope. It keeps
+/// only the statement data that later phases consume from block lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     /// Local binding statement.
@@ -97,7 +104,10 @@ impl Stmt {
     }
 }
 
-/// Lowered facts for one local binding statement.
+/// Lowered view of one HIR source local binding.
+///
+/// Unlike [`crate::Local`], this expands the binding pattern into the local definitions it
+/// introduces, so upper phases can consume the binding facts without re-walking the pattern spine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Local {
     /// Source local id.
@@ -197,7 +207,7 @@ mod tests {
             "#,
         );
 
-        let block = &hir.body()[function_block(&hir, "f")];
+        let block = &hir.lowered_blocks()[function_block(&hir, "f")];
 
         let [Stmt::Local(local), Stmt::Item(item), Stmt::Expr(_)] = block.stmts.as_slice() else {
             panic!("expected local, item, expr statement order");
@@ -228,8 +238,8 @@ mod tests {
             "#,
         );
 
-        let with_tail = &hir.body()[function_block(&hir, "with_tail")];
-        let without_tail = &hir.body()[function_block(&hir, "without_tail")];
+        let with_tail = &hir.lowered_blocks()[function_block(&hir, "with_tail")];
+        let without_tail = &hir.lowered_blocks()[function_block(&hir, "without_tail")];
 
         assert!(with_tail.tail_expr.is_some());
         assert_eq!(without_tail.tail_expr, None);

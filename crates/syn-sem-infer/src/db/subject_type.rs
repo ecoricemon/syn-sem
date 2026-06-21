@@ -1,4 +1,4 @@
-//! Body-local type facts and resolved type mappings for inference.
+//! Subject type relations and resolved type mappings for inference.
 
 use super::infer_types::InferTypes;
 use crate::{PrimitiveType, Type, TypeId};
@@ -6,35 +6,35 @@ use syn_sem_common::Map;
 use syn_sem_hir as hir;
 use syn_sem_name as name;
 
-pub(crate) struct BodyTypeCollector<'a, 'cx> {
+pub(crate) struct SubjectTypeCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a name::NameDb<'cx>,
     types: &'a mut InferTypes<'cx>,
-    body_equalities: Vec<TypeEqualFact>,
+    subject_equalities: Vec<TypeEqualFact>,
 }
 
-impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
+impl<'a, 'cx> SubjectTypeCollector<'a, 'cx> {
     pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a name::NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
-    ) -> BodyTypeDb {
+    ) -> SubjectTypeDb {
         Self {
             hir,
             names,
             types,
-            body_equalities: Vec::new(),
+            subject_equalities: Vec::new(),
         }
         .collect_inner()
     }
 
-    fn collect_inner(mut self) -> BodyTypeDb {
+    fn collect_inner(mut self) -> SubjectTypeDb {
         self.collect_signature_facts();
         self.collect_expr_facts();
-        self.collect_body_facts();
+        self.collect_lowered_block_facts();
 
-        BodyTypeDb {
-            equalities: self.body_equalities,
+        SubjectTypeDb {
+            equalities: self.subject_equalities,
             resolved: Vec::new(),
             expr_types: Map::default(),
             def_types: Map::default(),
@@ -55,7 +55,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         for expr in self.hir.exprs() {
             match &expr.kind {
                 hir::ExprKind::Block { block } | hir::ExprKind::Const { block } => {
-                    if let Some(tail_expr) = self.hir.body()[*block].tail_expr {
+                    if let Some(tail_expr) = self.hir.lowered_blocks()[*block].tail_expr {
                         self.intern_type_equal(
                             TypeSubject::Expr(expr.id),
                             TypeSubject::Expr(tail_expr),
@@ -68,7 +68,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
                         TypeSubject::Type(
                             self.types
                                 .type_for_hir_type(*ty_id)
-                                .expect("HIR types are lowered before body facts"),
+                                .expect("HIR types are lowered before subject type relations"),
                         ),
                     );
                 }
@@ -114,7 +114,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             else {
                 continue;
             };
-            let Some(tail_expr) = self.hir.body()[block].tail_expr else {
+            let Some(tail_expr) = self.hir.lowered_blocks()[block].tail_expr else {
                 continue;
             };
             let Some(return_param) = self.hir[signature].params.first() else {
@@ -130,8 +130,8 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
         }
     }
 
-    fn collect_body_facts(&mut self) {
-        for block in self.hir.body().blocks() {
+    fn collect_lowered_block_facts(&mut self) {
+        for block in self.hir.lowered_blocks().blocks() {
             for stmt in &block.stmts {
                 let hir::lower::Stmt::Local(local) = stmt else {
                     continue;
@@ -143,7 +143,7 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
 
     fn collect_local_facts(&mut self, local: &hir::lower::Local) {
         if let Some(init) = local.init {
-            self.collect_pat_expr_facts(Some(local.pat), init);
+            self.bind_pat_to_expr(local.pat, init);
         }
     }
 
@@ -167,13 +167,6 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
             | hir::PatKind::Tuple { .. }
             | hir::PatKind::Unsupported => {}
         }
-    }
-
-    fn collect_pat_expr_facts(&mut self, pat: Option<hir::PatId>, expr: hir::ExprId) {
-        let Some(pat) = pat else {
-            return;
-        };
-        self.bind_pat_to_expr(pat, expr);
     }
 
     fn bind_pat_to_expr(&mut self, pat: hir::PatId, expr: hir::ExprId) {
@@ -213,8 +206,8 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
 
     fn intern_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
         let fact = TypeEqualFact { left, right };
-        if !self.body_equalities.contains(&fact) {
-            self.body_equalities.push(fact);
+        if !self.subject_equalities.contains(&fact) {
+            self.subject_equalities.push(fact);
         }
     }
 
@@ -231,20 +224,20 @@ impl<'a, 'cx> BodyTypeCollector<'a, 'cx> {
     }
 }
 
-/// Body-local type facts owned by inference.
+/// Type relations between inference subjects.
 #[derive(Debug, Default)]
-pub(crate) struct BodyTypeDb {
-    /// Body-local type equality facts.
+pub(crate) struct SubjectTypeDb {
+    /// Equality relations between inference subjects.
     pub(crate) equalities: Vec<TypeEqualFact>,
-    /// Body-local type resolutions derived from equality facts.
+    /// Type resolutions derived from equality relations.
     pub(crate) resolved: Vec<ResolvedTypeFact>,
-    /// Resolved types linked to HIR expression occurrences.
+    /// Lookup map derived from [`Self::resolved`] for HIR expression occurrences.
     pub(crate) expr_types: Map<hir::ExprId, TypeId>,
-    /// Resolved types linked to definitions.
+    /// Lookup map derived from [`Self::resolved`] for definitions.
     pub(crate) def_types: Map<name::DefId, TypeId>,
 }
 
-impl BodyTypeDb {
+impl SubjectTypeDb {
     /// Returns the resolved type linked to a HIR expression occurrence.
     pub(crate) fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
         self.expr_types.get(&hir_expr).copied()
@@ -255,15 +248,20 @@ impl BodyTypeDb {
         self.def_types.get(&def).copied()
     }
 
-    /// Records resolved body-local types derived from equality facts.
+    /// Records resolved subject types derived from equality relations.
     pub(crate) fn extend_resolved(&mut self, resolved: Vec<ResolvedTypeFact>) {
         for fact in &resolved {
             match fact.subject {
                 TypeSubject::Def(def) => {
-                    self.def_types.entry(def).or_insert(fact.ty_id);
+                    let previous = self.def_types.insert(def, fact.ty_id);
+                    assert!(previous.is_none(), "resolved def type must be unique");
                 }
                 TypeSubject::Expr(expr) => {
-                    self.expr_types.entry(expr).or_insert(fact.ty_id);
+                    let previous = self.expr_types.insert(expr, fact.ty_id);
+                    assert!(
+                        previous.is_none(),
+                        "resolved expression type must be unique"
+                    );
                 }
                 TypeSubject::Type(_) => {}
             }
@@ -271,20 +269,20 @@ impl BodyTypeDb {
         self.resolved.extend(resolved);
     }
 
-    /// Returns body-local type equality facts.
+    /// Returns equality relations between inference subjects.
     #[cfg(test)]
     pub(crate) fn equalities(&self) -> &[TypeEqualFact] {
         &self.equalities
     }
 
-    /// Returns body-local type resolutions derived from equality facts.
+    /// Returns type resolutions derived from equality relations.
     #[cfg(test)]
     pub(crate) fn resolved(&self) -> &[ResolvedTypeFact] {
         &self.resolved
     }
 }
 
-/// Body-local type equality edge.
+/// Equality relation between two inference subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TypeEqualFact {
     /// Left side of the equality edge.
@@ -293,7 +291,7 @@ pub(crate) struct TypeEqualFact {
     pub(crate) right: TypeSubject,
 }
 
-/// Resolved type found for a body-local subject.
+/// Resolved type found for an inference subject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResolvedTypeFact {
     /// Subject being resolved.
@@ -302,7 +300,7 @@ pub(crate) struct ResolvedTypeFact {
     pub(crate) ty_id: TypeId,
 }
 
-/// Subject whose type can participate in body-local type equality.
+/// Subject whose type can participate in subject type inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TypeSubject {
     /// A definition such as a parameter or local binding.
@@ -328,7 +326,7 @@ mod tests {
         scx: &'cx SyntaxCx<'cx>,
         source_text: &str,
     ) -> (NameDb<'cx>, Hir<'cx>, InferDb<'cx>) {
-        let file_path = ccx.intern("body_infer_test.rs");
+        let file_path = ccx.intern("subject_type_infer_test.rs");
         let source_text = ccx.intern(source_text);
         scx.parse_virtual_file(file_path, source_text)
             .expect("test input should parse");
@@ -357,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_simple_body_types_through_logic_equalities() {
+    fn resolves_simple_subject_types_through_logic_equalities() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (names, hir, infer) = analyze(
@@ -373,7 +371,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected local statement followed by tail expression");
         };
@@ -384,14 +382,14 @@ mod tests {
             .copied()
             .expect("local should introduce one binding");
 
-        assert!(infer.body_types.equalities().iter().any(|fact| {
+        assert!(infer.subject_types.equalities().iter().any(|fact| {
             fact.left == TypeSubject::Def(local_def) && fact.right == TypeSubject::Expr(init)
         }));
         assert_usize(&infer, infer.type_for_def(local_def));
         assert_usize(&infer, infer.type_for_hir_expr(init));
         let tail_ty_id = infer.type_for_hir_expr(*tail);
         assert_usize(&infer, tail_ty_id);
-        assert!(infer.body_types.resolved().iter().any(|fact| {
+        assert!(infer.subject_types.resolved().iter().any(|fact| {
             fact.subject == TypeSubject::Expr(*tail) && Some(fact.ty_id) == tail_ty_id
         }));
         assert!(matches!(names[local_def].kind, DefKind::Local));
@@ -414,7 +412,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(int_local), hir::lower::Stmt::Local(float_local)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected two local statements");
         };
@@ -496,7 +494,7 @@ mod tests {
 
         let block = function_block(&hir, "f");
         let [hir::lower::Stmt::Local(typed_local), hir::lower::Stmt::Local(untyped_local)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected two local statements");
         };
@@ -534,7 +532,7 @@ mod tests {
         );
 
         let block = function_block(&hir, "f");
-        let [hir::lower::Stmt::Local(local)] = hir.body()[block].stmts.as_slice() else {
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
             panic!("expected one local statement");
         };
         let init = local.init.expect("local should have initializer");
@@ -556,7 +554,7 @@ mod tests {
     ) {
         let block = function_block(hir, name);
         let [hir::lower::Stmt::Local(local), hir::lower::Stmt::Expr(tail)] =
-            hir.body()[block].stmts.as_slice()
+            hir.lowered_blocks()[block].stmts.as_slice()
         else {
             panic!("expected local statement followed by tail expression");
         };

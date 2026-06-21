@@ -1,15 +1,15 @@
 mod assoc_type_impl;
-pub(crate) mod body_type;
 mod infer_types;
 pub(crate) mod projection;
+pub(crate) mod subject_type;
 mod trait_bound;
 
 pub(crate) use assoc_type_impl::{AssocTypeImplFact, AssocTypeImplFactCollector};
-pub(crate) use body_type::{
-    BodyTypeCollector, BodyTypeDb, ResolvedTypeFact, TypeEqualFact, TypeSubject,
-};
 pub(crate) use infer_types::InferTypes;
 pub(crate) use projection::ProjectionCollector;
+pub(crate) use subject_type::{
+    ResolvedTypeFact, SubjectTypeCollector, SubjectTypeDb, TypeEqualFact, TypeSubject,
+};
 pub(crate) use trait_bound::{TraitBoundFact, TraitBoundFactCollector};
 
 use crate::{
@@ -37,13 +37,13 @@ impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
         types.collect_hir_types(self.hir, self.names);
         let assoc_type_impl_facts =
             AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
-        let body_types = BodyTypeCollector::collect(self.hir, self.names, &mut types);
+        let subject_types = SubjectTypeCollector::collect(self.hir, self.names, &mut types);
         let projections = ProjectionCollector::collect(&types);
 
         InferDb {
             types,
             projections,
-            body_types,
+            subject_types,
             trait_bound_facts,
             assoc_type_impl_facts,
             recursive_normalizations: Map::default(),
@@ -56,7 +56,7 @@ impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
 pub struct InferDb<'cx> {
     pub(crate) types: InferTypes<'cx>,
     pub(crate) projections: ProjectionDb,
-    pub(crate) body_types: BodyTypeDb,
+    pub(crate) subject_types: SubjectTypeDb,
     pub(crate) trait_bound_facts: Vec<TraitBoundFact>,
     pub(crate) assoc_type_impl_facts: Vec<AssocTypeImplFact>,
     pub(crate) recursive_normalizations: Map<TypeId, TypeId>,
@@ -66,7 +66,18 @@ impl<'cx> InferDb<'cx> {
     /// Builds inference type facts from HIR and name-resolution data.
     pub fn analyze(ccx: &'cx CommonCx, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) -> Self {
         let mut db = InferDbBuilder::new(hir, names).build();
-        logic::derive(ccx, &mut db, names);
+
+        logic::ProjectionDeriver::new(
+            &mut db.projections,
+            &mut db.types,
+            ccx,
+            &db.trait_bound_facts,
+            &db.assoc_type_impl_facts,
+            names,
+        )
+        .derive();
+        logic::SubjectTypeDeriver::new(&mut db.subject_types, ccx, &db.types).derive();
+
         db
     }
 
@@ -77,12 +88,12 @@ impl<'cx> InferDb<'cx> {
 
     /// Returns the resolved concrete type linked to a HIR expression occurrence.
     pub fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
-        self.body_types.type_for_hir_expr(hir_expr)
+        self.subject_types.type_for_hir_expr(hir_expr)
     }
 
-    /// Returns the resolved concrete type linked to a definition, when body inference found one.
+    /// Returns the resolved concrete type linked to a definition, when subject type inference found one.
     pub fn type_for_def(&self, def: DefId) -> Option<TypeId> {
-        self.body_types.type_for_def(def)
+        self.subject_types.type_for_def(def)
     }
 
     /// Returns the shallow normalized inference type linked to a HIR type occurrence.
