@@ -231,9 +231,9 @@ pub(crate) struct SubjectTypeDb {
     pub(crate) equalities: Vec<TypeEqualFact>,
     /// Type resolutions derived from equality relations.
     pub(crate) resolved: Vec<ResolvedTypeFact>,
-    /// Resolved types linked to HIR expression occurrences.
+    /// Lookup map derived from [`Self::resolved`] for HIR expression occurrences.
     pub(crate) expr_types: Map<hir::ExprId, TypeId>,
-    /// Resolved types linked to definitions.
+    /// Lookup map derived from [`Self::resolved`] for definitions.
     pub(crate) def_types: Map<name::DefId, TypeId>,
 }
 
@@ -253,10 +253,15 @@ impl SubjectTypeDb {
         for fact in &resolved {
             match fact.subject {
                 TypeSubject::Def(def) => {
-                    self.def_types.entry(def).or_insert(fact.ty_id);
+                    let previous = self.def_types.insert(def, fact.ty_id);
+                    assert!(previous.is_none(), "resolved def type must be unique");
                 }
                 TypeSubject::Expr(expr) => {
-                    self.expr_types.entry(expr).or_insert(fact.ty_id);
+                    let previous = self.expr_types.insert(expr, fact.ty_id);
+                    assert!(
+                        previous.is_none(),
+                        "resolved expression type must be unique"
+                    );
                 }
                 TypeSubject::Type(_) => {}
             }

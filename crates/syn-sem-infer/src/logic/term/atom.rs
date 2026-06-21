@@ -26,8 +26,8 @@ pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, ty_id: TypeId) -> Logic
 
 /// Decodes an inference type id from a logic term.
 pub(in crate::logic) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId> {
-    let value = term.functor.as_ref();
-    let index = value.strip_prefix(TYPE_ID_PREFIX)?.parse().ok()?;
+    let functor = term.functor.as_ref();
+    let index = functor.strip_prefix(TYPE_ID_PREFIX)?.parse().ok()?;
     if !term.args.is_empty() {
         return None;
     }

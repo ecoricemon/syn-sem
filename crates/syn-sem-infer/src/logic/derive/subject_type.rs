@@ -1,8 +1,11 @@
 //! Logic-backed subject type equality derivation.
 
-use crate::{logic::term, InferTypes, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject};
+use crate::{
+    logic::term, InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId,
+    TypeSubject,
+};
 use logic_eval::Database;
-use syn_sem_common::CommonCx;
+use syn_sem_common::{CommonCx, Set};
 
 /// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts.
 pub(crate) struct SubjectTypeDeriver<'a, 'cx> {
@@ -33,10 +36,15 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
         let mut logic = SubjectTypeLogic::new(self.ccx, self.subject_types, self.types);
         logic.load_subject_type_facts();
 
-        let subjects = subject_type_subjects(self.subject_types);
-        subjects
-            .into_iter()
+        let mut seen_subjects = Set::default();
+        self.subject_types
+            .equalities
+            .iter()
+            .flat_map(|equal_fact| [equal_fact.left, equal_fact.right])
             .filter_map(|subject| {
+                if !seen_subjects.insert(subject) {
+                    return None;
+                }
                 let candidates = logic.resolved_types(subject);
                 self.canonical_type(&candidates)
                     .map(|ty_id| ResolvedTypeFact { subject, ty_id })
@@ -45,58 +53,38 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
     }
 
     fn canonical_type(&self, candidates: &[TypeId]) -> Option<TypeId> {
-        candidates
-            .iter()
-            .copied()
-            .try_fold(None, |selected, candidate| match selected {
-                None => Some(Some(candidate)),
-                Some(selected) => self.merge_candidates(selected, candidate).map(Some),
-            })
-            .flatten()
+        let mut selected = None;
+        for candidate in candidates {
+            selected = Some(match selected {
+                None => *candidate,
+                Some(selected) => self.merge_candidates(selected, *candidate)?,
+            });
+        }
+        selected
     }
 
     fn merge_candidates(&self, selected: TypeId, candidate: TypeId) -> Option<TypeId> {
-        if selected == candidate || self.types[selected.index()] == self.types[candidate.index()] {
+        if selected == candidate || self.types[selected] == self.types[candidate] {
             return Some(selected);
         }
 
-        let selected_primitive = self.primitive(selected);
-        let candidate_primitive = self.primitive(candidate);
-        match (selected_primitive, candidate_primitive) {
-            (Some(selected_primitive), Some(candidate_primitive)) => {
-                if selected_primitive.is_abstract_of(candidate_primitive) {
-                    Some(candidate)
-                } else if candidate_primitive.is_abstract_of(selected_primitive) {
-                    Some(selected)
-                } else {
-                    None
-                }
-            }
-            (Some(selected_primitive), _) if selected_primitive.is_abstract_numeric() => None,
-            (_, Some(candidate_primitive)) if candidate_primitive.is_abstract_numeric() => None,
-            _ => None,
+        let selected_primitive = self.primitive(selected)?;
+        let candidate_primitive = self.primitive(candidate)?;
+        if selected_primitive.is_abstract_of(candidate_primitive) {
+            Some(candidate)
+        } else if candidate_primitive.is_abstract_of(selected_primitive) {
+            Some(selected)
+        } else {
+            None
         }
     }
 
-    fn primitive(&self, ty_id: TypeId) -> Option<crate::PrimitiveType> {
-        match &self.types[ty_id.index()] {
+    fn primitive(&self, id: TypeId) -> Option<PrimitiveType> {
+        match &self.types[id] {
             Type::Primitive(primitive) => Some(*primitive),
             _ => None,
         }
     }
-}
-
-fn subject_type_subjects(subject_types: &SubjectTypeDb) -> Vec<TypeSubject> {
-    let mut subjects = Vec::new();
-    for fact in &subject_types.equalities {
-        if !subjects.contains(&fact.left) {
-            subjects.push(fact.left);
-        }
-        if !subjects.contains(&fact.right) {
-            subjects.push(fact.right);
-        }
-    }
-    subjects
 }
 
 /// Performs subject type logic operations:
@@ -153,12 +141,11 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
                 if assignment.get_lhs_variable().as_ref() != term::VAR_TYPE {
                     continue;
                 }
-                let ty = assignment.rhs();
-                let Some(ty) = term::type_id_from_term(&ty) else {
+                let Some(ty_id) = term::type_id_from_term(&assignment.rhs()) else {
                     continue;
                 };
-                if !types.contains(&ty) {
-                    types.push(ty);
+                if !types.contains(&ty_id) {
+                    types.push(ty_id);
                 }
             }
         }
