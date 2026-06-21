@@ -66,7 +66,18 @@ impl<'cx> InferDb<'cx> {
     /// Builds inference type facts from HIR and name-resolution data.
     pub fn analyze(ccx: &'cx CommonCx, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) -> Self {
         let mut db = InferDbBuilder::new(hir, names).build();
-        logic::derive(ccx, &mut db, names);
+
+        logic::ProjectionDeriver::new(
+            &mut db.projections,
+            &mut db.types,
+            ccx,
+            &db.trait_bound_facts,
+            &db.assoc_type_impl_facts,
+            names,
+        )
+        .derive();
+        logic::SubjectTypeDeriver::new(&mut db.subject_types, ccx, &db.types).derive();
+
         db
     }
 

@@ -143,7 +143,7 @@ impl<'a, 'cx> SubjectTypeCollector<'a, 'cx> {
 
     fn collect_local_facts(&mut self, local: &hir::lower::Local) {
         if let Some(init) = local.init {
-            self.collect_pat_expr_facts(Some(local.pat), init);
+            self.bind_pat_to_expr(local.pat, init);
         }
     }
 
@@ -167,13 +167,6 @@ impl<'a, 'cx> SubjectTypeCollector<'a, 'cx> {
             | hir::PatKind::Tuple { .. }
             | hir::PatKind::Unsupported => {}
         }
-    }
-
-    fn collect_pat_expr_facts(&mut self, pat: Option<hir::PatId>, expr: hir::ExprId) {
-        let Some(pat) = pat else {
-            return;
-        };
-        self.bind_pat_to_expr(pat, expr);
     }
 
     fn bind_pat_to_expr(&mut self, pat: hir::PatId, expr: hir::ExprId) {

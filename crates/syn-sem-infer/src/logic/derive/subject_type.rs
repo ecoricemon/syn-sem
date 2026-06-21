@@ -1,33 +1,41 @@
 //! Logic-backed subject type equality derivation.
 
-use crate::{InferDb, ResolvedTypeFact, Type, TypeId, TypeSubject};
+use crate::{InferTypes, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject};
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
 
 use crate::logic::term;
 
-/// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts
-/// in [`InferDb`].
-pub(super) struct SubjectTypeDeriver<'a, 'cx> {
+/// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts.
+pub(crate) struct SubjectTypeDeriver<'a, 'cx> {
+    subject_types: &'a mut SubjectTypeDb,
     ccx: &'cx CommonCx,
-    db: &'a mut InferDb<'cx>,
+    types: &'a InferTypes<'cx>,
 }
 
 impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
-    pub(super) fn new(ccx: &'cx CommonCx, db: &'a mut InferDb<'cx>) -> Self {
-        Self { ccx, db }
+    pub(crate) fn new(
+        subject_types: &'a mut SubjectTypeDb,
+        ccx: &'cx CommonCx,
+        types: &'a InferTypes<'cx>,
+    ) -> Self {
+        Self {
+            subject_types,
+            ccx,
+            types,
+        }
     }
 
-    pub(super) fn derive(&mut self) {
+    pub(crate) fn derive(&mut self) {
         let resolved = self.derive_resolved_type_facts();
-        self.db.subject_types.extend_resolved(resolved);
+        self.subject_types.extend_resolved(resolved);
     }
 
     fn derive_resolved_type_facts(&mut self) -> Vec<ResolvedTypeFact> {
-        let mut logic = SubjectTypeLogic::new(self.ccx, self.db);
+        let mut logic = SubjectTypeLogic::new(self.ccx, self.subject_types, self.types);
         logic.load_subject_type_facts();
 
-        let subjects = subject_type_subjects(self.db);
+        let subjects = subject_type_subjects(self.subject_types);
         let mut resolved = Vec::new();
         for subject in subjects {
             let candidates = logic.resolved_types(subject);
@@ -50,7 +58,7 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
     }
 
     fn merge_candidates(&self, selected: TypeId, candidate: TypeId) -> Option<TypeId> {
-        if selected == candidate || self.db[selected] == self.db[candidate] {
+        if selected == candidate || self.types[selected.index()] == self.types[candidate.index()] {
             return Some(selected);
         }
 
@@ -73,16 +81,16 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
     }
 
     fn primitive(&self, ty_id: TypeId) -> Option<crate::PrimitiveType> {
-        match &self.db[ty_id] {
+        match &self.types[ty_id.index()] {
             Type::Primitive(primitive) => Some(*primitive),
             _ => None,
         }
     }
 }
 
-fn subject_type_subjects(db: &InferDb<'_>) -> Vec<TypeSubject> {
+fn subject_type_subjects(subject_types: &SubjectTypeDb) -> Vec<TypeSubject> {
     let mut subjects = Vec::new();
-    for fact in &db.subject_types.equalities {
+    for fact in &subject_types.equalities {
         if !subjects.contains(&fact.left) {
             subjects.push(fact.left);
         }
@@ -101,15 +109,21 @@ fn subject_type_subjects(db: &InferDb<'_>) -> Vec<TypeSubject> {
 /// * Queries type candidates reachable for an inference subject
 struct SubjectTypeLogic<'a, 'cx> {
     ccx: &'cx CommonCx,
-    infer: &'a InferDb<'cx>,
+    subject_types: &'a SubjectTypeDb,
+    types: &'a InferTypes<'cx>,
     db: Database<term::LogicAtom<'cx>>,
 }
 
 impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
-    fn new(ccx: &'cx CommonCx, infer: &'a InferDb<'cx>) -> Self {
+    fn new(
+        ccx: &'cx CommonCx,
+        subject_types: &'a SubjectTypeDb,
+        types: &'a InferTypes<'cx>,
+    ) -> Self {
         Self {
             ccx,
-            infer,
+            subject_types,
+            types,
             db: Database::new(),
         }
     }
@@ -118,10 +132,10 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
         for clause in term::subject_type_rules(self.ccx) {
             self.insert_clause(clause);
         }
-        for fact in &self.infer.subject_types.equalities {
+        for fact in &self.subject_types.equalities {
             self.insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (ty_id, ty) in self.infer.types.iter() {
+        for (ty_id, ty) in self.types.iter() {
             if matches!(ty, Type::Infer) {
                 continue;
             }

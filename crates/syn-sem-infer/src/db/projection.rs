@@ -1,32 +1,40 @@
 //! Projection-specific facts and query helpers for inference.
 
-use crate::{InferTypes, PathType, PathTypeResolution, ProjectionType, Type, TypeId};
+use crate::{InferTypes, PathTypeResolution, ProjectionType, Type, TypeId};
 use syn_sem_name::DefId;
 
 pub(crate) struct ProjectionCollector;
 
 impl ProjectionCollector {
     pub(crate) fn collect(types: &InferTypes<'_>) -> ProjectionDb {
-        let mut projections = ProjectionDb::default();
+        let obligations = types
+            .iter()
+            .filter_map(|(ty_id, ty)| {
+                let Type::Path(path_ty) = ty else {
+                    return None;
+                };
+                let PathTypeResolution::Projection(projection) = &path_ty.resolution else {
+                    return None;
+                };
 
-        for (ty_id, ty) in types.iter() {
-            let Type::Path(PathType {
-                resolution: PathTypeResolution::Projection(projection),
-                ..
-            }) = ty
-            else {
-                continue;
-            };
+                Some(ProjectionObligation {
+                    projection_ty_id: ty_id,
+                    assoc_type: projection.assoc_type,
+                    self_ty_id: projection.self_ty_id,
+                    trait_ty_id: projection.trait_ty_id,
+                })
+            })
+            .collect();
 
-            projections.obligations.push(ProjectionObligation {
-                projection_ty_id: ty_id,
-                assoc_type: projection.assoc_type,
-                self_ty_id: projection.self_ty_id,
-                trait_ty_id: projection.trait_ty_id,
-            });
+        ProjectionDb {
+            obligations,
+            candidates: Vec::new(),
+            matches: Vec::new(),
+            impl_self_matches: Vec::new(),
+            type_bindings: Vec::new(),
+            type_substitutions: Vec::new(),
+            normalizations: Vec::new(),
         }
-
-        projections
     }
 }
 
