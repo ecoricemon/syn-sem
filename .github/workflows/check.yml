@@ -33,7 +33,7 @@ concurrency:
 env:
   rust_nightly: nightly-2026-01-30
   rust_clippy: '1.93'
-  rust_min: '1.66.1'
+  rust_min: '1.67'
 
 jobs:
   fmt:
