@@ -12,7 +12,7 @@ use crate::{
     },
     ClauseIn, ExprIn, Map, NameIn, PredicateIn, Set, TermIn, TriResult,
 };
-use logic_eval::{Clause, ClauseIter, Database, Expr, Name, ProveCx, Term, VAR_PREFIX};
+use logic_eval::{Clause, ClauseIter, Database, Expr, Name, QueryCx, Term, VAR_PREFIX};
 use quote::ToTokens;
 use std::{borrow, hash::Hash, iter, ops};
 
@@ -165,7 +165,7 @@ impl<'gcx> ImplLogic<'gcx> {
         }
     }
 
-    pub fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, NameIn<'gcx>> {
+    pub fn query(&mut self, expr: ExprIn<'gcx>) -> QueryCx<'_, NameIn<'gcx>> {
         self.db.query(expr)
     }
 
@@ -179,10 +179,6 @@ impl<'gcx> ImplLogic<'gcx> {
 
     pub fn insert_clause(&mut self, clause: ClauseIn<'gcx>) {
         self.db.insert_clause(clause);
-    }
-
-    pub fn commit(&mut self) {
-        self.db.commit();
     }
 
     // TODO: Loading a huge file like "core" is taking a lot of time.
@@ -454,9 +450,6 @@ impl<'a, 'gcx, H: Host<'gcx>> LoadCx<'a, 'gcx, H> {
     fn save_change<T: Loadable>(&mut self, syn: &T) {
         let ptr = syn as *const T as *const ();
         self.logic.loaded.insert(ptr);
-
-        // Confirms the change.
-        self.logic.db.commit();
     }
 }
 
@@ -1433,7 +1426,7 @@ pub(crate) struct DatabaseWrapper<'gcx> {
 impl<'gcx> DatabaseWrapper<'gcx> {
     fn new(gcx: &'gcx GlobalCx<'gcx>) -> Self {
         Self {
-            db: Database::new(),
+            db: Database::default(),
             added_sized_known: Set::default(),
             gcx,
         }
@@ -1452,11 +1445,7 @@ impl<'gcx> DatabaseWrapper<'gcx> {
         self.db.insert_clause(clause)
     }
 
-    fn commit(&mut self) {
-        self.db.commit();
-    }
-
-    fn query(&mut self, expr: ExprIn<'gcx>) -> ProveCx<'_, NameIn<'gcx>> {
+    fn query(&mut self, expr: ExprIn<'gcx>) -> QueryCx<'_, NameIn<'gcx>> {
         self.db.query(expr)
     }
 

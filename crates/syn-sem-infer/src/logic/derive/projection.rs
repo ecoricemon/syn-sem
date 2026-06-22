@@ -645,7 +645,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             types,
             trait_bound_facts,
             assoc_type_impl_facts,
-            db: Database::new(),
+            db: Database::default(),
         }
     }
 
@@ -655,7 +655,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_projection_obligations();
         self.insert_trait_bounds();
         self.insert_type_equalities();
-        self.db.commit();
     }
 
     fn load_projection_matches(&mut self, trait_members: &[TraitMember]) {
@@ -663,7 +662,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_projection_candidates();
         self.insert_trait_members(trait_members);
         self.insert_impl_assoc_types();
-        self.db.commit();
     }
 
     fn load_projection_normalizations(&mut self) {
@@ -675,7 +673,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_type_binding_facts();
         self.insert_type_substitutions();
         self.insert_type_equalities();
-        self.db.commit();
     }
 
     fn insert_same_type_rules(&mut self) {
