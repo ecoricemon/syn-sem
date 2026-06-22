@@ -721,8 +721,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn insert_type_equalities(&mut self) {
         for left_index in 0..self.types.len() {
             let left = TypeId::new(left_index);
-            // Projection needs reflexive `same_type`, but only for known type ids.
-            self.insert_clause(term::projection_type_equal_clause(self.ccx, left, left));
             for right in (left_index + 1)..self.types.len() {
                 let right = TypeId::new(right);
                 if self.types[left] != self.types[right] {

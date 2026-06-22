@@ -39,10 +39,10 @@ const VAR_SUBSTITUTED: &str = "$Substituted";
 const VAR_TRAIT: &str = "$Trait";
 const VAR_VALUE: &str = "$Value";
 
-/// Projection inserts ground reflexive facts for known `TypeId`s, needs reverse type-shape
-/// equality, and does not need transitive closure.
+/// Projection needs reflexive and reverse type-shape equality, and does not need transitive
+/// closure.
 pub(in crate::logic) const PROJECTION_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
-    reflexive: false,
+    reflexive: true,
     reverse: true,
     transitive: false,
 };
