@@ -1,6 +1,9 @@
 //! Logic rules and predicates for associated type projection solving.
 
-use super::atom::{def_id, term, type_id, var, LogicAtom, LogicClause, LogicTerm};
+use super::{
+    atom::{def_id, term, type_id, var, LogicAtom, LogicClause, LogicTerm},
+    equality::{same_type, SameTypeRules},
+};
 use crate::{
     AssocTypeImplFact, ImplSelfMatch, ProjectionCandidate, ProjectionMatch, ProjectionObligation,
     TraitBoundFact, TypeBindingFact, TypeId, TypeSubstitution,
@@ -17,7 +20,6 @@ const PRED_PROJECTION_OBLIGATION: &str = "projection_obligation";
 const PRED_PROJECTION_CANDIDATE: &str = "projection_candidate";
 const PRED_PROJECTION_MATCH: &str = "projection_match";
 const PRED_PROJECTION_NORMALIZES_TO: &str = "projection_normalizes_to";
-const PRED_SAME_TYPE: &str = "same_type";
 const PRED_TRAIT_MEMBER: &str = "trait_member";
 const PRED_TRAIT_BOUND: &str = "trait_bound";
 const PRED_TYPE_BINDING: &str = "type_binding";
@@ -37,17 +39,19 @@ const VAR_SUBSTITUTED: &str = "$Substituted";
 const VAR_TRAIT: &str = "$Trait";
 const VAR_VALUE: &str = "$Value";
 
-/// * Rule 0 - `projection_candidate(P, Self, Assoc, Trait) :-
-///   explicit_projection_obligation(P, Self, Assoc, Trait).`
-/// * Rule 1 - `projection_candidate(P, Self, Assoc, Trait) :-
-///   projection_obligation(P, Self, Assoc), trait_bound(Subject, Trait),
-///   same_type(Self, Subject).`
-///
-/// # Examples
-///
-/// * Code - `<T as Trait>::Assoc` or `<T>::Assoc` with `T: Trait`
+/// Projection inserts ground reflexive facts for known `TypeId`s, needs reverse type-shape
+/// equality, and does not need transitive closure.
+pub(in crate::logic) const PROJECTION_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
+    reflexive: false,
+    reverse: true,
+    transitive: false,
+};
+
+/// * For `<T as Trait>::Assoc`,
 /// * Output clause 0 - `projection_candidate($Projection, $Self, $Assoc, $Trait) :-
 ///   explicit_projection_obligation($Projection, $Self, $Assoc, $Trait).`
+///
+/// * For `<T>::Assoc` with `T: Trait`,
 /// * Output clause 1 - `projection_candidate($Projection, $Self, $Assoc, $Trait) :-
 ///   projection_obligation($Projection, $Self, $Assoc), trait_bound($Subject, $Trait),
 ///   same_type($Self, $Subject).`
@@ -299,13 +303,10 @@ pub(in crate::logic) fn projection_obligation_clause<'cx>(
     }
 }
 
-/// * subject - Type being constrained by the bound, such as `T`
-/// * trait_ty_id - Trait required by the bound, such as `Trait`
-///
 /// # Examples
 ///
 /// * Code - `T: Trait`
-/// * Input - `subject = ty0`, `trait_ty_id = ty1`
+/// * Input - `subject_ty_id = ty0`, `trait_ty_id = ty1`
 /// * Output - `trait_bound(ty0, ty1).`
 pub(in crate::logic) fn trait_bound_clause<'cx>(
     ccx: &'cx CommonCx,
@@ -511,16 +512,13 @@ pub(in crate::logic) fn trait_member_clause<'cx>(
 ///
 /// * Code - two lowered ids store the same type shape
 /// * Input - `left = ty0`, `right = ty1`
-/// * Output - `same_type(ty0, ty1).`
-pub(in crate::logic) fn same_type_clause<'cx>(
+/// * Output - `type_equal(ty0, ty1).`
+pub(in crate::logic) fn projection_type_equal_clause<'cx>(
     ccx: &'cx CommonCx,
     left: TypeId,
     right: TypeId,
 ) -> LogicClause<'cx> {
-    Clause {
-        head: same_type(ccx, type_id(ccx, left), type_id(ccx, right)),
-        body: None,
-    }
+    super::equality::type_equal_clause(ccx, type_id(ccx, left), type_id(ccx, right))
 }
 
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
@@ -865,20 +863,4 @@ fn trait_member<'cx>(
         ccx.intern(PRED_TRAIT_MEMBER),
         vec![trait_ty_id, requested_assoc_type, member_assoc_type],
     )
-}
-
-/// * left - One lowered inference type id
-/// * right - Another lowered inference type id with the same stored [`crate::Type`] shape
-///
-/// # Examples
-///
-/// * Code - two lowered ids store the same type shape
-/// * Input - `left = ty0`, `right = ty1`
-/// * Output - `same_type(ty0, ty1)`
-fn same_type<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    term(ccx.intern(PRED_SAME_TYPE), vec![left, right])
 }

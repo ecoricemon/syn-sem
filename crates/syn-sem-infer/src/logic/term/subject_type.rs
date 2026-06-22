@@ -1,18 +1,26 @@
 //! Logic rules and predicates for subject type equality resolution.
 
-use super::atom::{term, type_id, type_subject, var, LogicAtom, LogicClause, LogicTerm};
+use super::{
+    atom::{term, type_id, type_subject, var, LogicAtom, LogicClause, LogicTerm},
+    equality::{same_type, same_type_rules, SameTypeRules},
+};
 use crate::{TypeEqualFact, TypeId, TypeSubject};
 use logic_eval::{Clause, Expr};
 use syn_sem_common::CommonCx;
 
 const PRED_RESOLVED_TYPE: &str = "resolved_type";
-const PRED_SAME_TYPE: &str = "same_type";
 const PRED_TYPE_CANDIDATE: &str = "type_candidate";
-const PRED_TYPE_EQUAL: &str = "type_equal";
 
-const VAR_ARG: &str = "$Arg";
 const VAR_SUBJECT: &str = "$Subject";
 pub(crate) const VAR_TYPE: &str = "$Type";
+
+/// Subject type resolution follows collected equality edges, needs reverse and transitive closure,
+/// and does not need global reflexivity.
+const SUBJECT_TYPE_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
+    reflexive: false,
+    reverse: true,
+    transitive: true,
+};
 
 /// * Rule 0 - `same_type(A, B) :- type_equal(A, B).`
 /// * Rule 1 - `same_type(A, B) :- type_equal(B, A).`
@@ -25,52 +33,20 @@ pub(crate) const VAR_TYPE: &str = "$Type";
 ///   `type_candidate(ty2).`
 /// * Query - `resolved_type(expr1, $Type).`
 /// * Output - `$Type = ty2`
-pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 4] {
-    [
-        Clause {
-            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
-            body: Some(Expr::Term(type_equal(
+pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> Vec<LogicClause<'cx>> {
+    let mut rules = same_type_rules(ccx, SUBJECT_TYPE_SAME_TYPE_RULES);
+    rules.push(Clause {
+        head: resolved_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
+        body: Some(Expr::And(vec![
+            Expr::Term(same_type(
                 ccx,
                 var(ccx.intern(VAR_SUBJECT)),
                 var(ccx.intern(VAR_TYPE)),
-            ))),
-        },
-        Clause {
-            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
-            body: Some(Expr::Term(type_equal(
-                ccx,
-                var(ccx.intern(VAR_TYPE)),
-                var(ccx.intern(VAR_SUBJECT)),
-            ))),
-        },
-        Clause {
-            head: same_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
-            // Keep the recursive terms in this order for `logic-eval`'s query-time tabling.
-            body: Some(Expr::And(vec![
-                Expr::Term(same_type(
-                    ccx,
-                    var(ccx.intern(VAR_ARG)),
-                    var(ccx.intern(VAR_TYPE)),
-                )),
-                Expr::Term(same_type(
-                    ccx,
-                    var(ccx.intern(VAR_SUBJECT)),
-                    var(ccx.intern(VAR_ARG)),
-                )),
-            ])),
-        },
-        Clause {
-            head: resolved_type(ccx, var(ccx.intern(VAR_SUBJECT)), var(ccx.intern(VAR_TYPE))),
-            body: Some(Expr::And(vec![
-                Expr::Term(same_type(
-                    ccx,
-                    var(ccx.intern(VAR_SUBJECT)),
-                    var(ccx.intern(VAR_TYPE)),
-                )),
-                Expr::Term(type_candidate(ccx, var(ccx.intern(VAR_TYPE)))),
-            ])),
-        },
-    ]
+            )),
+            Expr::Term(type_candidate(ccx, var(ccx.intern(VAR_TYPE)))),
+        ])),
+    });
+    rules
 }
 
 /// * fact - One subject type equality edge
@@ -83,14 +59,11 @@ pub(in crate::logic) fn type_equal_clause<'cx>(
     ccx: &'cx CommonCx,
     fact: TypeEqualFact,
 ) -> LogicClause<'cx> {
-    Clause {
-        head: type_equal(
-            ccx,
-            type_subject(ccx, fact.left),
-            type_subject(ccx, fact.right),
-        ),
-        body: None,
-    }
+    super::equality::type_equal_clause(
+        ccx,
+        type_subject(ccx, fact.left),
+        type_subject(ccx, fact.right),
+    )
 }
 
 /// * ty - Inference type candidate known to subject type logic
@@ -148,34 +121,4 @@ fn resolved_type<'cx>(
 /// * Output - `type_candidate(ty0)`
 fn type_candidate<'cx>(ccx: &'cx CommonCx, ty: LogicTerm<'cx>) -> LogicTerm<'cx> {
     term(ccx.intern(PRED_TYPE_CANDIDATE), vec![ty])
-}
-
-/// * left - One inference subject
-/// * right - Another inference subject
-///
-/// # Examples
-///
-/// * Input - `left = def0`, `right = expr1`
-/// * Output - `type_equal(def0, expr1)`
-fn type_equal<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    term(ccx.intern(PRED_TYPE_EQUAL), vec![left, right])
-}
-
-/// * left - One inference subject
-/// * right - Another inference subject
-///
-/// # Examples
-///
-/// * Input - `left = expr0`, `right = ty1`
-/// * Output - `same_type(expr0, ty1)`
-fn same_type<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    term(ccx.intern(PRED_SAME_TYPE), vec![left, right])
 }
