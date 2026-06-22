@@ -19,7 +19,7 @@ pub(crate) struct ProjectionDeriver<'a, 'cx> {
     names: &'a NameDb<'cx>,
 }
 
-impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
+impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
     pub(crate) fn new(
         projections: &'a mut ProjectionDb,
         types: &'a mut InferTypes<'cx>,
@@ -302,7 +302,7 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
     }
 
     fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &self.types[ty_id.index()] else {
+        let Type::Path(path) = &self.types[ty_id] else {
             return None;
         };
         let PathTypeResolution::Nominal(def) = path.resolution else {
@@ -312,7 +312,7 @@ impl<'a, 'cx> ProjectionDeriver<'a, 'cx> {
     }
 
     fn same_type(&self, left: TypeId, right: TypeId) -> bool {
-        left == right || self.types[left.index()] == self.types[right.index()]
+        left == right || self.types[left] == self.types[right]
     }
 
     fn type_bindings(
