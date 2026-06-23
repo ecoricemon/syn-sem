@@ -13,14 +13,14 @@ const EXPR_ID_PREFIX: &str = "expr";
 // In examples below, `tyN` encodes `TypeId::new(N)`, `defN` encodes `DefId::new(N)`,
 // and `exprN` encodes `syn_sem_hir::ExprId::new(N)`.
 
-/// * ty_id - Inference type id to encode as a logic atom
+/// * ty - Inference type id to encode as a logic atom
 ///
 /// # Examples
 ///
-/// * Input - `ty_id = TypeId::new(0)`
+/// * Input - `ty = TypeId::new(0)`
 /// * Output - `ty0`
-pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, ty_id: TypeId) -> LogicTerm<'cx> {
-    let functor = intern_prefixed_number(ccx, TYPE_ID_PREFIX, ty_id.index());
+pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicTerm<'cx> {
+    let functor = intern_prefixed_number(ccx, TYPE_ID_PREFIX, ty.index());
     atom(functor)
 }
 
@@ -68,7 +68,7 @@ pub(in crate::logic) fn type_subject<'cx>(
     match subject {
         TypeSubject::Def(def) => def_id(ccx, def),
         TypeSubject::Expr(expr) => expr_id(ccx, expr),
-        TypeSubject::Type(ty_id) => type_id(ccx, ty_id),
+        TypeSubject::Type(ty) => type_id(ccx, ty),
     }
 }
 

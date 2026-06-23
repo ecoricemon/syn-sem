@@ -36,8 +36,6 @@
 - Avoid `Body` unless it means one function or block body; use scope-specific
   names for whole-HIR collections.
 - Use common short names: `ty`, `pat`, `expr`.
-- Use `data`/`data_id` only when both may be confused; shorten fields when the
-  owner gives context, for example `Type { id }` and `Array { elem_id }`.
 - Do not add data prefixes when the scope is clear, for example `left: TypeId`.
 
 ## Crate Boundaries

@@ -47,7 +47,7 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
                 }
                 let candidates = logic.resolved_types(subject);
                 self.canonical_type(&candidates)
-                    .map(|ty_id| ResolvedTypeFact { subject, ty_id })
+                    .map(|ty| ResolvedTypeFact { subject, ty })
             })
             .collect()
     }
@@ -122,13 +122,13 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
             self.db
                 .insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (ty_id, _) in self
+        for (ty, _) in self
             .types
             .iter()
             .filter(|(_, ty)| !matches!(ty, Type::Infer))
         {
             self.db
-                .insert_clause(term::type_candidate_clause(self.ccx, ty_id));
+                .insert_clause(term::type_candidate_clause(self.ccx, ty));
         }
     }
 
@@ -140,11 +140,11 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
                 if assignment.get_lhs_variable().as_ref() != term::VAR_TYPE {
                     continue;
                 }
-                let Some(ty_id) = term::type_id_from_term(&assignment.rhs()) else {
+                let Some(ty) = term::type_id_from_term(&assignment.rhs()) else {
                     continue;
                 };
-                if !types.contains(&ty_id) {
-                    types.push(ty_id);
+                if !types.contains(&ty) {
+                    types.push(ty);
                 }
             }
         }

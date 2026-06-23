@@ -46,25 +46,18 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
 
     fn collect_generics(&mut self, generics: &hir::Generics<'cx>) {
         for predicate in &generics.predicates {
-            let hir::WherePredicate::TypeBound {
-                subject_ty_id,
-                bounds,
-            } = predicate
-            else {
+            let hir::WherePredicate::TypeBound { subject, bounds } = predicate else {
                 continue;
             };
-            let subject_ty_id = self.ty_lowerer.lower_hir_type(*subject_ty_id);
+            let subject = self.ty_lowerer.lower_hir_type(*subject);
             for bound in bounds {
                 let hir::TypeParamBound::Trait(path) = bound else {
                     continue;
                 };
-                let trait_ty_id = self
+                let trait_ = self
                     .ty_lowerer
                     .lower_plain_path_as_type(path, generics.scope);
-                self.facts.push(TraitBoundFact {
-                    subject_ty_id,
-                    trait_ty_id,
-                });
+                self.facts.push(TraitBoundFact { subject, trait_ });
             }
         }
     }
@@ -77,7 +70,7 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TraitBoundFact {
     /// Type constrained by the trait bound.
-    pub(crate) subject_ty_id: TypeId,
+    pub(crate) subject: TypeId,
     /// Trait type required by the bound.
-    pub(crate) trait_ty_id: TypeId,
+    pub(crate) trait_: TypeId,
 }
