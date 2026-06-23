@@ -185,18 +185,12 @@ impl<'cx> InferDb<'cx> {
 
     /// Returns the path resolution for a path type.
     pub fn path_resolution(&self, ty_id: TypeId) -> Option<&PathTypeResolution> {
-        let Type::Path(path) = &self[ty_id] else {
-            return None;
-        };
-        Some(&path.resolution)
+        self.types.path_resolution(ty_id)
     }
 
     /// Returns the nominal definition named by a type, when the type is a nominal path.
     pub fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
-        let PathTypeResolution::Nominal(def) = self.path_resolution(ty_id)? else {
-            return None;
-        };
-        Some(*def)
+        self.types.nominal_def(ty_id)
     }
 
     /// Returns the generic parameter definition named by a type, when the type is a generic path.
@@ -675,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_associated_type_targets_as_projection_candidates() {
+    fn classifies_associated_type_targets_as_projection_obligations() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let item = ccx.intern("Item");
@@ -800,15 +794,6 @@ mod tests {
             })
         );
         assert_eq!(
-            infer.projections.candidates,
-            &[ProjectionCandidate {
-                projection_ty_id: projection,
-                self_ty_id: qself.self_ty_id,
-                assoc_type: item_def,
-                trait_ty_id,
-            }]
-        );
-        assert_eq!(
             infer.projections.matches,
             &[ProjectionMatch {
                 projection_ty_id: projection,
@@ -820,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn lowers_traitless_qualified_associated_type_paths_as_projection_candidates() {
+    fn lowers_traitless_qualified_associated_type_paths_as_projection_matches() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
@@ -916,15 +901,6 @@ mod tests {
             }) if def == iterator_def
         ));
         assert_eq!(
-            infer.projections.candidates,
-            &[ProjectionCandidate {
-                projection_ty_id: projection,
-                self_ty_id: qself.self_ty_id,
-                assoc_type: item_def,
-                trait_ty_id: bound.trait_ty_id,
-            }]
-        );
-        assert_eq!(
             infer.projections.matches,
             &[ProjectionMatch {
                 projection_ty_id: projection,
@@ -960,7 +936,7 @@ mod tests {
         );
         let display_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(root));
         names.set_path_scope(display_def, display_scope);
-        let item_def = names.add_def(
+        names.add_def(
             root,
             DefKind::AssocType,
             Some(item),
@@ -974,7 +950,6 @@ mod tests {
             &names,
         );
 
-        let projection = struct_field_type_id(&hir, &infer);
         let path = struct_field_path_type(&hir, &infer);
         let qself = path
             .qself
@@ -996,15 +971,6 @@ mod tests {
                 ..
             }) if def == display_def
         ));
-        assert_eq!(
-            infer.projections.candidates,
-            &[ProjectionCandidate {
-                projection_ty_id: projection,
-                self_ty_id: qself.self_ty_id,
-                assoc_type: item_def,
-                trait_ty_id: bound.trait_ty_id,
-            }]
-        );
         assert_eq!(infer.projections.matches, &[]);
     }
 

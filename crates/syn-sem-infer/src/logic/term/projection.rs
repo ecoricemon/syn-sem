@@ -5,8 +5,8 @@ use super::{
     equality::{same_type, SameTypeRules},
 };
 use crate::{
-    AssocTypeImplFact, ImplSelfMatch, ProjectionCandidate, ProjectionMatch, ProjectionObligation,
-    TraitBoundFact, TypeBindingFact, TypeId, TypeSubstitution,
+    AssocTypeImplFact, ImplSelfMatch, ProjectionMatch, ProjectionObligation, TraitBoundFact,
+    TypeBindingFact, TypeId, TypeSubstitution,
 };
 use logic_eval::{Clause, Expr};
 use syn_sem_common::CommonCx;
@@ -20,7 +20,6 @@ const PRED_PROJECTION_OBLIGATION: &str = "projection_obligation";
 const PRED_PROJECTION_CANDIDATE: &str = "projection_candidate";
 const PRED_PROJECTION_MATCH: &str = "projection_match";
 const PRED_PROJECTION_NORMALIZES_TO: &str = "projection_normalizes_to";
-const PRED_TRAIT_MEMBER: &str = "trait_member";
 const PRED_TRAIT_BOUND: &str = "trait_bound";
 const PRED_TYPE_BINDING: &str = "type_binding";
 const PRED_TYPE_SUBSTITUTION: &str = "type_substitution";
@@ -30,9 +29,7 @@ const VAR_ASSOC: &str = "$Assoc";
 const VAR_GENERIC: &str = "$Generic";
 const VAR_IMPL_SELF: &str = "$ImplSelf";
 const VAR_IMPL_TRAIT: &str = "$ImplTrait";
-const VAR_MEMBER_ASSOC: &str = "$MemberAssoc";
 const VAR_PROJECTION: &str = "$Projection";
-const VAR_REQUESTED_ASSOC: &str = "$RequestedAssoc";
 const VAR_SELF: &str = "$Self";
 const VAR_SUBJECT: &str = "$Subject";
 const VAR_SUBSTITUTED: &str = "$Substituted";
@@ -103,43 +100,6 @@ pub(in crate::logic) fn projection_candidate_rules<'cx>(
             ])),
         },
     ]
-}
-
-/// * Rule 0 - `projection_match(P, Self, MemberAssoc, Trait) :-
-///   projection_candidate(P, Self, RequestedAssoc, Trait),
-///   trait_member(Trait, RequestedAssoc, MemberAssoc).`
-///
-/// # Examples
-///
-/// * Code - `<T>::Assoc` with `T: Trait` and `Trait::Assoc`
-/// * Output clause - `projection_match($Projection, $Self, $MemberAssoc, $Trait) :-
-///   projection_candidate($Projection, $Self, $RequestedAssoc, $Trait),
-///   trait_member($Trait, $RequestedAssoc, $MemberAssoc).`
-pub(in crate::logic) fn projection_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
-    [Clause {
-        head: projection_match(
-            ccx,
-            var(ccx.intern(VAR_PROJECTION)),
-            var(ccx.intern(VAR_SELF)),
-            var(ccx.intern(VAR_MEMBER_ASSOC)),
-            var(ccx.intern(VAR_TRAIT)),
-        ),
-        body: Some(Expr::And(vec![
-            Expr::Term(projection_candidate(
-                ccx,
-                var(ccx.intern(VAR_PROJECTION)),
-                var(ccx.intern(VAR_SELF)),
-                var(ccx.intern(VAR_REQUESTED_ASSOC)),
-                var(ccx.intern(VAR_TRAIT)),
-            )),
-            Expr::Term(trait_member(
-                ccx,
-                var(ccx.intern(VAR_TRAIT)),
-                var(ccx.intern(VAR_REQUESTED_ASSOC)),
-                var(ccx.intern(VAR_MEMBER_ASSOC)),
-            )),
-        ])),
-    }]
 }
 
 /// * Rule 0 - `projection_normalizes_to(P, Self, Assoc, Trait, Value) :-
@@ -263,11 +223,6 @@ pub(in crate::logic) fn projection_normalization_rules<'cx>(
     ]
 }
 
-/// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
-/// * self_ty_id - Type written as the projection self type, such as `T`
-/// * assoc_type - Definition of the associated type being projected, such as `Trait::Assoc`
-/// * trait_ty_id - Explicit trait path type, such as `Trait` in `<T as Trait>::Assoc`
-///
 /// # Examples
 ///
 /// * Code - `<T as Trait>::Assoc`
@@ -276,12 +231,19 @@ pub(in crate::logic) fn projection_normalization_rules<'cx>(
 /// * Code - `<T>::Assoc`
 /// * Input - `projection = ty0`, `self_ty_id = ty1`, `assoc_type = def2`, `trait_ty_id = None`
 /// * Output - `projection_obligation(ty0, ty1, def2).`
+///
+/// # Panics
+///
+/// Panics if `obligation` does not carry a projection self type. Callers should only pass
+/// obligations that can be represented as solver facts.
 pub(in crate::logic) fn projection_obligation_clause<'cx>(
     ccx: &'cx CommonCx,
     obligation: ProjectionObligation,
-    self_ty_id: TypeId,
 ) -> LogicClause<'cx> {
     let projection = type_id(ccx, obligation.projection_ty_id);
+    let self_ty_id = obligation
+        .self_ty_id
+        .expect("projection obligation clause requires a projection self type");
     let self_ty_id = type_id(ccx, self_ty_id);
     let assoc_type = def_id(ccx, obligation.assoc_type);
     if let Some(trait_ty_id) = obligation.trait_ty_id {
@@ -429,32 +391,6 @@ pub(in crate::logic) fn type_substitution_clause<'cx>(
 
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
 /// * self_ty_id - Type written as the projection self type, such as `T`
-/// * assoc_type - Definition requested by the projection path
-/// * trait_ty_id - Candidate trait type that may provide the associated type
-///
-/// # Examples
-///
-/// * Code - `<T>::Assoc` with candidate `Trait`
-/// * Input - `projection = ty0`, `self_ty_id = ty1`, `assoc_type = def2`, `trait_ty_id = ty3`
-/// * Output - `projection_candidate(ty0, ty1, def2, ty3).`
-pub(in crate::logic) fn projection_candidate_clause<'cx>(
-    ccx: &'cx CommonCx,
-    candidate: ProjectionCandidate,
-) -> LogicClause<'cx> {
-    Clause {
-        head: projection_candidate(
-            ccx,
-            type_id(ccx, candidate.projection_ty_id),
-            type_id(ccx, candidate.self_ty_id),
-            def_id(ccx, candidate.assoc_type),
-            type_id(ccx, candidate.trait_ty_id),
-        ),
-        body: None,
-    }
-}
-
-/// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
-/// * self_ty_id - Type written as the projection self type, such as `T`
 /// * assoc_type - Associated type definition found inside the candidate trait
 /// * trait_ty_id - Candidate trait type that provides the associated type
 ///
@@ -474,32 +410,6 @@ pub(in crate::logic) fn projection_match_clause<'cx>(
             type_id(ccx, match_.self_ty_id),
             def_id(ccx, match_.assoc_type),
             type_id(ccx, match_.trait_ty_id),
-        ),
-        body: None,
-    }
-}
-
-/// * trait_ty_id - Trait type that owns the member
-/// * requested_assoc_type - Associated type definition requested by the projection path
-/// * member_assoc_type - Associated type definition found inside the trait
-///
-/// # Examples
-///
-/// * Code - `trait Trait { type Assoc; }`
-/// * Input - `trait_ty_id = ty0`, `requested_assoc_type = def1`, `member_assoc_type = def2`
-/// * Output - `trait_member(ty0, def1, def2).`
-pub(in crate::logic) fn trait_member_clause<'cx>(
-    ccx: &'cx CommonCx,
-    trait_ty_id: TypeId,
-    requested_assoc_type: DefId,
-    member_assoc_type: DefId,
-) -> LogicClause<'cx> {
-    Clause {
-        head: trait_member(
-            ccx,
-            type_id(ccx, trait_ty_id),
-            def_id(ccx, requested_assoc_type),
-            def_id(ccx, member_assoc_type),
         ),
         body: None,
     }
@@ -539,32 +449,6 @@ pub(in crate::logic) fn projection_candidate_query<'cx>(
     trait_ty_id: TypeId,
 ) -> Expr<LogicAtom<'cx>> {
     Expr::Term(projection_candidate(
-        ccx,
-        type_id(ccx, projection_ty_id),
-        type_id(ccx, self_ty_id),
-        def_id(ccx, assoc_type),
-        type_id(ccx, trait_ty_id),
-    ))
-}
-
-/// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
-/// * self_ty_id - Type written as the projection self type, such as `T`
-/// * assoc_type - Associated type definition found inside the candidate trait
-/// * trait_ty_id - Candidate trait type that provides the associated type
-///
-/// # Examples
-///
-/// * Code - can `<T>::Assoc` match `Trait::Assoc`?
-/// * Input - `projection = ty0`, `self_ty_id = ty1`, `assoc_type = def2`, `trait_ty_id = ty3`
-/// * Output - `Expr::Term(projection_match(ty0, ty1, def2, ty3))`
-pub(in crate::logic) fn projection_match_query<'cx>(
-    ccx: &'cx CommonCx,
-    projection_ty_id: TypeId,
-    self_ty_id: TypeId,
-    assoc_type: DefId,
-    trait_ty_id: TypeId,
-) -> Expr<LogicAtom<'cx>> {
-    Expr::Term(projection_match(
         ccx,
         type_id(ccx, projection_ty_id),
         type_id(ccx, self_ty_id),
@@ -842,25 +726,4 @@ fn trait_bound<'cx>(
     trait_ty_id: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
     term(ccx.intern(PRED_TRAIT_BOUND), vec![subject, trait_ty_id])
-}
-
-/// * trait_ty_id - Trait type that owns the member
-/// * requested_assoc_type - Associated type definition requested by the projection path
-/// * member_assoc_type - Associated type definition found inside the trait
-///
-/// # Examples
-///
-/// * Code - `trait Trait { type Assoc; }`
-/// * Input - `trait_ty_id = ty0`, `requested_assoc_type = def1`, `member_assoc_type = def2`
-/// * Output - `trait_member(ty0, def1, def2)`
-fn trait_member<'cx>(
-    ccx: &'cx CommonCx,
-    trait_ty_id: LogicTerm<'cx>,
-    requested_assoc_type: LogicTerm<'cx>,
-    member_assoc_type: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(PRED_TRAIT_MEMBER),
-        vec![trait_ty_id, requested_assoc_type, member_assoc_type],
-    )
 }

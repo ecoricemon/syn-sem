@@ -304,6 +304,20 @@ impl<'cx> InferTypes<'cx> {
         self.push_type(ty)
     }
 
+    pub(crate) fn path_resolution(&self, ty_id: TypeId) -> Option<&PathTypeResolution> {
+        let Type::Path(path) = &self[ty_id] else {
+            return None;
+        };
+        Some(&path.resolution)
+    }
+
+    pub(crate) fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
+        let PathTypeResolution::Nominal(def) = self.path_resolution(ty_id)? else {
+            return None;
+        };
+        Some(*def)
+    }
+
     fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
         let ty_id = TypeId::new(self.types.len());
         self.types.push(ty);

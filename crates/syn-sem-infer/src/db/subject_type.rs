@@ -228,12 +228,16 @@ impl<'a, 'cx> SubjectTypeCollector<'a, 'cx> {
 #[derive(Debug, Default)]
 pub(crate) struct SubjectTypeDb {
     /// Equality relations between inference subjects.
+    /// * Made in the build stage.
     pub(crate) equalities: Vec<TypeEqualFact>,
     /// Type resolutions derived from equality relations.
+    /// * Made in the derive stage.
     pub(crate) resolved: Vec<ResolvedTypeFact>,
     /// Lookup map derived from [`Self::resolved`] for HIR expression occurrences.
+    /// * Made in the derive stage.
     pub(crate) expr_types: Map<hir::ExprId, TypeId>,
     /// Lookup map derived from [`Self::resolved`] for definitions.
+    /// * Made in the derive stage.
     pub(crate) def_types: Map<name::DefId, TypeId>,
 }
 

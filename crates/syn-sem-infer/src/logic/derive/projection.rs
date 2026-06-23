@@ -2,8 +2,8 @@
 
 use crate::{
     logic::term, AssocTypeImplFact, GenericArg, ImplSelfMatch, InferTypes, PathType,
-    PathTypeResolution, ProjectionCandidate, ProjectionDb, ProjectionMatch,
-    ProjectionNormalization, TraitBoundFact, Type, TypeBindingFact, TypeId, TypeSubstitution,
+    PathTypeResolution, ProjectionDb, ProjectionMatch, ProjectionNormalization, TraitBoundFact,
+    Type, TypeBindingFact, TypeId, TypeSubstitution,
 };
 use logic_eval::Database;
 use syn_sem_common::CommonCx;
@@ -39,9 +39,6 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
     }
 
     pub(crate) fn derive(&mut self) {
-        let candidates = self.derive_projection_candidates();
-        self.projections.candidates.extend(candidates);
-
         let matches = self.derive_projection_matches();
         self.projections.matches.extend(matches);
 
@@ -56,7 +53,7 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
         self.projections.normalizations.extend(normalizations);
     }
 
-    fn derive_projection_candidates(&self) -> Vec<ProjectionCandidate> {
+    fn derive_projection_matches(&self) -> Vec<ProjectionMatch> {
         let mut logic = ProjectionLogic::new(
             self.ccx,
             self.projections,
@@ -66,74 +63,41 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
         );
         logic.load_projection_candidates();
 
-        let mut candidates = Vec::new();
+        let mut matches = Vec::new();
         for obligation in &self.projections.obligations {
             let Some(self_ty_id) = obligation.self_ty_id else {
                 continue;
             };
             if let Some(trait_ty_id) = obligation.trait_ty_id {
-                if logic.proves_candidate(
-                    obligation.projection_ty_id,
-                    self_ty_id,
-                    obligation.assoc_type,
-                    trait_ty_id,
-                ) {
-                    candidates.push(ProjectionCandidate {
+                if let Some(assoc_type) =
+                    self.trait_member_assoc(trait_ty_id, obligation.assoc_type)
+                {
+                    matches.push(ProjectionMatch {
                         projection_ty_id: obligation.projection_ty_id,
                         self_ty_id,
-                        assoc_type: obligation.assoc_type,
+                        assoc_type,
                         trait_ty_id,
                     });
                 }
                 continue;
             }
             for bound in self.trait_bound_facts {
-                if logic.proves_candidate(
+                if !logic.proves_candidate(
                     obligation.projection_ty_id,
                     self_ty_id,
                     obligation.assoc_type,
                     bound.trait_ty_id,
                 ) {
-                    candidates.push(ProjectionCandidate {
+                    continue;
+                }
+                if let Some(assoc_type) =
+                    self.trait_member_assoc(bound.trait_ty_id, obligation.assoc_type)
+                {
+                    matches.push(ProjectionMatch {
                         projection_ty_id: obligation.projection_ty_id,
                         self_ty_id,
-                        assoc_type: obligation.assoc_type,
+                        assoc_type,
                         trait_ty_id: bound.trait_ty_id,
-                    });
-                }
-            }
-        }
-        candidates
-    }
-
-    fn derive_projection_matches(&self) -> Vec<ProjectionMatch> {
-        let trait_members = self.trait_members();
-        let mut logic = ProjectionLogic::new(
-            self.ccx,
-            self.projections,
-            self.types,
-            self.trait_bound_facts,
-            self.assoc_type_impl_facts,
-        );
-        logic.load_projection_matches(&trait_members);
-
-        let mut matches = Vec::new();
-        for candidate in &self.projections.candidates {
-            for member in trait_members
-                .iter()
-                .filter(|member| member.matches_candidate(*candidate))
-            {
-                if logic.proves_match(
-                    candidate.projection_ty_id,
-                    candidate.self_ty_id,
-                    member.member_assoc_type,
-                    candidate.trait_ty_id,
-                ) {
-                    matches.push(ProjectionMatch {
-                        projection_ty_id: candidate.projection_ty_id,
-                        self_ty_id: candidate.self_ty_id,
-                        assoc_type: member.member_assoc_type,
-                        trait_ty_id: candidate.trait_ty_id,
                     });
                 }
             }
@@ -272,20 +236,22 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
         normalizations
     }
 
-    fn trait_members(&self) -> Vec<TraitMember> {
-        self.projections
-            .candidates
-            .iter()
-            .filter_map(|candidate| self.trait_member(*candidate))
-            .collect()
-    }
-
-    fn trait_member(&self, candidate: ProjectionCandidate) -> Option<TraitMember> {
-        let trait_def = self.nominal_def(candidate.trait_ty_id)?;
+    /// Returns the associated type member in `trait_ty_id` whose name matches
+    /// `requested_assoc_type`.
+    ///
+    /// `requested_assoc_type` is the definition found by the projection path, and is used only as
+    /// the source of the requested name. The returned definition is the concrete associated type
+    /// member owned by the candidate trait, so the input and output [`DefId`]s may differ.
+    fn trait_member_assoc(
+        &self,
+        trait_ty_id: TypeId,
+        requested_assoc_type: DefId,
+    ) -> Option<DefId> {
+        let trait_def = self.types.nominal_def(trait_ty_id)?;
         if self.names[trait_def].kind != DefKind::Trait {
             return None;
         }
-        let assoc_name = self.names[candidate.assoc_type].name?;
+        let assoc_name = self.names[requested_assoc_type].name?;
         let ResolveResult::Found(member_assoc_type) =
             self.names.member(trait_def, Namespace::Type, assoc_name)
         else {
@@ -294,21 +260,7 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
         if self.names[member_assoc_type].kind != DefKind::AssocType {
             return None;
         }
-        Some(TraitMember {
-            trait_ty_id: candidate.trait_ty_id,
-            requested_assoc_type: candidate.assoc_type,
-            member_assoc_type,
-        })
-    }
-
-    fn nominal_def(&self, ty_id: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &self.types[ty_id] else {
-            return None;
-        };
-        let PathTypeResolution::Nominal(def) = path.resolution else {
-            return None;
-        };
-        Some(def)
+        Some(member_assoc_type)
     }
 
     fn same_type(&self, left: TypeId, right: TypeId) -> bool {
@@ -322,7 +274,9 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
     ) -> Option<Vec<TypeBindingFact>> {
         let projection_path = self.path_type(projection_self_ty_id)?;
         let impl_path = self.path_type(impl_self_ty_id)?;
-        if self.nominal_def(projection_self_ty_id)? != self.nominal_def(impl_self_ty_id)? {
+        if self.types.nominal_def(projection_self_ty_id)?
+            != self.types.nominal_def(impl_self_ty_id)?
+        {
             return None;
         }
 
@@ -602,26 +556,12 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct TraitMember {
-    trait_ty_id: TypeId,
-    requested_assoc_type: DefId,
-    member_assoc_type: DefId,
-}
-
-impl TraitMember {
-    fn matches_candidate(self, candidate: ProjectionCandidate) -> bool {
-        self.trait_ty_id == candidate.trait_ty_id
-            && self.requested_assoc_type == candidate.assoc_type
-    }
-}
-
 /// Performs projection logic operations:
 ///
-/// * Loads candidate, match, or normalization rules
+/// * Loads trait-candidate or normalization rules
 /// * Loads projection and trait facts needed by the selected rule set
 /// * Loads Rust-side matching and substitution facts
-/// * Queries candidate, match, and normalization predicates
+/// * Queries trait-candidate and normalization predicates
 struct ProjectionLogic<'a, 'cx> {
     ccx: &'cx CommonCx,
     projections: &'a ProjectionDb,
@@ -657,13 +597,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         self.insert_type_equalities();
     }
 
-    fn load_projection_matches(&mut self, trait_members: &[TraitMember]) {
-        self.insert_match_rules();
-        self.insert_projection_candidates();
-        self.insert_trait_members(trait_members);
-        self.insert_impl_assoc_types();
-    }
-
     fn load_projection_normalizations(&mut self) {
         self.insert_same_type_rules();
         self.insert_normalization_rules();
@@ -687,12 +620,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         }
     }
 
-    fn insert_match_rules(&mut self) {
-        for clause in term::projection_match_rules(self.ccx) {
-            self.insert_clause(clause);
-        }
-    }
-
     fn insert_normalization_rules(&mut self) {
         for clause in term::projection_normalization_rules(self.ccx) {
             self.insert_clause(clause);
@@ -700,15 +627,13 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_projection_obligations(&mut self) {
-        for obligation in &self.projections.obligations {
-            let Some(self_ty_id) = obligation.self_ty_id else {
-                continue;
-            };
-            self.insert_clause(term::projection_obligation_clause(
-                self.ccx,
-                *obligation,
-                self_ty_id,
-            ));
+        for obligation in self
+            .projections
+            .obligations
+            .iter()
+            .filter(|obligation| obligation.self_ty_id.is_some())
+        {
+            self.insert_clause(term::projection_obligation_clause(self.ccx, *obligation));
         }
     }
 
@@ -731,26 +656,9 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         }
     }
 
-    fn insert_projection_candidates(&mut self) {
-        for candidate in &self.projections.candidates {
-            self.insert_clause(term::projection_candidate_clause(self.ccx, *candidate));
-        }
-    }
-
     fn insert_projection_matches(&mut self) {
         for projection_match in &self.projections.matches {
             self.insert_clause(term::projection_match_clause(self.ccx, *projection_match));
-        }
-    }
-
-    fn insert_trait_members(&mut self, trait_members: &[TraitMember]) {
-        for member in trait_members {
-            self.insert_clause(term::trait_member_clause(
-                self.ccx,
-                member.trait_ty_id,
-                member.requested_assoc_type,
-                member.member_assoc_type,
-            ));
         }
     }
 
@@ -787,24 +695,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ) -> bool {
         self.db
             .query(term::projection_candidate_query(
-                self.ccx,
-                projection_ty_id,
-                self_ty_id,
-                assoc_type,
-                trait_ty_id,
-            ))
-            .is_true()
-    }
-
-    fn proves_match(
-        &mut self,
-        projection_ty_id: TypeId,
-        self_ty_id: TypeId,
-        assoc_type: DefId,
-        trait_ty_id: TypeId,
-    ) -> bool {
-        self.db
-            .query(term::projection_match_query(
                 self.ccx,
                 projection_ty_id,
                 self_ty_id,
