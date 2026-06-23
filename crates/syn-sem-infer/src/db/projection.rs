@@ -28,7 +28,6 @@ impl ProjectionCollector {
 
         ProjectionDb {
             obligations,
-            candidates: Vec::new(),
             matches: Vec::new(),
             impl_self_matches: Vec::new(),
             type_bindings: Vec::new(),
@@ -50,18 +49,22 @@ impl ProjectionCollector {
 #[derive(Debug, Default)]
 pub(crate) struct ProjectionDb {
     /// Projection type occurrences collected during lowering that still need solver work.
+    /// * Made in the build stage.
     pub(crate) obligations: Vec<ProjectionObligation>,
-    /// Candidate trait selections that may provide the requested associated type.
-    pub(crate) candidates: Vec<ProjectionCandidate>,
     /// Candidate projections matched against concrete associated type members on a trait.
+    /// * Made in the derive stage.
     pub(crate) matches: Vec<ProjectionMatch>,
     /// Impl self type matches used for projection normalization.
+    /// * Made in the derive stage.
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
     /// Generic type bindings discovered from impl self type matches.
+    /// * Made in the derive stage.
     pub(crate) type_bindings: Vec<TypeBindingFact>,
     /// Type substitutions used for projection normalization.
+    /// * Made in the derive stage.
     pub(crate) type_substitutions: Vec<TypeSubstitution>,
     /// Matched projections rewritten to the value type assigned by an applicable impl.
+    /// * Made in the derive stage.
     pub(crate) normalizations: Vec<ProjectionNormalization>,
 }
 
@@ -134,25 +137,16 @@ impl ProjectionDb {
 pub(crate) struct ProjectionObligation {
     /// Type occurrence whose value is the projection result.
     pub(crate) projection_ty_id: TypeId,
-    /// Associated type definition selected by name lookup.
+    /// Definition that provides the associated type name requested by the projection.
+    ///
+    /// For `<T>::Item`, this is the requested `Item`, not necessarily the concrete target `Item`
+    /// such as `Iterator::Item`. The concrete trait member definition is selected later in
+    /// [`ProjectionMatch`].
     pub(crate) assoc_type: DefId,
     /// Self type for the projection, when represented.
     pub(crate) self_ty_id: Option<TypeId>,
     /// Trait type for the projection, when represented.
     pub(crate) trait_ty_id: Option<TypeId>,
-}
-
-/// Candidate trait selected for an associated type projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionCandidate {
-    /// Type occurrence whose value is the projection result.
-    pub(crate) projection_ty_id: TypeId,
-    /// Self type for the projection.
-    pub(crate) self_ty_id: TypeId,
-    /// Associated type definition selected by name lookup.
-    pub(crate) assoc_type: DefId,
-    /// Candidate trait type that may provide the associated type.
-    pub(crate) trait_ty_id: TypeId,
 }
 
 /// Associated type projection matched against a concrete trait member.

@@ -107,7 +107,7 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
         types: &'a InferTypes<'cx>,
     ) -> Self {
         Self {
-            db: Database::new(),
+            db: Database::default(),
             ccx,
             subject_types,
             types,
@@ -130,7 +130,6 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
             self.db
                 .insert_clause(term::type_candidate_clause(self.ccx, ty_id));
         }
-        self.db.commit();
     }
 
     fn resolved_types(&mut self, subject: TypeSubject) -> Vec<TypeId> {
