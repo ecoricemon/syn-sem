@@ -1,8 +1,8 @@
 //! Logic-backed subject type equality derivation.
 
 use crate::{
-    logic::term, InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId,
-    TypeSubject,
+    logic::term::{self, symbol::var},
+    InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject,
 };
 use logic_eval::Database;
 use syn_sem_common::{CommonCx, Set};
@@ -137,7 +137,7 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
         let mut types = Vec::new();
         while let Some(result) = query.prove_next() {
             for assignment in result {
-                if assignment.get_lhs_variable().as_ref() != term::VAR_TYPE {
+                if assignment.get_lhs_variable().as_ref() != var::TYPE {
                     continue;
                 }
                 let Some(ty) = term::type_id_from_term(&assignment.rhs()) else {

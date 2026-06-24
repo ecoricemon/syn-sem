@@ -317,10 +317,6 @@ impl<'cx> InferTypes<'cx> {
         Some(*def)
     }
 
-    pub(crate) fn same_type(&self, left: TypeId, right: TypeId) -> bool {
-        left == right || self[left] == self[right]
-    }
-
     fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
         let ty_id = TypeId::new(self.types.len());
         self.types.push(ty);

@@ -4,6 +4,7 @@ mod atom;
 mod equality;
 mod projection;
 mod subject_type;
+pub(in crate::logic) mod symbol;
 
 pub(super) use atom::{type_id_from_term, LogicAtom, LogicClause};
 pub(super) use equality::same_type_rules;

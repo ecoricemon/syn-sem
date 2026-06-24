@@ -1157,6 +1157,47 @@ mod tests {
     }
 
     #[test]
+    fn derives_impl_self_binding_to_projection_generic() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for Vec<T> {
+                type Output = T;
+            }
+
+            struct Holder<U> {
+                field: <Vec<U> as Identity>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Holder");
+        let [field_ty_id] = fields.as_slice() else {
+            panic!("Holder should have one field type");
+        };
+        let [binding] = infer.projections.type_bindings.as_slice() else {
+            panic!("projection generic should be bound to impl self generic");
+        };
+        let normalized = infer
+            .normalized_projection_type_for_hir_type(*field_ty_id)
+            .expect("projection generic impl self projection should normalize");
+
+        assert_eq!(binding.arg, normalized);
+        assert_generic_type_name(&names, &infer, binding.generic, "T");
+        assert_generic_type_name(&names, &infer, binding.arg, "U");
+        assert_generic_type_name(&names, &infer, normalized, "U");
+    }
+
+    #[test]
     fn classifies_projection_normalization_query_results() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
@@ -1303,6 +1344,313 @@ mod tests {
         assert_eq!(
             infer[substitution.substituted],
             Type::Primitive(PrimitiveType::Bool)
+        );
+    }
+
+    #[test]
+    fn rejects_repeated_impl_self_generic_mismatch() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Pair<K, V>;
+
+            trait SamePair {
+                type Output;
+            }
+
+            impl<T> SamePair for Pair<T, T> {
+                type Output = T;
+            }
+
+            struct Result {
+                same: <Pair<u32, u32> as SamePair>::Output,
+                different: <Pair<u32, bool> as SamePair>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [same_ty_id, different_ty_id] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let same = infer.type_for_hir_type(*same_ty_id).unwrap();
+        let different = infer.type_for_hir_type(*different_ty_id).unwrap();
+
+        let [binding] = infer.projections.type_bindings.as_slice() else {
+            panic!("repeated impl self generic should create one type binding");
+        };
+        assert_eq!(infer[binding.arg], Type::Primitive(PrimitiveType::U32));
+        assert_eq!(
+            infer.projection_normalization(same),
+            ProjectionNormalizationResult::Known(
+                infer
+                    .normalized_projection_type(same)
+                    .expect("matching repeated generic should normalize")
+            )
+        );
+        assert_eq!(
+            infer.projection_normalization(different),
+            ProjectionNormalizationResult::NoNormalization
+        );
+    }
+
+    #[test]
+    fn derives_nested_impl_self_binding_with_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Option<T>;
+
+            trait Wrap {
+                type Output;
+            }
+
+            impl<T> Wrap for Option<Vec<T>> {
+                type Output = T;
+            }
+
+            struct Result {
+                field: <Option<Vec<u32>> as Wrap>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [field_ty_id] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let [_binding] = infer.projections.type_bindings.as_slice() else {
+            panic!("nested impl self should create one type binding");
+        };
+        let normalized = infer
+            .normalized_projection_type_for_hir_type(*field_ty_id)
+            .expect("nested impl self projection should normalize");
+        assert_primitive_type(&infer, normalized, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn derives_composite_impl_self_binding_with_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Vec<T>;
+            struct Wrapper<T>;
+
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for Wrapper<T> {
+                type Output = T;
+            }
+
+            struct Result {
+                field: <Wrapper<Vec<u32>> as Identity>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [field_ty_id] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let [_binding] = infer.projections.type_bindings.as_slice() else {
+            panic!("composite impl self should create one type binding");
+        };
+        let normalized = infer
+            .normalized_projection_type_for_hir_type(*field_ty_id)
+            .expect("composite impl self projection should normalize");
+        assert_path_of(&infer, normalized, "Vec", PrimitiveType::U32);
+    }
+
+    #[test]
+    fn derives_container_impl_self_bindings_with_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for &T {
+                type Output = T;
+            }
+
+            impl<T> Identity for (T, bool) {
+                type Output = T;
+            }
+
+            impl<T> Identity for [T] {
+                type Output = T;
+            }
+
+            struct Result {
+                reference: <&u32 as Identity>::Output,
+                tuple: <(u32, bool) as Identity>::Output,
+                slice: <[u32] as Identity>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [reference_ty_id, tuple_ty_id, slice_ty_id] = fields.as_slice() else {
+            panic!("Result should have three field types");
+        };
+        let reference = infer
+            .normalized_projection_type_for_hir_type(*reference_ty_id)
+            .expect("reference impl self projection should normalize");
+        let tuple = infer
+            .normalized_projection_type_for_hir_type(*tuple_ty_id)
+            .expect("tuple impl self projection should normalize");
+        let slice = infer
+            .normalized_projection_type_for_hir_type(*slice_ty_id)
+            .expect("slice impl self projection should normalize");
+        assert_primitive_type(&infer, reference, PrimitiveType::U32);
+        assert_primitive_type(&infer, tuple, PrimitiveType::U32);
+        assert_primitive_type(&infer, slice, PrimitiveType::U32);
+    }
+
+    #[test]
+    fn matches_literal_const_args_in_impl_self_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Array<T, const N: usize>;
+
+            trait FixedThree {
+                type Output;
+            }
+
+            impl<T> FixedThree for Array<T, 3> {
+                type Output = T;
+            }
+
+            struct Result {
+                matching: <Array<u32, 3> as FixedThree>::Output,
+                different: <Array<u32, 4> as FixedThree>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [matching_ty_id, different_ty_id] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let matching = infer.type_for_hir_type(*matching_ty_id).unwrap();
+        let different = infer.type_for_hir_type(*different_ty_id).unwrap();
+        let normalized = infer
+            .normalized_projection_type(matching)
+            .expect("matching const literal impl self projection should normalize");
+
+        assert_primitive_type(&infer, normalized, PrimitiveType::U32);
+        assert_eq!(
+            infer.projection_normalization(different),
+            ProjectionNormalizationResult::NoNormalization
+        );
+    }
+
+    #[test]
+    fn derives_assoc_type_arg_impl_self_binding_with_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Uses<I>;
+
+            trait Iterator {
+                type Item;
+            }
+
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for Uses<Iterator<Item = T>> {
+                type Output = T;
+            }
+
+            struct Result {
+                matching: <Uses<Iterator<Item = u32>> as Identity>::Output,
+                different: <Uses<Iterator<Item = bool>> as Identity>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [matching_ty_id, different_ty_id] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let matching = infer
+            .normalized_projection_type_for_hir_type(*matching_ty_id)
+            .expect("associated type arg impl self projection should normalize");
+        let different = infer
+            .normalized_projection_type_for_hir_type(*different_ty_id)
+            .expect("different associated type arg should still bind its own value");
+
+        assert_primitive_type(&infer, matching, PrimitiveType::U32);
+        assert_primitive_type(&infer, different, PrimitiveType::Bool);
+    }
+
+    #[test]
+    fn matches_assoc_const_arg_in_impl_self_logic_unification() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Uses<I, T>;
+
+            trait Flag {
+                const PANIC: bool;
+            }
+
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for Uses<Flag<PANIC = false>, T> {
+                type Output = T;
+            }
+
+            struct Result {
+                matching: <Uses<Flag<PANIC = false>, u32> as Identity>::Output,
+                different: <Uses<Flag<PANIC = true>, u32> as Identity>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [matching_ty_id, different_ty_id] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let matching = infer
+            .normalized_projection_type_for_hir_type(*matching_ty_id)
+            .expect("associated const arg impl self projection should normalize");
+        let different = infer.type_for_hir_type(*different_ty_id).unwrap();
+
+        assert_primitive_type(&infer, matching, PrimitiveType::U32);
+        assert_eq!(
+            infer.projection_normalization(different),
+            ProjectionNormalizationResult::NoNormalization
         );
     }
 
@@ -1566,21 +1914,45 @@ mod tests {
     }
 
     fn assert_option_of(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
+        assert_path_of(infer, ty, "Option", expected);
+    }
+
+    fn assert_path_of(
+        infer: &InferDb<'_>,
+        ty: TypeId,
+        expected_name: &str,
+        expected_arg: PrimitiveType,
+    ) {
         let Type::Path(path) = &infer[ty] else {
             panic!("normalized projection value should lower to path type");
         };
         let [segment] = path.path.segments.as_slice() else {
-            panic!("Option<T> should have one path segment");
+            panic!("{expected_name}<T> should have one path segment");
         };
-        assert_eq!(segment.name.as_ref(), "Option");
+        assert_eq!(segment.name.as_ref(), expected_name);
         let [GenericArg::Type(arg)] = segment.args.as_slice() else {
-            panic!("Option<T> should have one type argument");
+            panic!("{expected_name}<T> should have one type argument");
         };
-        assert_eq!(infer[*arg], Type::Primitive(expected));
+        assert_eq!(infer[*arg], Type::Primitive(expected_arg));
     }
 
     fn assert_primitive_type(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
         assert_eq!(infer[ty], Type::Primitive(expected));
+    }
+
+    fn assert_generic_type_name(
+        names: &NameDb<'_>,
+        infer: &InferDb<'_>,
+        ty: TypeId,
+        expected: &str,
+    ) {
+        let Type::Path(path) = &infer[ty] else {
+            panic!("type should be a generic path");
+        };
+        let PathTypeResolution::GenericParam(def) = path.resolution else {
+            panic!("type path should resolve to a generic parameter");
+        };
+        assert_eq!(names[def].name.unwrap().as_ref(), expected);
     }
 
     #[test]

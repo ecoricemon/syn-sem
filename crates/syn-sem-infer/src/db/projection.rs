@@ -57,9 +57,9 @@ pub(crate) struct ProjectionDb {
     /// Impl self type matches used for projection normalization.
     /// * Made in the derive stage.
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
-    /// Generic type bindings discovered from impl self type matches.
+    /// Type argument bindings discovered from impl self type matches.
     /// * Made in the derive stage.
-    pub(crate) type_bindings: Vec<TypeBindingFact>,
+    pub(crate) type_bindings: Vec<ImplSelfTypeArgBinding>,
     /// Type substitutions used for projection normalization.
     /// * Made in the derive stage.
     pub(crate) type_substitutions: Vec<TypeSubstitution>,
@@ -163,6 +163,9 @@ pub(crate) struct ProjectionMatch {
 }
 
 /// Impl self type pattern matched against a projection self type.
+///
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that
+/// projection self `Vec<u32>` matches impl self `Vec<T>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImplSelfMatch {
     /// Self type from the projection, such as `Vec<u32>`.
@@ -171,9 +174,12 @@ pub(crate) struct ImplSelfMatch {
     pub(crate) impl_self: TypeId,
 }
 
-/// Generic type binding discovered while matching an impl self type.
+/// Type argument bound to an impl-self generic while matching an impl self type.
+///
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that
+/// generic `T` from impl self `Vec<T>` is bound to projection argument `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeBindingFact {
+pub(crate) struct ImplSelfTypeArgBinding {
     /// Self type from the projection, such as `Vec<u32>`.
     pub(crate) projection_self: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
