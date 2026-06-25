@@ -2,7 +2,7 @@
 
 use super::infer_types::InferTypes;
 use crate::{PrimitiveType, Type, TypeId};
-use syn_sem_common::Map;
+use syn_sem_common::{Map, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name as name;
 
@@ -203,9 +203,7 @@ impl<'a, 'cx> SubjectTypeCollector<'a, 'cx> {
 
     fn intern_type_equal(&mut self, left: TypeSubject, right: TypeSubject) {
         let fact = TypeEqualFact { left, right };
-        if !self.subject_equalities.contains(&fact) {
-            self.subject_equalities.push(fact);
-        }
+        self.subject_equalities.push_unique(fact);
     }
 
     fn resolve_value_path(

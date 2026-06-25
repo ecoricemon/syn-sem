@@ -24,6 +24,13 @@ pub(in crate::logic) mod func {
     pub(in crate::logic) const TUPLE: &str = "#tuple";
 }
 
+/// Atom prefixes used to encode repo ids as zero-argument logic terms.
+pub(in crate::logic) mod id {
+    pub(in crate::logic) const DEF: &str = "def";
+    pub(in crate::logic) const EXPR: &str = "expr";
+    pub(in crate::logic) const TYPE: &str = "ty";
+}
+
 /// Predicate symbols used as logic database relations and queries.
 pub(in crate::logic) mod pred {
     pub(in crate::logic) const EXPLICIT_PROJECTION_OBLIGATION: &str =

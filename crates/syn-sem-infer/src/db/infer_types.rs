@@ -5,7 +5,7 @@ use crate::{
     ProjectionType, QSelf, Type, TypeId, TypeParamBound,
 };
 use std::ops::Index;
-use syn_sem_common::Map;
+use syn_sem_common::{Map, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
 
@@ -317,6 +317,13 @@ impl<'cx> InferTypes<'cx> {
         Some(*def)
     }
 
+    pub(crate) fn generic_def(&self, ty: TypeId) -> Option<DefId> {
+        let PathTypeResolution::GenericParam(def) = self.path_resolution(ty)? else {
+            return None;
+        };
+        Some(*def)
+    }
+
     fn push_type(&mut self, ty: Type<'cx>) -> TypeId {
         let ty_id = TypeId::new(self.types.len());
         self.types.push(ty);
@@ -362,10 +369,9 @@ impl<'a, 'cx> TypeSharing<'a, 'cx> {
         if left == right {
             return true;
         }
-        if seen.contains(&(left, right)) {
+        if !seen.push_unique((left, right)) {
             return true;
         }
-        seen.push((left, right));
         self.can_share_type_with_inner(left, &self.types[right.index()], seen)
     }
 

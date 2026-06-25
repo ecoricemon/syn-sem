@@ -44,43 +44,50 @@ pub enum PrimitiveType {
     AbstractInt,
     /// Unsuffixed floating-point literal type before it is constrained to a concrete float primitive.
     AbstractFloat,
-    /// `bool`.
     Bool,
-    /// `char`.
     Char,
-    /// `str`.
     Str,
-    /// `i8`.
     I8,
-    /// `i16`.
     I16,
-    /// `i32`.
     I32,
-    /// `i64`.
     I64,
-    /// `i128`.
     I128,
-    /// `isize`.
     Isize,
-    /// `u8`.
     U8,
-    /// `u16`.
     U16,
-    /// `u32`.
     U32,
-    /// `u64`.
     U64,
-    /// `u128`.
     U128,
-    /// `usize`.
     Usize,
-    /// `f32`.
     F32,
-    /// `f64`.
     F64,
 }
 
 impl PrimitiveType {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::AbstractInt => "abstract_int",
+            Self::AbstractFloat => "abstract_float",
+            Self::Bool => "bool",
+            Self::Char => "char",
+            Self::Str => "str",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I128 => "i128",
+            Self::Isize => "isize",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::Usize => "usize",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+
     pub(crate) fn is_abstract_of(self, concrete: Self) -> bool {
         matches!(
             (self, concrete),

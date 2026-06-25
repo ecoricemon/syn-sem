@@ -5,7 +5,7 @@ use crate::{
     InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject,
 };
 use logic_eval::Database;
-use syn_sem_common::{CommonCx, Set};
+use syn_sem_common::{CommonCx, Set, VecUniqueExt};
 
 /// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts.
 pub(crate) struct SubjectTypeDeriver<'a, 'cx> {
@@ -135,18 +135,14 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
     fn resolved_types(&mut self, subject: TypeSubject) -> Vec<TypeId> {
         let mut query = self.db.query(term::resolved_type_query(self.ccx, subject));
         let mut types = Vec::new();
-        while let Some(result) = query.prove_next() {
-            for assignment in result {
-                if assignment.get_lhs_variable().as_ref() != var::TYPE {
-                    continue;
-                }
-                let Some(ty) = term::type_id_from_term(&assignment.rhs()) else {
-                    continue;
-                };
-                if !types.contains(&ty) {
-                    types.push(ty);
-                }
-            }
+        while let Some(answer) = query.prove_next() {
+            let Some(ty) = answer
+                .get(var::TYPE)
+                .and_then(|term| term::type_id_from_term(&term))
+            else {
+                continue;
+            };
+            types.push_unique(ty);
         }
         types
     }

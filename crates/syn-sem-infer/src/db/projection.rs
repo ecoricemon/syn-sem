@@ -165,8 +165,8 @@ pub(crate) struct ProjectionMatch {
 
 /// Impl self type pattern matched against a projection self type.
 ///
-/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that
-/// projection self `Vec<u32>` matches impl self `Vec<T>`.
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that projection
+/// self `Vec<u32>` matches impl self `Vec<T>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImplSelfMatch {
     /// Self type from the projection, such as `Vec<u32>`.
@@ -177,8 +177,8 @@ pub(crate) struct ImplSelfMatch {
 
 /// Type argument bound to an impl-self generic while matching an impl self type.
 ///
-/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that
-/// generic `T` from impl self `Vec<T>` is bound to projection argument `u32`.
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that generic `T`
+/// from impl self `Vec<T>` is bound to projection argument `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImplSelfTypeArgBinding {
     /// Self type from the projection, such as `Vec<u32>`.

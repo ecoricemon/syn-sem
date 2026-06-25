@@ -1,7 +1,7 @@
 //! Logic rules and predicates for associated type projection solving.
 
 use super::{
-    atom::{def_id, term, type_id, var, LogicAtom, LogicClause, LogicTerm},
+    atom::{def_id, type_id, CreateTerm, LogicAtom, LogicClause, LogicTerm},
     equality::{same_type, SameTypeRules},
     symbol::{pred, var},
     type_shape, type_shape_mode, TypeShapeMode,
@@ -39,44 +39,40 @@ pub(in crate::logic) fn projection_candidate_rules<'cx>(
         Clause {
             head: projection_candidate(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
             ),
             body: Some(Expr::Term(explicit_projection_obligation(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
             ))),
         },
         Clause {
             head: projection_candidate(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_obligation(
                     ccx,
-                    var(ccx.intern(var::PROJECTION)),
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::ASSOC)),
+                    ccx.atom(var::PROJECTION),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::ASSOC),
                 )),
                 Expr::Term(trait_bound(
                     ccx,
-                    var(ccx.intern(var::SUBJECT)),
-                    var(ccx.intern(var::TRAIT)),
+                    ccx.atom(var::SUBJECT),
+                    ccx.atom(var::TRAIT),
                 )),
-                Expr::Term(same_type(
-                    ccx,
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::SUBJECT)),
-                )),
+                Expr::Term(same_type(ccx, ccx.atom(var::SELF), ccx.atom(var::SUBJECT))),
             ])),
         },
     ]
@@ -99,30 +95,26 @@ pub(in crate::logic) fn impl_self_match_candidate_rules<'cx>(
     ccx: &'cx CommonCx,
 ) -> [LogicClause<'cx>; 1] {
     [Clause {
-        head: impl_self_match_candidate(
-            ccx,
-            var(ccx.intern(var::SELF)),
-            var(ccx.intern(var::IMPL_SELF)),
-        ),
+        head: impl_self_match_candidate(ccx, ccx.atom(var::SELF), ccx.atom(var::IMPL_SELF)),
         body: Some(Expr::And(vec![
             Expr::Term(projection_match(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
             )),
             Expr::Term(impl_assoc_type(
                 ccx,
-                var(ccx.intern(var::IMPL_SELF)),
-                var(ccx.intern(var::IMPL_TRAIT)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::VALUE)),
+                ccx.atom(var::IMPL_SELF),
+                ccx.atom(var::IMPL_TRAIT),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::VALUE),
             )),
             Expr::Term(same_type(
                 ccx,
-                var(ccx.intern(var::TRAIT)),
-                var(ccx.intern(var::IMPL_TRAIT)),
+                ccx.atom(var::TRAIT),
+                ccx.atom(var::IMPL_TRAIT),
             )),
         ])),
     }]
@@ -137,28 +129,24 @@ pub(in crate::logic) fn impl_self_match_candidate_rules<'cx>(
 /// the impl-self pattern.
 pub(in crate::logic) fn impl_self_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
     [Clause {
-        head: impl_self_match(
-            ccx,
-            var(ccx.intern(var::SELF)),
-            var(ccx.intern(var::IMPL_SELF)),
-        ),
+        head: impl_self_match(ccx, ccx.atom(var::SELF), ccx.atom(var::IMPL_SELF)),
         body: Some(Expr::And(vec![
             Expr::Term(impl_self_match_candidate(
                 ccx,
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::IMPL_SELF)),
+                ccx.atom(var::SELF),
+                ccx.atom(var::IMPL_SELF),
             )),
             Expr::Term(type_shape(
                 ccx,
-                var(ccx.intern(var::SELF)),
+                ccx.atom(var::SELF),
                 type_shape_mode(ccx, TypeShapeMode::Concrete),
-                var(ccx.intern(var::SHAPE)),
+                ccx.atom(var::SHAPE),
             )),
             Expr::Term(type_shape(
                 ccx,
-                var(ccx.intern(var::IMPL_SELF)),
+                ccx.atom(var::IMPL_SELF),
                 type_shape_mode(ccx, TypeShapeMode::ImplPattern),
-                var(ccx.intern(var::SHAPE)),
+                ccx.atom(var::SHAPE),
             )),
         ])),
     }]
@@ -197,88 +185,88 @@ pub(in crate::logic) fn projection_normalization_rules<'cx>(
         Clause {
             head: projection_normalizes_to(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
-                var(ccx.intern(var::VALUE)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
+                ccx.atom(var::VALUE),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_match(
                     ccx,
-                    var(ccx.intern(var::PROJECTION)),
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::ASSOC)),
-                    var(ccx.intern(var::TRAIT)),
+                    ccx.atom(var::PROJECTION),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::ASSOC),
+                    ccx.atom(var::TRAIT),
                 )),
                 Expr::Term(impl_assoc_type(
                     ccx,
-                    var(ccx.intern(var::IMPL_SELF)),
-                    var(ccx.intern(var::IMPL_TRAIT)),
-                    var(ccx.intern(var::ASSOC)),
-                    var(ccx.intern(var::VALUE)),
+                    ccx.atom(var::IMPL_SELF),
+                    ccx.atom(var::IMPL_TRAIT),
+                    ccx.atom(var::ASSOC),
+                    ccx.atom(var::VALUE),
                 )),
                 Expr::Term(same_type(
                     ccx,
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::IMPL_SELF)),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::IMPL_SELF),
                 )),
                 Expr::Term(same_type(
                     ccx,
-                    var(ccx.intern(var::TRAIT)),
-                    var(ccx.intern(var::IMPL_TRAIT)),
+                    ccx.atom(var::TRAIT),
+                    ccx.atom(var::IMPL_TRAIT),
                 )),
             ])),
         },
         Clause {
             head: projection_normalizes_to(
                 ccx,
-                var(ccx.intern(var::PROJECTION)),
-                var(ccx.intern(var::SELF)),
-                var(ccx.intern(var::ASSOC)),
-                var(ccx.intern(var::TRAIT)),
-                var(ccx.intern(var::SUBSTITUTED)),
+                ccx.atom(var::PROJECTION),
+                ccx.atom(var::SELF),
+                ccx.atom(var::ASSOC),
+                ccx.atom(var::TRAIT),
+                ccx.atom(var::SUBSTITUTED),
             ),
             body: Some(Expr::And(vec![
                 Expr::Term(projection_match(
                     ccx,
-                    var(ccx.intern(var::PROJECTION)),
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::ASSOC)),
-                    var(ccx.intern(var::TRAIT)),
+                    ccx.atom(var::PROJECTION),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::ASSOC),
+                    ccx.atom(var::TRAIT),
                 )),
                 Expr::Term(impl_assoc_type(
                     ccx,
-                    var(ccx.intern(var::IMPL_SELF)),
-                    var(ccx.intern(var::IMPL_TRAIT)),
-                    var(ccx.intern(var::ASSOC)),
-                    var(ccx.intern(var::VALUE)),
+                    ccx.atom(var::IMPL_SELF),
+                    ccx.atom(var::IMPL_TRAIT),
+                    ccx.atom(var::ASSOC),
+                    ccx.atom(var::VALUE),
                 )),
                 Expr::Term(same_type(
                     ccx,
-                    var(ccx.intern(var::TRAIT)),
-                    var(ccx.intern(var::IMPL_TRAIT)),
+                    ccx.atom(var::TRAIT),
+                    ccx.atom(var::IMPL_TRAIT),
                 )),
                 Expr::Term(impl_self_match(
                     ccx,
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::IMPL_SELF)),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::IMPL_SELF),
                 )),
                 Expr::Term(type_binding(
                     ccx,
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::IMPL_SELF)),
-                    var(ccx.intern(var::GENERIC)),
-                    var(ccx.intern(var::ARG)),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::IMPL_SELF),
+                    ccx.atom(var::GENERIC),
+                    ccx.atom(var::ARG),
                 )),
                 Expr::Term(type_substitution(
                     ccx,
-                    var(ccx.intern(var::SELF)),
-                    var(ccx.intern(var::IMPL_SELF)),
-                    var(ccx.intern(var::VALUE)),
-                    var(ccx.intern(var::GENERIC)),
-                    var(ccx.intern(var::ARG)),
-                    var(ccx.intern(var::SUBSTITUTED)),
+                    ccx.atom(var::SELF),
+                    ccx.atom(var::IMPL_SELF),
+                    ccx.atom(var::VALUE),
+                    ccx.atom(var::GENERIC),
+                    ccx.atom(var::ARG),
+                    ccx.atom(var::SUBSTITUTED),
                 )),
             ])),
         },
@@ -543,20 +531,20 @@ pub(in crate::logic) fn impl_self_match_query<'cx>(ccx: &'cx CommonCx) -> Expr<L
     Expr::And(vec![
         Expr::Term(impl_self_match(
             ccx,
-            var(ccx.intern(var::SELF)),
-            var(ccx.intern(var::IMPL_SELF)),
+            ccx.atom(var::SELF),
+            ccx.atom(var::IMPL_SELF),
         )),
         Expr::Term(type_shape(
             ccx,
-            var(ccx.intern(var::SELF)),
+            ccx.atom(var::SELF),
             type_shape_mode(ccx, TypeShapeMode::Concrete),
-            var(ccx.intern(var::SHAPE)),
+            ccx.atom(var::SHAPE),
         )),
         Expr::Term(type_shape(
             ccx,
-            var(ccx.intern(var::IMPL_SELF)),
+            ccx.atom(var::IMPL_SELF),
             type_shape_mode(ccx, TypeShapeMode::ImplPattern),
-            var(ccx.intern(var::SHAPE)),
+            ccx.atom(var::SHAPE),
         )),
     ])
 }
@@ -578,8 +566,8 @@ fn projection_candidate<'cx>(
     assoc: LogicTerm<'cx>,
     trait_: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::PROJECTION_CANDIDATE),
+    ccx.term(
+        pred::PROJECTION_CANDIDATE,
         vec![projection, self_, assoc, trait_],
     )
 }
@@ -601,8 +589,8 @@ fn projection_match<'cx>(
     assoc: LogicTerm<'cx>,
     trait_: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::PROJECTION_MATCH),
+    ccx.term(
+        pred::PROJECTION_MATCH,
         vec![projection, self_, assoc, trait_],
     )
 }
@@ -626,8 +614,8 @@ fn projection_normalizes_to<'cx>(
     trait_: LogicTerm<'cx>,
     value_ty: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::PROJECTION_NORMALIZES_TO),
+    ccx.term(
+        pred::PROJECTION_NORMALIZES_TO,
         vec![projection, self_, assoc, trait_, value_ty],
     )
 }
@@ -649,8 +637,8 @@ fn explicit_projection_obligation<'cx>(
     assoc: LogicTerm<'cx>,
     trait_: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::EXPLICIT_PROJECTION_OBLIGATION),
+    ccx.term(
+        pred::EXPLICIT_PROJECTION_OBLIGATION,
         vec![projection, self_, assoc, trait_],
     )
 }
@@ -672,8 +660,8 @@ fn impl_assoc_type<'cx>(
     assoc: LogicTerm<'cx>,
     value_ty: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::IMPL_ASSOC_TYPE),
+    ccx.term(
+        pred::IMPL_ASSOC_TYPE,
         vec![impl_self, trait_, assoc, value_ty],
     )
 }
@@ -691,10 +679,7 @@ fn impl_self_match<'cx>(
     projection_self: LogicTerm<'cx>,
     impl_self: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::IMPL_SELF_MATCH),
-        vec![projection_self, impl_self],
-    )
+    ccx.term(pred::IMPL_SELF_MATCH, vec![projection_self, impl_self])
 }
 
 /// * projection_self - Candidate self type from a projection match
@@ -709,8 +694,8 @@ fn impl_self_match_candidate<'cx>(
     projection_self: LogicTerm<'cx>,
     impl_self: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::IMPL_SELF_MATCH_CANDIDATE),
+    ccx.term(
+        pred::IMPL_SELF_MATCH_CANDIDATE,
         vec![projection_self, impl_self],
     )
 }
@@ -732,8 +717,8 @@ fn type_binding<'cx>(
     generic: LogicTerm<'cx>,
     arg: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::TYPE_BINDING),
+    ccx.term(
+        pred::TYPE_BINDING,
         vec![projection_self, impl_self, generic, arg],
     )
 }
@@ -760,8 +745,8 @@ fn type_substitution<'cx>(
     arg: LogicTerm<'cx>,
     substituted: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::TYPE_SUBSTITUTION),
+    ccx.term(
+        pred::TYPE_SUBSTITUTION,
         vec![
             projection_self,
             impl_self,
@@ -788,10 +773,7 @@ fn projection_obligation<'cx>(
     self_: LogicTerm<'cx>,
     assoc: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(
-        ccx.intern(pred::PROJECTION_OBLIGATION),
-        vec![projection, self_, assoc],
-    )
+    ccx.term(pred::PROJECTION_OBLIGATION, vec![projection, self_, assoc])
 }
 
 /// * subject - Type being constrained by the bound, such as `T`
@@ -807,5 +789,5 @@ fn trait_bound<'cx>(
     subject: LogicTerm<'cx>,
     trait_: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx.intern(pred::TRAIT_BOUND), vec![subject, trait_])
+    ccx.term(pred::TRAIT_BOUND, vec![subject, trait_])
 }

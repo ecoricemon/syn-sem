@@ -1,7 +1,7 @@
 //! Logic rules and predicates for subject type equality resolution.
 
 use super::{
-    atom::{term, type_id, type_subject, var, LogicAtom, LogicClause, LogicTerm},
+    atom::{type_id, type_subject, CreateTerm, LogicAtom, LogicClause, LogicTerm},
     equality::{same_type, same_type_rules, SameTypeRules},
     symbol::{pred, var},
 };
@@ -31,18 +31,10 @@ const SUBJECT_TYPE_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
 pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> Vec<LogicClause<'cx>> {
     let mut rules = same_type_rules(ccx, SUBJECT_TYPE_SAME_TYPE_RULES);
     rules.push(Clause {
-        head: resolved_type(
-            ccx,
-            var(ccx.intern(var::SUBJECT)),
-            var(ccx.intern(var::TYPE)),
-        ),
+        head: resolved_type(ccx, ccx.atom(var::SUBJECT), ccx.atom(var::TYPE)),
         body: Some(Expr::And(vec![
-            Expr::Term(same_type(
-                ccx,
-                var(ccx.intern(var::SUBJECT)),
-                var(ccx.intern(var::TYPE)),
-            )),
-            Expr::Term(type_candidate(ccx, var(ccx.intern(var::TYPE)))),
+            Expr::Term(same_type(ccx, ccx.atom(var::SUBJECT), ccx.atom(var::TYPE))),
+            Expr::Term(type_candidate(ccx, ccx.atom(var::TYPE))),
         ])),
     });
     rules
@@ -94,7 +86,7 @@ pub(in crate::logic) fn resolved_type_query<'cx>(
     Expr::Term(resolved_type(
         ccx,
         type_subject(ccx, subject),
-        var(ccx.intern(var::TYPE)),
+        ccx.atom(var::TYPE),
     ))
 }
 
@@ -109,7 +101,7 @@ fn resolved_type<'cx>(
     subject: LogicTerm<'cx>,
     ty: LogicTerm<'cx>,
 ) -> LogicTerm<'cx> {
-    term(ccx.intern(pred::RESOLVED_TYPE), vec![subject, ty])
+    ccx.term(pred::RESOLVED_TYPE, vec![subject, ty])
 }
 
 /// * ty - Concrete inference type
@@ -119,5 +111,5 @@ fn resolved_type<'cx>(
 /// * Input - `ty = ty0`
 /// * Output - `#type_candidate(ty0)`
 fn type_candidate<'cx>(ccx: &'cx CommonCx, ty: LogicTerm<'cx>) -> LogicTerm<'cx> {
-    term(ccx.intern(pred::TYPE_CANDIDATE), vec![ty])
+    ccx.term(pred::TYPE_CANDIDATE, vec![ty])
 }

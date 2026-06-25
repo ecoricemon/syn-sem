@@ -1,19 +1,27 @@
 //! Logic shape encoding for inference types.
 
 use crate::{
-    logic::term::{self, symbol::func},
+    logic::term::{self, TypeShapeMode},
     ArrayLen, ConstArg, GenericArg, InferTypes, Lit, PathType, PathTypeResolution, Type, TypeId,
 };
-use logic_eval::Term;
-use syn_sem_common::{intern_prefixed_number, CommonCx};
-use syn_sem_name::DefId;
+use syn_sem_common::{CommonCx, Map};
 
-type LogicTerm<'cx> = Term<term::LogicAtom<'cx>>;
+type LogicTerm<'cx> = term::LogicTerm<'cx>;
 
 pub(in crate::logic) struct TypeShape<'cx> {
     pub(in crate::logic) shape: LogicTerm<'cx>,
-    pub(in crate::logic) generic_vars: Vec<(term::LogicAtom<'cx>, TypeId)>,
-    pub(in crate::logic) concrete_terms: Vec<(LogicTerm<'cx>, TypeId)>,
+    /// Type ids recoverable from subterms emitted while building `shape`.
+    ///
+    /// Logic answers can bind shape variables to structural terms such as `#primitive(u32)` or
+    /// `#generic_param(#def(U))`. This map keeps the bridge back to the inference arena so answer
+    /// terms can be interpreted as type ids. If one shape contains the same term more than once,
+    /// the first type id is used as the representative.
+    ///
+    /// Keep this map attached to one encoded shape. The same structural term can appear while
+    /// encoding different root types, and a root-level map would lose which shape produced that
+    /// term. Within one shape, duplicate terms are equivalent for shape matching, so choosing one
+    /// representative type id is enough to materialize the matched type component.
+    pub(in crate::logic) term_types: Map<LogicTerm<'cx>, TypeId>,
 }
 
 pub(in crate::logic) struct TypeShapeEncoder<'a, 'cx> {
@@ -26,72 +34,84 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         Self { ccx, types }
     }
 
+    /// Encodes a type as the structural term used by `#type_shape`.
+    ///
+    /// # [`TypeShapeMode::Concrete`]
+    ///
+    /// Generic parameters stay as concrete syntax-facing type components instead of becoming logic
+    /// variables.
+    ///
+    /// For example, given this Rust code will be encoded:
+    /// ```text
+    /// <Vec<u32> as Iterator>::Item ▸ #path(#def(Vec), #arg(#primitive(u32)))
+    /// struct S<U: Identity> {
+    ///     f: <Vec<U> as Identity>::Output, ▸ #path(#def(Vec), #arg(#generic_param(#def(U))))
+    /// }
+    /// ```
+    ///
+    /// # [`TypeShapeMode::ImplPattern`]
+    ///
+    /// Generic parameters from an impl self type become logic variables so they can match concrete
+    /// projection self components.
+    ///
+    /// For example, given this Rust code will be encoded:
+    /// ```text
+    /// impl<T> Iterator for Vec<T> { ▸ #path(#def(Vec), #arg($G_T))
+    ///     type Item = T;
+    /// }
+    /// ```
     pub(in crate::logic) fn encode(
         &self,
         ty: TypeId,
-        mode: term::TypeShapeMode,
+        mode: TypeShapeMode,
     ) -> Option<TypeShape<'cx>> {
-        let mut generic_vars = Vec::new();
-        let mut concrete_terms = Vec::new();
-        let shape = self.type_term(ty, mode, &mut generic_vars, &mut concrete_terms)?;
-        Some(TypeShape {
-            shape,
-            generic_vars,
-            concrete_terms,
-        })
+        let mut term_types = Map::default();
+        let shape = self.type_term(ty, mode, &mut term_types)?;
+        Some(TypeShape { shape, term_types })
     }
 
     fn type_term(
         &self,
         ty: TypeId,
-        mode: term::TypeShapeMode,
-        generic_vars: &mut Vec<(term::LogicAtom<'cx>, TypeId)>,
-        concrete_terms: &mut Vec<(LogicTerm<'cx>, TypeId)>,
+        mode: TypeShapeMode,
+        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
     ) -> Option<LogicTerm<'cx>> {
-        if mode == term::TypeShapeMode::ImplPattern {
-            if let Some(def) = Self::generic_def(self.types, ty) {
-                return Some(Self::generic_var(self.ccx, def, ty, generic_vars));
+        if mode == TypeShapeMode::ImplPattern {
+            if let Some(def) = self.types.generic_def(ty) {
+                let term = term::shape_generic_var(self.ccx, def);
+                term_types.entry(term.clone()).or_insert(ty);
+                return Some(term);
             }
         }
 
         let term = match &self.types[ty] {
-            Type::Array { elem, len } => Some(self.logic_term(
-                func::ARRAY,
-                vec![
-                    self.type_term(*elem, mode, generic_vars, concrete_terms)?,
-                    self.array_len_term(*len),
-                ],
+            Type::Array { elem, len } => Some(term::shape_array(
+                self.ccx,
+                self.type_term(*elem, mode, term_types)?,
+                self.array_len_term(*len),
             )),
-            Type::Infer => Some(self.logic_term(func::INFER, vec![self.type_id_term(ty)])),
-            Type::Primitive(primitive) => Some(self.primitive_term(*primitive)),
-            Type::Path(path) => self.path_term(path, mode, generic_vars, concrete_terms),
+            Type::Infer => Some(term::shape_infer(self.ccx, ty)),
+            Type::Primitive(primitive) => Some(term::shape_primitive(self.ccx, *primitive)),
+            Type::Path(path) => self.path_term(path, mode, term_types),
             Type::Reference { elem, is_mut } => {
-                let elem = self.type_term(*elem, mode, generic_vars, concrete_terms)?;
-                if *is_mut {
-                    Some(self.logic_term(func::REF, vec![self.logic_term(func::MUT, vec![elem])]))
-                } else {
-                    Some(self.logic_term(func::REF, vec![elem]))
-                }
+                let elem = self.type_term(*elem, mode, term_types)?;
+                Some(term::shape_reference(self.ccx, elem, *is_mut))
             }
-            Type::Slice { elem } => Some(self.logic_term(
-                func::SLICE,
-                vec![self.type_term(*elem, mode, generic_vars, concrete_terms)?],
+            Type::Slice { elem } => Some(term::shape_slice(
+                self.ccx,
+                self.type_term(*elem, mode, term_types)?,
             )),
             Type::Tuple { elems } => {
                 let elems = elems
                     .iter()
-                    .map(|elem| self.type_term(*elem, mode, generic_vars, concrete_terms))
+                    .map(|elem| self.type_term(*elem, mode, term_types))
                     .collect::<Option<Vec<_>>>()?;
-                Some(self.logic_term(func::TUPLE, elems))
+                Some(term::shape_tuple(self.ccx, elems))
             }
         }?;
 
-        if mode == term::TypeShapeMode::Concrete
-            && concrete_terms
-                .iter()
-                .all(|(candidate, _)| candidate != &term)
-        {
-            concrete_terms.push((term.clone(), ty));
+        if mode == TypeShapeMode::Concrete {
+            term_types.entry(term.clone()).or_insert(ty);
         }
         Some(term)
     }
@@ -99,16 +119,12 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
     fn path_term(
         &self,
         path: &PathType<'cx>,
-        mode: term::TypeShapeMode,
-        generic_vars: &mut Vec<(term::LogicAtom<'cx>, TypeId)>,
-        concrete_terms: &mut Vec<(LogicTerm<'cx>, TypeId)>,
+        mode: TypeShapeMode,
+        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
     ) -> Option<LogicTerm<'cx>> {
         let def = match &path.resolution {
-            PathTypeResolution::GenericParam(def) if mode == term::TypeShapeMode::Concrete => {
-                return Some(self.logic_term(
-                    func::GENERIC_PARAM,
-                    vec![self.logic_term(func::DEF, vec![self.def_id_term(*def)])],
-                ));
+            PathTypeResolution::GenericParam(def) if mode == TypeShapeMode::Concrete => {
+                return Some(term::shape_generic_param(self.ccx, *def));
             }
             PathTypeResolution::Nominal(def) => *def,
             PathTypeResolution::GenericParam(_)
@@ -121,37 +137,29 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
             .segments
             .iter()
             .flat_map(|segment| &segment.args)
-            .map(|arg| self.generic_arg_term(arg, mode, generic_vars, concrete_terms))
+            .map(|arg| self.generic_arg_term(arg, mode, term_types))
             .collect::<Option<Vec<_>>>()?;
-        Some(self.logic_term(
-            func::PATH,
-            vec![
-                self.logic_term(func::DEF, vec![self.def_id_term(def)]),
-                self.logic_term(func::ARG, args),
-            ],
-        ))
+        Some(term::shape_path(self.ccx, def, args))
     }
 
     fn generic_arg_term(
         &self,
         arg: &GenericArg<'cx>,
-        mode: term::TypeShapeMode,
-        generic_vars: &mut Vec<(term::LogicAtom<'cx>, TypeId)>,
-        concrete_terms: &mut Vec<(LogicTerm<'cx>, TypeId)>,
+        mode: TypeShapeMode,
+        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
     ) -> Option<LogicTerm<'cx>> {
         match arg {
-            GenericArg::Type(ty) => self.type_term(*ty, mode, generic_vars, concrete_terms),
+            GenericArg::Type(ty) => self.type_term(*ty, mode, term_types),
             GenericArg::Const(arg) => self.const_arg_term(arg),
-            GenericArg::AssocType { name, ty } => Some(self.logic_term(
-                func::ASSOC_TYPE_ARG,
-                vec![
-                    self.name_term(name.as_ref()),
-                    self.type_term(*ty, mode, generic_vars, concrete_terms)?,
-                ],
+            GenericArg::AssocType { name, ty } => Some(term::shape_assoc_type_arg(
+                self.ccx,
+                name.as_ref(),
+                self.type_term(*ty, mode, term_types)?,
             )),
-            GenericArg::AssocConst { name, value } => Some(self.logic_term(
-                func::ASSOC_CONST_ARG,
-                vec![self.name_term(name.as_ref()), self.const_arg_term(value)?],
+            GenericArg::AssocConst { name, value } => Some(term::shape_assoc_const_arg(
+                self.ccx,
+                name.as_ref(),
+                self.const_arg_term(value)?,
             )),
             GenericArg::Constraint { .. } | GenericArg::Unsupported => None,
         }
@@ -159,120 +167,18 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
 
     fn const_arg_term(&self, arg: &ConstArg<'cx>) -> Option<LogicTerm<'cx>> {
         match arg {
-            ConstArg::Lit(Lit::Int(value)) => Some(self.logic_term(
-                func::CONST_INT,
-                vec![self.logic_term(value.as_ref(), Vec::new())],
-            )),
-            ConstArg::Lit(Lit::Float(value)) => Some(self.logic_term(
-                func::CONST_FLOAT,
-                vec![self.logic_term(value.as_ref(), Vec::new())],
-            )),
-            ConstArg::Lit(Lit::Bool(value)) => Some(self.logic_term(
-                func::CONST_BOOL,
-                vec![self.logic_term(if *value { "true" } else { "false" }, Vec::new())],
-            )),
+            ConstArg::Lit(Lit::Int(value)) => Some(term::shape_const_int(self.ccx, value.as_ref())),
+            ConstArg::Lit(Lit::Float(value)) => {
+                Some(term::shape_const_float(self.ccx, value.as_ref()))
+            }
+            ConstArg::Lit(Lit::Bool(value)) => Some(term::shape_const_bool(self.ccx, *value)),
             ConstArg::Path(_) | ConstArg::Expr(_) => None,
         }
     }
 
     fn array_len_term(&self, len: ArrayLen) -> LogicTerm<'cx> {
         match len {
-            ArrayLen::Expr(expr) => self.logic_term(func::LEN_EXPR, vec![self.expr_id_term(expr)]),
+            ArrayLen::Expr(expr) => term::shape_len_expr(self.ccx, expr),
         }
-    }
-
-    fn generic_var(
-        ccx: &'cx CommonCx,
-        def: DefId,
-        generic: TypeId,
-        vars: &mut Vec<(term::LogicAtom<'cx>, TypeId)>,
-    ) -> LogicTerm<'cx> {
-        let var = Self::prefixed_number_atom(ccx, "$G", def.index());
-        if vars.iter().all(|(candidate, _)| *candidate != var) {
-            vars.push((var, generic));
-        }
-        Term {
-            functor: var,
-            args: Vec::new(),
-        }
-    }
-
-    fn type_id_term(&self, ty: TypeId) -> LogicTerm<'cx> {
-        self.prefixed_number_term("ty", ty.index())
-    }
-
-    fn def_id_term(&self, def: DefId) -> LogicTerm<'cx> {
-        self.prefixed_number_term("def", def.index())
-    }
-
-    fn expr_id_term(&self, expr: syn_sem_hir::ExprId) -> LogicTerm<'cx> {
-        self.prefixed_number_term("expr", expr.index())
-    }
-
-    fn primitive_term(&self, primitive: crate::PrimitiveType) -> LogicTerm<'cx> {
-        self.logic_term(
-            func::PRIMITIVE,
-            vec![self.logic_term(Self::primitive_name(primitive), Vec::new())],
-        )
-    }
-
-    fn name_term(&self, name: &str) -> LogicTerm<'cx> {
-        self.logic_term(func::NAME, vec![self.logic_term(name, Vec::new())])
-    }
-
-    fn primitive_name(primitive: crate::PrimitiveType) -> &'static str {
-        match primitive {
-            crate::PrimitiveType::AbstractInt => "abstract_int",
-            crate::PrimitiveType::AbstractFloat => "abstract_float",
-            crate::PrimitiveType::Bool => "bool",
-            crate::PrimitiveType::Char => "char",
-            crate::PrimitiveType::Str => "str",
-            crate::PrimitiveType::I8 => "i8",
-            crate::PrimitiveType::I16 => "i16",
-            crate::PrimitiveType::I32 => "i32",
-            crate::PrimitiveType::I64 => "i64",
-            crate::PrimitiveType::I128 => "i128",
-            crate::PrimitiveType::Isize => "isize",
-            crate::PrimitiveType::U8 => "u8",
-            crate::PrimitiveType::U16 => "u16",
-            crate::PrimitiveType::U32 => "u32",
-            crate::PrimitiveType::U64 => "u64",
-            crate::PrimitiveType::U128 => "u128",
-            crate::PrimitiveType::Usize => "usize",
-            crate::PrimitiveType::F32 => "f32",
-            crate::PrimitiveType::F64 => "f64",
-        }
-    }
-
-    fn prefixed_number_term(&self, prefix: &str, number: usize) -> LogicTerm<'cx> {
-        Term {
-            functor: Self::prefixed_number_atom(self.ccx, prefix, number),
-            args: Vec::new(),
-        }
-    }
-
-    fn prefixed_number_atom(
-        ccx: &'cx CommonCx,
-        prefix: &str,
-        number: usize,
-    ) -> term::LogicAtom<'cx> {
-        intern_prefixed_number(ccx, prefix, number)
-    }
-
-    fn logic_term(&self, functor: &str, args: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
-        Term {
-            functor: self.ccx.intern(functor),
-            args,
-        }
-    }
-
-    fn generic_def(types: &InferTypes<'cx>, ty: TypeId) -> Option<DefId> {
-        let Type::Path(path) = &types[ty] else {
-            return None;
-        };
-        let PathTypeResolution::GenericParam(def) = path.resolution else {
-            return None;
-        };
-        Some(def)
     }
 }

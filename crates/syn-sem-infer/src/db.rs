@@ -17,7 +17,7 @@ use crate::{
     ProjectionNormalizationResult, ProjectionType, QSelf, Type, TypeId, TypeParamBound,
 };
 use std::ops::Index;
-use syn_sem_common::{CommonCx, Map};
+use syn_sem_common::{CommonCx, Map, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb};
 
@@ -200,10 +200,9 @@ impl<'cx> InferDb<'cx> {
     }
 
     fn normalized_type_inner(&mut self, ty: TypeId, active_ids: &mut Vec<TypeId>) -> TypeId {
-        if active_ids.contains(&ty) {
+        if !active_ids.push_unique(ty) {
             return ty;
         }
-        active_ids.push(ty);
 
         match self.projection_normalization(ty) {
             ProjectionNormalizationResult::Known(value_ty) if value_ty != ty => {
@@ -1349,6 +1348,101 @@ mod tests {
     }
 
     #[test]
+    fn reuses_representative_type_for_repeated_concrete_shape_terms() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Pair<K, V>;
+
+            trait First {
+                type Output;
+            }
+
+            impl<K, V> First for Pair<K, V> {
+                type Output = K;
+            }
+
+            struct Result {
+                field: <Pair<u32, u32> as First>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [field_ty_id] = fields.as_slice() else {
+            panic!("Result should have one field type");
+        };
+        let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
+        let [first_binding, second_binding] = infer.projections.type_bindings.as_slice() else {
+            panic!("Pair<K, V> should create two type bindings");
+        };
+        assert_eq!(
+            infer[first_binding.arg],
+            Type::Primitive(PrimitiveType::U32)
+        );
+        assert_eq!(
+            infer[second_binding.arg],
+            Type::Primitive(PrimitiveType::U32)
+        );
+
+        let normalized = infer
+            .normalized_projection_type(projection)
+            .expect("projection should normalize through repeated concrete shape terms");
+        assert_eq!(infer[normalized], Type::Primitive(PrimitiveType::U32));
+    }
+
+    #[test]
+    fn keeps_type_shape_term_bindings_local_to_each_projection_self() {
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct Pair<K, V>;
+
+            trait First {
+                type Output;
+            }
+
+            impl<K, V> First for Pair<K, V> {
+                type Output = K;
+            }
+
+            struct Result {
+                first: <Pair<u32, bool> as First>::Output,
+                second: <Pair<bool, u32> as First>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Result");
+        let [first_ty_id, second_ty_id] = fields.as_slice() else {
+            panic!("Result should have two field types");
+        };
+        let first_projection = infer.type_for_hir_type(*first_ty_id).unwrap();
+        let second_projection = infer.type_for_hir_type(*second_ty_id).unwrap();
+        let first_normalization = infer
+            .projections
+            .normalizations_for(first_projection)
+            .next()
+            .expect("first projection should normalize");
+        let second_normalization = infer
+            .projections
+            .normalizations_for(second_projection)
+            .next()
+            .expect("second projection should normalize");
+        let first_args = path_type_args(&infer, first_normalization.self_, "Pair");
+        let second_args = path_type_args(&infer, second_normalization.self_, "Pair");
+
+        assert_eq!(first_normalization.value_ty, first_args[0]);
+        assert_eq!(second_normalization.value_ty, second_args[0]);
+    }
+
+    #[test]
     fn rejects_repeated_impl_self_generic_mismatch() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
@@ -1935,6 +2029,26 @@ mod tests {
             panic!("{expected_name}<T> should have one type argument");
         };
         assert_eq!(infer[*arg], Type::Primitive(expected_arg));
+    }
+
+    fn path_type_args(infer: &InferDb<'_>, ty: TypeId, expected_name: &str) -> Vec<TypeId> {
+        let Type::Path(path) = &infer[ty] else {
+            panic!("{expected_name}<...> should lower to path type");
+        };
+        let [segment] = path.path.segments.as_slice() else {
+            panic!("{expected_name}<...> should have one path segment");
+        };
+        assert_eq!(segment.name.as_ref(), expected_name);
+        segment
+            .args
+            .iter()
+            .map(|arg| {
+                let GenericArg::Type(ty) = arg else {
+                    panic!("{expected_name}<...> should have only type arguments");
+                };
+                *ty
+            })
+            .collect()
     }
 
     fn assert_primitive_type(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {

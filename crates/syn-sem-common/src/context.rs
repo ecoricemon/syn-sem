@@ -294,6 +294,7 @@ pub fn absolute_file_path(file_path: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+/// Interns a string built from `prefix` followed by `number`.
 pub fn intern_prefixed_number<'cx>(
     ccx: &'cx CommonCx,
     prefix: &str,
