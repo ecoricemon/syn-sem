@@ -2,8 +2,7 @@
 
 use crate::{TypeId, TypeSubject};
 use logic_eval::{Clause, Term, VAR_PREFIX};
-use std::fmt::{self, Display};
-use syn_sem_common::{CommonCx, InternedStr};
+use syn_sem_common::{intern_prefixed_number, CommonCx, InternedStr};
 use syn_sem_name::DefId;
 
 const TYPE_ID_PREFIX: &str = "ty";
@@ -94,24 +93,6 @@ pub(in crate::logic) fn term<'cx>(
     args: Vec<LogicTerm<'cx>>,
 ) -> LogicTerm<'cx> {
     Term { functor, args }
-}
-
-fn intern_prefixed_number<'cx>(ccx: &'cx CommonCx, prefix: &str, number: usize) -> LogicAtom<'cx> {
-    struct PrefixedNumber<'a> {
-        prefix: &'a str,
-        number: usize,
-    }
-
-    impl Display for PrefixedNumber<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str(self.prefix)?;
-            Display::fmt(&self.number, f)
-        }
-    }
-
-    let len = prefix.len() + number.checked_ilog10().unwrap_or(0) as usize + 1;
-    ccx.intern_display(&PrefixedNumber { prefix, number }, len)
-        .unwrap()
 }
 
 pub(in crate::logic) type LogicAtom<'cx> = InternedStr<'cx>;

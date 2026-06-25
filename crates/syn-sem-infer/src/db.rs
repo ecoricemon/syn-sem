@@ -659,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_associated_type_targets_as_projection_obligations() {
+    fn classifies_plain_associated_type_targets_without_solver_obligations() {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let item = ccx.intern("Item");
@@ -681,6 +681,7 @@ mod tests {
                 trait_: None,
             })
         );
+        assert!(infer.projections.obligations.is_empty());
     }
 
     #[test]
@@ -869,7 +870,7 @@ mod tests {
             &[ProjectionObligation {
                 projection,
                 assoc: item_def,
-                self_: Some(qself.self_),
+                self_: qself.self_,
                 trait_: None,
             }]
         );

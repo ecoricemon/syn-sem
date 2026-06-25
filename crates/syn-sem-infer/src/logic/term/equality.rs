@@ -24,7 +24,9 @@ pub(in crate::logic) struct SameTypeRules {
     pub(in crate::logic) transitive: bool,
 }
 
-/// Returns `same_type` closure rules over `type_equal` facts.
+/// * `#same_type($Left, $Right) :- #type_equal($Left, $Right).`
+/// * `#same_type($Type, $Type).`
+/// * `#same_type($Left, $Right) :- #type_equal($Right, $Left).`
 pub(in crate::logic) fn same_type_rules<'cx>(
     ccx: &'cx CommonCx,
     rules: SameTypeRules,

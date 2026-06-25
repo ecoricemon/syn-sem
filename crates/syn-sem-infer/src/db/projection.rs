@@ -16,11 +16,12 @@ impl ProjectionCollector {
                 let PathTypeResolution::Projection(projection) = &path_ty.resolution else {
                     return None;
                 };
+                let self_ = projection.self_?;
 
                 Some(ProjectionObligation {
                     projection: ty_id,
                     assoc: projection.assoc,
-                    self_: projection.self_,
+                    self_,
                     trait_: projection.trait_,
                 })
             })
@@ -143,8 +144,8 @@ pub(crate) struct ProjectionObligation {
     /// such as `Iterator::Item`. The concrete trait member definition is selected later in
     /// [`ProjectionMatch`].
     pub(crate) assoc: DefId,
-    /// Self type for the projection, when represented.
-    pub(crate) self_: Option<TypeId>,
+    /// Self type for the projection.
+    pub(crate) self_: TypeId,
     /// Trait type for the projection, when represented.
     pub(crate) trait_: Option<TypeId>,
 }

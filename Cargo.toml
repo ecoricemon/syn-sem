@@ -10,9 +10,9 @@ syn-sem-hir = { path = "crates/syn-sem-hir" }
 syn-sem-infer = { path = "crates/syn-sem-infer" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }
 syn-locator = "0.2.0"
-logic-eval = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "75efcc0b20122790ab988af9543999216aa07cc2" }
-logic-eval-util = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "75efcc0b20122790ab988af9543999216aa07cc2" }
-any-intern = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "75efcc0b20122790ab988af9543999216aa07cc2" }
+logic-eval = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "4f166160354485b9efff4498412ade1675698366" }
+logic-eval-util = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "4f166160354485b9efff4498412ade1675698366" }
+any-intern = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "4f166160354485b9efff4498412ade1675698366" }
 my-utils = "0.1.1"
 syn = "2.0.106"
 proc-macro2 = "1.0.91"

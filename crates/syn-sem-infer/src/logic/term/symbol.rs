@@ -6,11 +6,13 @@ pub(in crate::logic) mod func {
     pub(in crate::logic) const ARRAY: &str = "#array";
     pub(in crate::logic) const ASSOC_CONST_ARG: &str = "#assoc_const_arg";
     pub(in crate::logic) const ASSOC_TYPE_ARG: &str = "#assoc_type_arg";
+    pub(in crate::logic) const CONCRETE: &str = "#concrete";
     pub(in crate::logic) const CONST_BOOL: &str = "#const_bool";
     pub(in crate::logic) const CONST_FLOAT: &str = "#const_float";
     pub(in crate::logic) const CONST_INT: &str = "#const_int";
     pub(in crate::logic) const DEF: &str = "#def";
     pub(in crate::logic) const GENERIC_PARAM: &str = "#generic_param";
+    pub(in crate::logic) const IMPL_PATTERN: &str = "#impl_pattern";
     pub(in crate::logic) const INFER: &str = "#infer";
     pub(in crate::logic) const LEN_EXPR: &str = "#len_expr";
     pub(in crate::logic) const MUT: &str = "#mut";
@@ -29,7 +31,6 @@ pub(in crate::logic) mod pred {
     pub(in crate::logic) const IMPL_ASSOC_TYPE: &str = "#impl_assoc_type";
     pub(in crate::logic) const IMPL_SELF_MATCH: &str = "#impl_self_match";
     pub(in crate::logic) const IMPL_SELF_MATCH_CANDIDATE: &str = "#impl_self_match_candidate";
-    pub(in crate::logic) const IMPL_SELF_UNIFIES: &str = "#impl_self_unifies";
     pub(in crate::logic) const PROJECTION_CANDIDATE: &str = "#projection_candidate";
     pub(in crate::logic) const PROJECTION_MATCH: &str = "#projection_match";
     pub(in crate::logic) const PROJECTION_NORMALIZES_TO: &str = "#projection_normalizes_to";
@@ -40,6 +41,7 @@ pub(in crate::logic) mod pred {
     pub(in crate::logic) const TYPE_BINDING: &str = "#type_binding";
     pub(in crate::logic) const TYPE_CANDIDATE: &str = "#type_candidate";
     pub(in crate::logic) const TYPE_EQUAL: &str = "#type_equal";
+    pub(in crate::logic) const TYPE_SHAPE: &str = "#type_shape";
     pub(in crate::logic) const TYPE_SUBSTITUTION: &str = "#type_substitution";
 }
 
@@ -59,4 +61,5 @@ pub(in crate::logic) mod var {
     pub(in crate::logic) const TRAIT: &str = "$Trait";
     pub(in crate::logic) const TYPE: &str = "$Type";
     pub(in crate::logic) const VALUE: &str = "$Value";
+    pub(in crate::logic) const SHAPE: &str = "$Shape";
 }

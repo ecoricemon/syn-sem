@@ -4,6 +4,7 @@ use super::{
     atom::{def_id, term, type_id, var, LogicAtom, LogicClause, LogicTerm},
     equality::{same_type, SameTypeRules},
     symbol::{pred, var},
+    type_shape, type_shape_mode, TypeShapeMode,
 };
 use crate::{
     AssocTypeImplFact, ImplSelfMatch, ImplSelfTypeArgBinding, ProjectionMatch,
@@ -122,6 +123,42 @@ pub(in crate::logic) fn impl_self_match_candidate_rules<'cx>(
                 ccx,
                 var(ccx.intern(var::TRAIT)),
                 var(ccx.intern(var::IMPL_TRAIT)),
+            )),
+        ])),
+    }]
+}
+
+/// * Rule - `#impl_self_match(Self, ImplSelf) :-
+///   #impl_self_match_candidate(Self, ImplSelf),
+///   #type_shape(Self, #concrete, Shape),
+///   #type_shape(ImplSelf, #impl_pattern, Shape).`
+///
+/// The shared `Shape` variable lets logic unification validate the projection self type against
+/// the impl-self pattern.
+pub(in crate::logic) fn impl_self_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx>; 1] {
+    [Clause {
+        head: impl_self_match(
+            ccx,
+            var(ccx.intern(var::SELF)),
+            var(ccx.intern(var::IMPL_SELF)),
+        ),
+        body: Some(Expr::And(vec![
+            Expr::Term(impl_self_match_candidate(
+                ccx,
+                var(ccx.intern(var::SELF)),
+                var(ccx.intern(var::IMPL_SELF)),
+            )),
+            Expr::Term(type_shape(
+                ccx,
+                var(ccx.intern(var::SELF)),
+                type_shape_mode(ccx, TypeShapeMode::Concrete),
+                var(ccx.intern(var::SHAPE)),
+            )),
+            Expr::Term(type_shape(
+                ccx,
+                var(ccx.intern(var::IMPL_SELF)),
+                type_shape_mode(ccx, TypeShapeMode::ImplPattern),
+                var(ccx.intern(var::SHAPE)),
             )),
         ])),
     }]
@@ -257,19 +294,12 @@ pub(in crate::logic) fn projection_normalization_rules<'cx>(
 /// * Input - `projection = ty0`, `self_ = ty1`, `assoc = def2`, `trait_ = None`
 /// * Output - `#projection_obligation(ty0, ty1, def2).`
 ///
-/// # Panics
-///
-/// Panics if `obligation` does not carry a projection self type. Callers should only pass
-/// obligations that can be represented as solver facts.
 pub(in crate::logic) fn projection_obligation_clause<'cx>(
     ccx: &'cx CommonCx,
     obligation: ProjectionObligation,
 ) -> LogicClause<'cx> {
     let projection = type_id(ccx, obligation.projection);
-    let self_ = obligation
-        .self_
-        .expect("projection obligation clause requires a projection self type");
-    let self_ = type_id(ccx, self_);
+    let self_ = type_id(ccx, obligation.self_);
     let assoc = def_id(ccx, obligation.assoc);
     if let Some(trait_) = obligation.trait_ {
         Clause {
@@ -507,21 +537,28 @@ pub(in crate::logic) fn projection_normalization_query<'cx>(
     ))
 }
 
-/// * projection_self - Candidate self type from a projection match
-/// * impl_self - Candidate self type from an impl-associated-type fact
-///
-/// # Examples
-///
-/// * Code - find impl headers whose assoc item and trait can match a projection
-/// * Output - `#impl_self_match_candidate($Self, $ImplSelf)`
-pub(in crate::logic) fn impl_self_match_candidate_query<'cx>(
-    ccx: &'cx CommonCx,
-) -> Expr<LogicAtom<'cx>> {
-    Expr::Term(impl_self_match_candidate(
-        ccx,
-        var(ccx.intern(var::SELF)),
-        var(ccx.intern(var::IMPL_SELF)),
-    ))
+/// * Output - `#impl_self_match($Self, $ImplSelf), #type_shape($Self, #concrete, $Shape),
+///   #type_shape($ImplSelf, #impl_pattern, $Shape)`
+pub(in crate::logic) fn impl_self_match_query<'cx>(ccx: &'cx CommonCx) -> Expr<LogicAtom<'cx>> {
+    Expr::And(vec![
+        Expr::Term(impl_self_match(
+            ccx,
+            var(ccx.intern(var::SELF)),
+            var(ccx.intern(var::IMPL_SELF)),
+        )),
+        Expr::Term(type_shape(
+            ccx,
+            var(ccx.intern(var::SELF)),
+            type_shape_mode(ccx, TypeShapeMode::Concrete),
+            var(ccx.intern(var::SHAPE)),
+        )),
+        Expr::Term(type_shape(
+            ccx,
+            var(ccx.intern(var::IMPL_SELF)),
+            type_shape_mode(ccx, TypeShapeMode::ImplPattern),
+            var(ccx.intern(var::SHAPE)),
+        )),
+    ])
 }
 
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
