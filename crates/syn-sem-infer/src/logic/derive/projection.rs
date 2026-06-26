@@ -15,7 +15,11 @@ use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult};
 
 type LogicTerm<'cx> = term::LogicTerm<'cx>;
 
-/// Uses [`ProjectionLogic`] at each solver-backed step, then stores the derived projection data.
+/// Normalizes associated type projections through trait bounds and impl associated type facts.
+///
+/// Trait-less projections use collected bounds to choose a trait candidate. For example,
+/// `<T>::Item` inside `struct S<T: Iterator>` is matched through the collected `T: Iterator` fact
+/// before the same impl-self matching and substitution pipeline runs.
 pub(crate) struct ProjectionDeriver<'a, 'cx> {
     projections: &'a mut ProjectionDb,
     types: &'a mut InferTypes<'cx>,
@@ -44,6 +48,27 @@ impl<'a, 'cx: 'a> ProjectionDeriver<'a, 'cx> {
         }
     }
 
+    /// Runs the associated type projection normalization pipeline.
+    ///
+    /// For example, given:
+    /// ```text
+    /// impl<T> Iterator for Vec<T> {
+    ///     type Item = T;
+    /// }
+    ///
+    /// struct Output {
+    ///     field: <Vec<u32> as Iterator>::Item,
+    /// }
+    /// ```
+    ///
+    /// this derives:
+    /// ```text
+    /// projection match:     <Vec<u32> as Iterator>::Item uses Iterator::Item
+    /// impl self match:      Vec<u32> matches Vec<T>
+    /// type binding:         T -> u32
+    /// type substitution:    Item = T becomes u32
+    /// normalization:        <Vec<u32> as Iterator>::Item -> u32
+    /// ```
     pub(crate) fn derive(&mut self) {
         let matches = self.derive_projection_matches();
         self.projections.matches.extend(matches);
@@ -476,8 +501,8 @@ struct ProjectionLogic<'a, 'cx> {
     types: &'a InferTypes<'cx>,
     trait_bound_facts: &'a [TraitBoundFact],
     assoc_type_impl_facts: &'a [AssocTypeImplFact],
-    concrete_shapes: Vec<(TypeId, TypeShape<'cx>)>,
-    impl_pattern_shapes: Vec<(TypeId, TypeShape<'cx>)>,
+    preserve_generic_shapes: Map<TypeId, TypeShape<'cx>>,
+    variable_generic_shapes: Map<TypeId, TypeShape<'cx>>,
     db: Database<term::LogicAtom<'cx>>,
 }
 
@@ -495,8 +520,8 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             types,
             trait_bound_facts,
             assoc_type_impl_facts,
-            concrete_shapes: Vec::new(),
-            impl_pattern_shapes: Vec::new(),
+            preserve_generic_shapes: Map::default(),
+            variable_generic_shapes: Map::default(),
             db: Database::default(),
         }
     }
@@ -557,8 +582,8 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     /// #impl_self_match($Self, $ImplSelf) :-
     ///   #impl_self_match_candidate($Self, $ImplSelf),
-    ///   #type_shape($Self, #concrete, $Shape),
-    ///   #type_shape($ImplSelf, #impl_pattern, $Shape).
+    ///   #type_shape($Self, #preserve_generics, $Shape),
+    ///   #type_shape($ImplSelf, #variable_generics, $Shape).
     /// #impl_self_match_candidate($Self, $ImplSelf) :-
     ///   #projection_match($Projection, $Self, $Assoc, $Trait),
     ///   #impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
@@ -569,8 +594,8 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ///
     /// #projection_match(projection, self, assoc, trait).
     /// #impl_assoc_type(impl_self, impl_trait, assoc, value).
-    /// #type_shape(self, #concrete, shape).
-    /// #type_shape(impl_self, #impl_pattern, shape).
+    /// #type_shape(self, #preserve_generics, shape).
+    /// #type_shape(impl_self, #variable_generics, shape).
     /// #type_equal(a, b).
     fn load_impl_self_matches(&mut self) {
         self.insert_impl_self_match_rules();
@@ -678,21 +703,20 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     fn insert_type_shapes(&mut self) {
         let encoder = TypeShapeEncoder::new(self.ccx, self.types);
-        let mut concrete_tys = Vec::new();
+        let mut preserve_generic_tys = Vec::new();
         for projection_match in &self.projections.matches {
-            concrete_tys.push_unique(projection_match.self_);
+            preserve_generic_tys.push_unique(projection_match.self_);
         }
-        for ty in concrete_tys {
-            let Some(shape) = encoder.encode(ty, TypeShapeMode::Concrete) else {
+        for ty in preserve_generic_tys {
+            let Some(shape) = encoder.encode(ty, TypeShapeMode::PreserveGenerics) else {
                 continue;
             };
-            let shape_term = shape.shape.clone();
-            self.concrete_shapes
-                .push_unique_by_key((ty, shape), |(ty, _)| *ty);
+            let shape_term = shape.term.clone();
+            self.preserve_generic_shapes.insert(ty, shape);
             self.db.insert_clause(term::type_shape_clause(
                 self.ccx,
                 ty,
-                TypeShapeMode::Concrete,
+                TypeShapeMode::PreserveGenerics,
                 shape_term,
             ));
         }
@@ -702,16 +726,15 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             impl_self_tys.push_unique(fact.impl_self);
         }
         for impl_self in impl_self_tys {
-            let Some(shape) = encoder.encode(impl_self, TypeShapeMode::ImplPattern) else {
+            let Some(shape) = encoder.encode(impl_self, TypeShapeMode::VariableGenerics) else {
                 continue;
             };
-            let shape_term = shape.shape.clone();
-            self.impl_pattern_shapes
-                .push_unique_by_key((impl_self, shape), |(ty, _)| *ty);
+            let shape_term = shape.term.clone();
+            self.variable_generic_shapes.insert(impl_self, shape);
             self.db.insert_clause(term::type_shape_clause(
                 self.ccx,
                 impl_self,
-                TypeShapeMode::ImplPattern,
+                TypeShapeMode::VariableGenerics,
                 shape_term,
             ));
         }
@@ -759,9 +782,9 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             let impl_self = answer
                 .get(var::IMPL_SELF)
                 .and_then(|term| term::type_id_from_term(&term));
-            let concrete_shape = answer.get(var::SHAPE);
-            let (Some(projection_self), Some(impl_self), Some(concrete_shape)) =
-                (projection_self, impl_self, concrete_shape)
+            let projection_self_shape = answer.get(var::SHAPE);
+            let (Some(projection_self), Some(impl_self), Some(projection_self_shape)) =
+                (projection_self, impl_self, projection_self_shape)
             else {
                 continue;
             };
@@ -771,7 +794,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
                 impl_self,
             };
             impl_self_matches.push_unique(match_);
-            for binding in self.impl_self_type_arg_bindings(match_, &concrete_shape) {
+            for binding in self.impl_self_type_arg_bindings(match_, &projection_self_shape) {
                 type_bindings.push_unique(binding);
             }
         }
@@ -785,27 +808,22 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn impl_self_type_arg_bindings(
         &self,
         match_: ImplSelfMatch,
-        concrete_shape: &LogicTerm<'cx>,
+        projection_self_shape: &LogicTerm<'cx>,
     ) -> Vec<ImplSelfTypeArgBinding> {
-        let Some(concrete_shape_info) = self
-            .concrete_shapes
-            .iter()
-            .find_map(|(self_, shape)| (*self_ == match_.projection_self).then_some(shape))
+        let Some(preserve_generic_shape) =
+            self.preserve_generic_shapes.get(&match_.projection_self)
         else {
             return Vec::new();
         };
-        let Some(impl_pattern_shape_info) = self
-            .impl_pattern_shapes
-            .iter()
-            .find_map(|(impl_self, shape)| (*impl_self == match_.impl_self).then_some(shape))
+        let Some(variable_generic_shape) = self.variable_generic_shapes.get(&match_.impl_self)
         else {
             return Vec::new();
         };
 
         let mut var_bindings = Vec::new();
         visit_left_var(
-            &impl_pattern_shape_info.shape,
-            concrete_shape,
+            &variable_generic_shape.term,
+            projection_self_shape,
             &mut |var, rhs| {
                 var_bindings.push((var, rhs));
             },
@@ -815,11 +833,11 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         for (var, rhs) in var_bindings {
             let var_term = term::atom(var);
             let Some(generic) =
-                Self::type_id_for_logic_term(&var_term, &impl_pattern_shape_info.term_types)
+                Self::type_id_for_logic_term(&var_term, &variable_generic_shape.term_types)
             else {
                 continue;
             };
-            let Some(arg) = Self::type_id_for_logic_term(rhs, &concrete_shape_info.term_types)
+            let Some(arg) = Self::type_id_for_logic_term(rhs, &preserve_generic_shape.term_types)
             else {
                 continue;
             };

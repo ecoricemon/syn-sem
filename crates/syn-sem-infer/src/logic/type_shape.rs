@@ -9,7 +9,7 @@ use syn_sem_common::{CommonCx, Map};
 type LogicTerm<'cx> = term::LogicTerm<'cx>;
 
 pub(in crate::logic) struct TypeShape<'cx> {
-    pub(in crate::logic) shape: LogicTerm<'cx>,
+    pub(in crate::logic) term: LogicTerm<'cx>,
     /// Type ids recoverable from subterms emitted while building `shape`.
     ///
     /// Logic answers can bind shape variables to structural terms such as `#primitive(u32)` or
@@ -36,9 +36,9 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
 
     /// Encodes a type as the structural term used by `#type_shape`.
     ///
-    /// # [`TypeShapeMode::Concrete`]
+    /// # [`TypeShapeMode::PreserveGenerics`]
     ///
-    /// Generic parameters stay as concrete syntax-facing type components instead of becoming logic
+    /// Generic parameters stay as syntax-facing type components instead of becoming logic
     /// variables.
     ///
     /// For example, given this Rust code will be encoded:
@@ -49,7 +49,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
     /// }
     /// ```
     ///
-    /// # [`TypeShapeMode::ImplPattern`]
+    /// # [`TypeShapeMode::VariableGenerics`]
     ///
     /// Generic parameters from an impl self type become logic variables so they can match concrete
     /// projection self components.
@@ -66,8 +66,8 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         mode: TypeShapeMode,
     ) -> Option<TypeShape<'cx>> {
         let mut term_types = Map::default();
-        let shape = self.type_term(ty, mode, &mut term_types)?;
-        Some(TypeShape { shape, term_types })
+        let term = self.type_term(ty, mode, &mut term_types)?;
+        Some(TypeShape { term, term_types })
     }
 
     fn type_term(
@@ -76,7 +76,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         mode: TypeShapeMode,
         term_types: &mut Map<LogicTerm<'cx>, TypeId>,
     ) -> Option<LogicTerm<'cx>> {
-        if mode == TypeShapeMode::ImplPattern {
+        if mode == TypeShapeMode::VariableGenerics {
             if let Some(def) = self.types.generic_def(ty) {
                 let term = term::shape_generic_var(self.ccx, def);
                 term_types.entry(term.clone()).or_insert(ty);
@@ -110,7 +110,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
             }
         }?;
 
-        if mode == TypeShapeMode::Concrete {
+        if mode == TypeShapeMode::PreserveGenerics {
             term_types.entry(term.clone()).or_insert(ty);
         }
         Some(term)
@@ -123,7 +123,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         term_types: &mut Map<LogicTerm<'cx>, TypeId>,
     ) -> Option<LogicTerm<'cx>> {
         let def = match &path.resolution {
-            PathTypeResolution::GenericParam(def) if mode == TypeShapeMode::Concrete => {
+            PathTypeResolution::GenericParam(def) if mode == TypeShapeMode::PreserveGenerics => {
                 return Some(term::shape_generic_param(self.ccx, *def));
             }
             PathTypeResolution::Nominal(def) => *def,

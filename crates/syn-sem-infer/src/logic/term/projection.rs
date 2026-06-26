@@ -122,8 +122,8 @@ pub(in crate::logic) fn impl_self_match_candidate_rules<'cx>(
 
 /// * Rule - `#impl_self_match(Self, ImplSelf) :-
 ///   #impl_self_match_candidate(Self, ImplSelf),
-///   #type_shape(Self, #concrete, Shape),
-///   #type_shape(ImplSelf, #impl_pattern, Shape).`
+///   #type_shape(Self, #preserve_generics, Shape),
+///   #type_shape(ImplSelf, #variable_generics, Shape).`
 ///
 /// The shared `Shape` variable lets logic unification validate the projection self type against
 /// the impl-self pattern.
@@ -139,13 +139,13 @@ pub(in crate::logic) fn impl_self_match_rules<'cx>(ccx: &'cx CommonCx) -> [Logic
             Expr::Term(type_shape(
                 ccx,
                 ccx.atom(var::SELF),
-                type_shape_mode(ccx, TypeShapeMode::Concrete),
+                type_shape_mode(ccx, TypeShapeMode::PreserveGenerics),
                 ccx.atom(var::SHAPE),
             )),
             Expr::Term(type_shape(
                 ccx,
                 ccx.atom(var::IMPL_SELF),
-                type_shape_mode(ccx, TypeShapeMode::ImplPattern),
+                type_shape_mode(ccx, TypeShapeMode::VariableGenerics),
                 ccx.atom(var::SHAPE),
             )),
         ])),
@@ -525,8 +525,9 @@ pub(in crate::logic) fn projection_normalization_query<'cx>(
     ))
 }
 
-/// * Output - `#impl_self_match($Self, $ImplSelf), #type_shape($Self, #concrete, $Shape),
-///   #type_shape($ImplSelf, #impl_pattern, $Shape)`
+/// * Output - `#impl_self_match($Self, $ImplSelf),
+///   #type_shape($Self, #preserve_generics, $Shape),
+///   #type_shape($ImplSelf, #variable_generics, $Shape)`
 pub(in crate::logic) fn impl_self_match_query<'cx>(ccx: &'cx CommonCx) -> Expr<LogicAtom<'cx>> {
     Expr::And(vec![
         Expr::Term(impl_self_match(
@@ -537,13 +538,13 @@ pub(in crate::logic) fn impl_self_match_query<'cx>(ccx: &'cx CommonCx) -> Expr<L
         Expr::Term(type_shape(
             ccx,
             ccx.atom(var::SELF),
-            type_shape_mode(ccx, TypeShapeMode::Concrete),
+            type_shape_mode(ccx, TypeShapeMode::PreserveGenerics),
             ccx.atom(var::SHAPE),
         )),
         Expr::Term(type_shape(
             ccx,
             ccx.atom(var::IMPL_SELF),
-            type_shape_mode(ccx, TypeShapeMode::ImplPattern),
+            type_shape_mode(ccx, TypeShapeMode::VariableGenerics),
             ccx.atom(var::SHAPE),
         )),
     ])

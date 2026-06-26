@@ -11,17 +11,17 @@ use syn_sem_name::DefId;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::logic) enum TypeShapeMode {
-    Concrete,
-    ImplPattern,
+    PreserveGenerics,
+    VariableGenerics,
 }
 
 /// * ty - Type id whose stored type is exposed as a structured logic term
-/// * mode - Whether generics are encoded as concrete parameters or impl-pattern variables
+/// * mode - Whether generic parameters are preserved as terms or encoded as variables
 /// * shape - Structured type term, such as `#path(#def(Vec), #arg($G_T))`
 ///
 /// # Examples
 ///
-/// * Output - `#type_shape(ty0, #impl_pattern, #path(#def(def1), #arg($G2))).`
+/// * Output - `#type_shape(ty0, #variable_generics, #path(#def(def1), #arg($G2))).`
 pub(in crate::logic) fn type_shape_clause<'cx>(
     ccx: &'cx CommonCx,
     ty: TypeId,
@@ -35,12 +35,12 @@ pub(in crate::logic) fn type_shape_clause<'cx>(
 }
 
 /// * ty - Type id being described
-/// * mode - `#concrete` or `#impl_pattern`
+/// * mode - `#preserve_generics` or `#variable_generics`
 /// * shape - Structured type term
 ///
 /// # Examples
 ///
-/// * Output - `#type_shape(ty0, #concrete, #primitive(u32))`
+/// * Output - `#type_shape(ty0, #preserve_generics, #primitive(u32))`
 pub(in crate::logic) fn type_shape<'cx>(
     ccx: &'cx CommonCx,
     ty: LogicTerm<'cx>,
@@ -55,8 +55,8 @@ pub(in crate::logic) fn type_shape_mode<'cx>(
     mode: TypeShapeMode,
 ) -> LogicTerm<'cx> {
     let functor = match mode {
-        TypeShapeMode::Concrete => func::CONCRETE,
-        TypeShapeMode::ImplPattern => func::IMPL_PATTERN,
+        TypeShapeMode::PreserveGenerics => func::PRESERVE_GENERICS,
+        TypeShapeMode::VariableGenerics => func::VARIABLE_GENERICS,
     };
     ccx.atom(functor)
 }

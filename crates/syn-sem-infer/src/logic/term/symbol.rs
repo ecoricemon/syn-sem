@@ -6,22 +6,22 @@ pub(in crate::logic) mod func {
     pub(in crate::logic) const ARRAY: &str = "#array";
     pub(in crate::logic) const ASSOC_CONST_ARG: &str = "#assoc_const_arg";
     pub(in crate::logic) const ASSOC_TYPE_ARG: &str = "#assoc_type_arg";
-    pub(in crate::logic) const CONCRETE: &str = "#concrete";
     pub(in crate::logic) const CONST_BOOL: &str = "#const_bool";
     pub(in crate::logic) const CONST_FLOAT: &str = "#const_float";
     pub(in crate::logic) const CONST_INT: &str = "#const_int";
     pub(in crate::logic) const DEF: &str = "#def";
     pub(in crate::logic) const GENERIC_PARAM: &str = "#generic_param";
-    pub(in crate::logic) const IMPL_PATTERN: &str = "#impl_pattern";
     pub(in crate::logic) const INFER: &str = "#infer";
     pub(in crate::logic) const LEN_EXPR: &str = "#len_expr";
     pub(in crate::logic) const MUT: &str = "#mut";
     pub(in crate::logic) const NAME: &str = "#name";
     pub(in crate::logic) const PATH: &str = "#path";
     pub(in crate::logic) const PRIMITIVE: &str = "#primitive";
+    pub(in crate::logic) const PRESERVE_GENERICS: &str = "#preserve_generics";
     pub(in crate::logic) const REF: &str = "#ref";
     pub(in crate::logic) const SLICE: &str = "#slice";
     pub(in crate::logic) const TUPLE: &str = "#tuple";
+    pub(in crate::logic) const VARIABLE_GENERICS: &str = "#variable_generics";
 }
 
 /// Atom prefixes used to encode repo ids as zero-argument logic terms.
