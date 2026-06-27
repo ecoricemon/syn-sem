@@ -1,42 +1,23 @@
-//! Projection-specific facts and query helpers for inference.
+//! Associated type projection collection, matching, and normalization.
+//!
+//! This module owns the projection work for types such as `<T as Iterator>::Item` and `T::Assoc`.
+//! The collector records projection obligations from lowered type paths, the logic adapter matches
+//! those obligations against trait bounds and impl associated-type facts, and the normalizer
+//! records normalizations from a projection type to the impl-provided value type.
 
-use crate::{InferTypes, PathTypeResolution, ProjectionType, Type, TypeId};
+mod collect;
+mod logic;
+mod normalize;
+mod term;
+mod type_shape;
+mod type_shape_term;
+
+pub(crate) use collect::ProjectionCollector;
+pub(crate) use normalize::ProjectionNormalizer;
+pub(crate) use type_shape::{TypeShape, TypeShapeEncoder};
+
+use crate::{PathTypeResolution, ProjectionType, TypeId};
 use syn_sem_name::DefId;
-
-pub(crate) struct ProjectionCollector;
-
-impl ProjectionCollector {
-    pub(crate) fn collect(types: &InferTypes<'_>) -> ProjectionDb {
-        let obligations = types
-            .iter()
-            .filter_map(|(ty_id, ty)| {
-                let Type::Path(path_ty) = ty else {
-                    return None;
-                };
-                let PathTypeResolution::Projection(projection) = &path_ty.resolution else {
-                    return None;
-                };
-                let self_ = projection.self_?;
-
-                Some(ProjectionObligation {
-                    projection: ty_id,
-                    assoc: projection.assoc,
-                    self_,
-                    trait_: projection.trait_,
-                })
-            })
-            .collect();
-
-        ProjectionDb {
-            obligations,
-            matches: Vec::new(),
-            impl_self_matches: Vec::new(),
-            type_bindings: Vec::new(),
-            type_substitutions: Vec::new(),
-            normalizations: Vec::new(),
-        }
-    }
-}
 
 /// Associated type projection facts owned by inference.
 ///
@@ -53,19 +34,19 @@ pub(crate) struct ProjectionDb {
     /// * Made in the build stage.
     pub(crate) obligations: Vec<ProjectionObligation>,
     /// Candidate projections matched against concrete associated type members on a trait.
-    /// * Made in the derive stage.
-    pub(crate) matches: Vec<ProjectionMatch>,
+    /// * Made in the normalization stage.
+    pub(crate) projection_matches: Vec<ProjectionMatch>,
     /// Impl self type matches used for projection normalization.
-    /// * Made in the derive stage.
+    /// * Made in the normalization stage.
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
     /// Type argument bindings discovered from impl self type matches.
-    /// * Made in the derive stage.
-    pub(crate) type_bindings: Vec<ImplSelfTypeArgBinding>,
+    /// * Made in the normalization stage.
+    pub(crate) impl_self_generic_bindings: Vec<ImplSelfGenericBinding>,
     /// Type substitutions used for projection normalization.
-    /// * Made in the derive stage.
-    pub(crate) type_substitutions: Vec<TypeSubstitution>,
+    /// * Made in the normalization stage.
+    pub(crate) type_substitutions: Vec<ProjectionTypeSubstitution>,
     /// Matched projections rewritten to the value type assigned by an applicable impl.
-    /// * Made in the derive stage.
+    /// * Made in the normalization stage.
     pub(crate) normalizations: Vec<ProjectionNormalization>,
 }
 
@@ -175,12 +156,12 @@ pub(crate) struct ImplSelfMatch {
     pub(crate) impl_self: TypeId,
 }
 
-/// Type argument bound to an impl-self generic while matching an impl self type.
+/// Generic binding found while matching an impl self type.
 ///
 /// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that generic `T`
 /// from impl self `Vec<T>` is bound to projection argument `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ImplSelfTypeArgBinding {
+pub(crate) struct ImplSelfGenericBinding {
     /// Self type from the projection, such as `Vec<u32>`.
     pub(crate) projection_self: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
@@ -193,7 +174,7 @@ pub(crate) struct ImplSelfTypeArgBinding {
 
 /// Type substitution fact used while normalizing associated type projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeSubstitution {
+pub(crate) struct ProjectionTypeSubstitution {
     /// Self type from the projection that requested the substitution.
     pub(crate) projection_self: TypeId,
     /// Self type from the impl header whose value type is substituted.

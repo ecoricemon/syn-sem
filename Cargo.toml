@@ -8,6 +8,7 @@ syn-sem-ast = { path = "crates/syn-sem-ast" }
 syn-sem-name = { path = "crates/syn-sem-name" }
 syn-sem-hir = { path = "crates/syn-sem-hir" }
 syn-sem-infer = { path = "crates/syn-sem-infer" }
+syn-sem-eval = { path = "crates/syn-sem-eval" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }
 syn-locator = "0.2.0"
 logic-eval = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "8ae13195a81891ee97aa9174dc97ebf00cb55590" }

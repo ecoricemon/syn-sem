@@ -1,0 +1,14 @@
+[package]
+name = "syn-sem-eval"
+publish = false
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.67"
+description = "Constant evaluation for syn-sem"
+repository = "https://github.com/ecoricemon/syn-sem"
+
+[dependencies]
+syn-sem-common = { workspace = true }
+syn-sem-hir = { workspace = true }
+syn-sem-infer = { workspace = true }
+syn-sem-name = { workspace = true }

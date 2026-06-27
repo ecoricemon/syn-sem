@@ -1,20 +1,16 @@
-mod assoc_type_impl;
-mod infer_types;
-pub(crate) mod projection;
-pub(crate) mod subject_type;
-mod trait_bound;
-
-pub(crate) use assoc_type_impl::{AssocTypeImplFact, AssocTypeImplFactCollector};
-pub(crate) use infer_types::InferTypes;
-pub(crate) use projection::ProjectionCollector;
-pub(crate) use subject_type::{
-    ResolvedTypeFact, SubjectTypeCollector, SubjectTypeDb, TypeEqualFact, TypeSubject,
-};
-pub(crate) use trait_bound::{TraitBoundFact, TraitBoundFactCollector};
+//! Inference database orchestration and public query surface.
+//!
+//! `InferDbBuilder` wires the source-shaped phases in order: program facts, HIR type lowering,
+//! type relation collection, projection obligation collection, projection normalization, and
+//! fixed-point type relation/expression type resolution. The resulting [`InferDb`] exposes
+//! focused query methods for upper semantic phases.
 
 use crate::{
-    logic, GenericArg, Path, PathSegment, PathType, PathTypeResolution, ProjectionDb,
-    ProjectionNormalizationResult, ProjectionType, QSelf, Type, TypeId, TypeParamBound,
+    ExprTypeDeriver, GenericArg, ImplAssocType, ImplAssocTypeCollector, InferTypes, Path,
+    PathSegment, PathType, PathTypeResolution, ProjectionCollector, ProjectionDb,
+    ProjectionNormalizationResult, ProjectionNormalizer, ProjectionType, QSelf, TraitBound,
+    TraitBoundCollector, Type, TypeId, TypeLowering, TypeParamBound, TypeRelationCollector,
+    TypeRelationDb, TypeRelationResolver,
 };
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
@@ -33,19 +29,18 @@ impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
 
     pub(crate) fn build(self) -> InferDb<'cx> {
         let mut types = InferTypes::default();
-        let trait_bound_facts = TraitBoundFactCollector::collect(self.hir, self.names, &mut types);
-        types.collect_hir_types(self.hir, self.names);
-        let assoc_type_impl_facts =
-            AssocTypeImplFactCollector::collect(self.hir, self.names, &mut types);
-        let subject_types = SubjectTypeCollector::collect(self.hir, self.names, &mut types);
+        let trait_bounds = TraitBoundCollector::collect(self.hir, self.names, &mut types);
+        TypeLowering::lower_hir_types(self.hir, self.names, &mut types);
+        let impl_assoc_types = ImplAssocTypeCollector::collect(self.hir, self.names, &mut types);
+        let type_relations = TypeRelationCollector::collect(self.hir, self.names, &mut types);
         let projections = ProjectionCollector::collect(&types);
 
         InferDb {
             types,
             projections,
-            subject_types,
-            trait_bound_facts,
-            assoc_type_impl_facts,
+            type_relations,
+            trait_bounds,
+            impl_assoc_types,
             recursive_normalizations: Map::default(),
         }
     }
@@ -56,27 +51,45 @@ impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
 pub struct InferDb<'cx> {
     pub(crate) types: InferTypes<'cx>,
     pub(crate) projections: ProjectionDb,
-    pub(crate) subject_types: SubjectTypeDb,
-    pub(crate) trait_bound_facts: Vec<TraitBoundFact>,
-    pub(crate) assoc_type_impl_facts: Vec<AssocTypeImplFact>,
+    pub(crate) type_relations: TypeRelationDb,
+    pub(crate) trait_bounds: Vec<TraitBound>,
+    pub(crate) impl_assoc_types: Vec<ImplAssocType>,
     pub(crate) recursive_normalizations: Map<TypeId, TypeId>,
 }
 
 impl<'cx> InferDb<'cx> {
     /// Builds inference type facts from HIR and name-resolution data.
+    ///
+    /// Analysis runs in source-shaped phases:
+    ///
+    /// * collect trait bounds, HIR type occurrences, impl associated types, type
+    ///   relation equality facts, and projection obligations;
+    /// * normalize associated type projections through trait matches and impl associated types;
+    /// * iterate type relation resolution with expression result fact derivation;
+    /// * expose the resolved expression and definition type lookups.
+    ///
+    /// Expression result inference is still narrow and currently derives only the expression forms
+    /// represented by the expression type derivation phase.
     pub fn analyze(ccx: &'cx CommonCx, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) -> Self {
         let mut db = InferDbBuilder::new(hir, names).build();
 
-        logic::ProjectionDeriver::new(
+        ProjectionNormalizer::new(
             &mut db.projections,
             &mut db.types,
             ccx,
-            &db.trait_bound_facts,
-            &db.assoc_type_impl_facts,
+            &db.trait_bounds,
+            &db.impl_assoc_types,
             names,
         )
-        .derive();
-        logic::SubjectTypeDeriver::new(&mut db.subject_types, ccx, &db.types).derive();
+        .normalize();
+        loop {
+            db.type_relations.clear_resolved();
+            TypeRelationResolver::new(&mut db.type_relations, ccx, &db.types).resolve();
+            let changed = ExprTypeDeriver::new(hir, &mut db.type_relations, &mut db.types).derive();
+            if !changed {
+                break;
+            }
+        }
 
         db
     }
@@ -88,12 +101,12 @@ impl<'cx> InferDb<'cx> {
 
     /// Returns the resolved concrete type linked to a HIR expression occurrence.
     pub fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
-        self.subject_types.type_for_hir_expr(hir_expr)
+        self.type_relations.type_for_hir_expr(hir_expr)
     }
 
-    /// Returns the resolved concrete type linked to a definition, when subject type inference found one.
+    /// Returns the resolved concrete type linked to a definition, when type relation resolution found one.
     pub fn type_for_def(&self, def: DefId) -> Option<TypeId> {
-        self.subject_types.type_for_def(def)
+        self.type_relations.type_for_def(def)
     }
 
     /// Returns the shallow normalized inference type linked to a HIR type occurrence.
@@ -784,7 +797,7 @@ mod tests {
             })
         );
         assert_eq!(
-            infer.projections.matches,
+            infer.projections.projection_matches,
             &[ProjectionMatch {
                 projection,
                 self_: qself.self_,
@@ -873,8 +886,8 @@ mod tests {
                 trait_: None,
             }]
         );
-        let [bound] = infer.trait_bound_facts.as_slice() else {
-            panic!("expected one trait bound fact");
+        let [bound] = infer.trait_bounds.as_slice() else {
+            panic!("expected one trait bound");
         };
         assert!(matches!(
             infer[bound.subject],
@@ -891,7 +904,7 @@ mod tests {
             }) if def == iterator_def
         ));
         assert_eq!(
-            infer.projections.matches,
+            infer.projections.projection_matches,
             &[ProjectionMatch {
                 projection,
                 self_: qself.self_,
@@ -951,8 +964,8 @@ mod tests {
                 ..
             }) if def == t_def
         ));
-        let [bound] = infer.trait_bound_facts.as_slice() else {
-            panic!("expected one trait bound fact");
+        let [bound] = infer.trait_bounds.as_slice() else {
+            panic!("expected one trait bound");
         };
         assert!(matches!(
             infer[bound.trait_],
@@ -961,7 +974,7 @@ mod tests {
                 ..
             }) if def == display_def
         ));
-        assert_eq!(infer.projections.matches, &[]);
+        assert_eq!(infer.projections.projection_matches, &[]);
     }
 
     #[test]
@@ -1030,8 +1043,8 @@ mod tests {
 
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(&ccx, &hir, &names);
-        let [fact] = infer.assoc_type_impl_facts.as_slice() else {
-            panic!("expected one impl associated type fact");
+        let [impl_assoc_type] = infer.impl_assoc_types.as_slice() else {
+            panic!("expected one impl associated type");
         };
 
         let hir::ItemKind::Impl {
@@ -1052,23 +1065,29 @@ mod tests {
             hir::AssocItemKind::ImplType { .. }
         ));
         assert_eq!(hir[*assoc_item].def, Some(impl_item_def));
-        assert_eq!(fact.assoc, trait_assoc_def);
-        assert_eq!(fact.impl_self, infer.type_for_hir_type(*self_).unwrap());
+        assert_eq!(impl_assoc_type.assoc, trait_assoc_def);
+        assert_eq!(
+            impl_assoc_type.impl_self,
+            infer.type_for_hir_type(*self_).unwrap()
+        );
         assert!(matches!(
-            infer[fact.impl_self],
+            infer[impl_assoc_type.impl_self],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
             }) if def == vec_def
         ));
         assert!(matches!(
-            infer[fact.trait_],
+            infer[impl_assoc_type.trait_],
             Type::Path(PathType {
                 resolution: PathTypeResolution::Nominal(def),
                 ..
             }) if def == iterator_def
         ));
-        assert_eq!(infer[fact.value_ty], Type::Primitive(PrimitiveType::U32));
+        assert_eq!(
+            infer[impl_assoc_type.value_ty],
+            Type::Primitive(PrimitiveType::U32)
+        );
 
         let projection_path = struct_field_path_type(&hir, &infer);
         let qself = projection_path
@@ -1082,7 +1101,7 @@ mod tests {
                 self_: qself.self_,
                 assoc: trait_assoc_def,
                 trait_: qself.trait_.unwrap(),
-                value_ty: fact.value_ty,
+                value_ty: impl_assoc_type.value_ty,
             }]
         );
         let normalizations = infer
@@ -1128,7 +1147,7 @@ mod tests {
         let [impl_self_match] = infer.projections.impl_self_matches.as_slice() else {
             panic!("generic impl self should match projection self once");
         };
-        let [binding] = infer.projections.type_bindings.as_slice() else {
+        let [binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("generic impl self should create one type binding");
         };
         let [substitution] = infer.projections.type_substitutions.as_slice() else {
@@ -1184,7 +1203,7 @@ mod tests {
         let [field_ty_id] = fields.as_slice() else {
             panic!("Holder should have one field type");
         };
-        let [binding] = infer.projections.type_bindings.as_slice() else {
+        let [binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("projection generic should be bound to impl self generic");
         };
         let normalized = infer
@@ -1324,19 +1343,25 @@ mod tests {
         let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let [_first_binding, _second_binding] = infer.projections.type_bindings.as_slice() else {
+        let [_first_binding, _second_binding] =
+            infer.projections.impl_self_generic_bindings.as_slice()
+        else {
             panic!("Pair<K, V> should create two type bindings");
         };
         let [substitution] = infer.projections.type_substitutions.as_slice() else {
             panic!("type Output = V should create one selected substitution");
         };
 
-        assert!(infer.projections.type_bindings.iter().any(|binding| {
-            substitution.projection_self == binding.projection_self
-                && substitution.impl_self == binding.impl_self
-                && substitution.generic == binding.generic
-                && substitution.arg == binding.arg
-        }));
+        assert!(infer
+            .projections
+            .impl_self_generic_bindings
+            .iter()
+            .any(|binding| {
+                substitution.projection_self == binding.projection_self
+                    && substitution.impl_self == binding.impl_self
+                    && substitution.generic == binding.generic
+                    && substitution.arg == binding.arg
+            }));
         assert_eq!(
             infer.normalized_projection_type_for_hir_type(*field_ty_id),
             Some(substitution.substituted)
@@ -1376,7 +1401,9 @@ mod tests {
             panic!("Result should have one field type");
         };
         let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
-        let [first_binding, second_binding] = infer.projections.type_bindings.as_slice() else {
+        let [first_binding, second_binding] =
+            infer.projections.impl_self_generic_bindings.as_slice()
+        else {
             panic!("Pair<K, V> should create two type bindings");
         };
         assert_eq!(
@@ -1474,7 +1501,7 @@ mod tests {
         let same = infer.type_for_hir_type(*same_ty_id).unwrap();
         let different = infer.type_for_hir_type(*different_ty_id).unwrap();
 
-        let [binding] = infer.projections.type_bindings.as_slice() else {
+        let [binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("repeated impl self generic should create one type binding");
         };
         assert_eq!(infer[binding.arg], Type::Primitive(PrimitiveType::U32));
@@ -1521,7 +1548,7 @@ mod tests {
         let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let [_binding] = infer.projections.type_bindings.as_slice() else {
+        let [_binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("nested impl self should create one type binding");
         };
         let normalized = infer
@@ -1559,7 +1586,7 @@ mod tests {
         let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let [_binding] = infer.projections.type_bindings.as_slice() else {
+        let [_binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("composite impl self should create one type binding");
         };
         let normalized = infer
@@ -1778,7 +1805,7 @@ mod tests {
         let [field_ty_id] = fields.as_slice() else {
             panic!("Result should have one field type");
         };
-        let [_binding] = infer.projections.type_bindings.as_slice() else {
+        let [_binding] = infer.projections.impl_self_generic_bindings.as_slice() else {
             panic!("Vec<T> should create one type binding");
         };
         let [substitution] = infer.projections.type_substitutions.as_slice() else {
@@ -1787,11 +1814,11 @@ mod tests {
 
         assert_eq!(
             substitution.projection_self,
-            infer.projections.type_bindings[0].projection_self
+            infer.projections.impl_self_generic_bindings[0].projection_self
         );
         assert_eq!(
             substitution.impl_self,
-            infer.projections.type_bindings[0].impl_self
+            infer.projections.impl_self_generic_bindings[0].impl_self
         );
         assert_eq!(
             infer.normalized_projection_type_for_hir_type(*field_ty_id),
@@ -1991,12 +2018,16 @@ mod tests {
         };
 
         for substitution in &infer.projections.type_substitutions {
-            assert!(infer.projections.type_bindings.iter().any(|binding| {
-                substitution.projection_self == binding.projection_self
-                    && substitution.impl_self == binding.impl_self
-                    && substitution.generic == binding.generic
-                    && substitution.arg == binding.arg
-            }));
+            assert!(infer
+                .projections
+                .impl_self_generic_bindings
+                .iter()
+                .any(|binding| {
+                    substitution.projection_self == binding.projection_self
+                        && substitution.impl_self == binding.impl_self
+                        && substitution.generic == binding.generic
+                        && substitution.arg == binding.arg
+                }));
         }
         let vec_normalized_ty_id = infer
             .normalized_projection_type_for_hir_type(*vec_field_ty_id)
@@ -2135,8 +2166,8 @@ mod tests {
             }
             "#,
         );
-        let fact = infer.trait_bound_facts.first().unwrap();
-        let Type::Path(trait_) = &infer[fact.trait_] else {
+        let trait_bound = infer.trait_bounds.first().unwrap();
+        let Type::Path(trait_) = &infer[trait_bound.trait_] else {
             panic!("trait bound should lower to a path type");
         };
         let [GenericArg::AssocConst { name, value }] = trait_.path.segments[0].args.as_slice()
@@ -2160,8 +2191,8 @@ mod tests {
             }
             "#,
         );
-        let fact = infer.trait_bound_facts.first().unwrap();
-        let Type::Path(trait_) = &infer[fact.trait_] else {
+        let trait_bound = infer.trait_bounds.first().unwrap();
+        let Type::Path(trait_) = &infer[trait_bound.trait_] else {
             panic!("trait bound should lower to a path type");
         };
         let [GenericArg::Constraint { name, bounds }] = trait_.path.segments[0].args.as_slice()

@@ -1,15 +1,14 @@
 //! Logic shape encoding for inference types.
 
+use super::type_shape_term::{self as term, TypeShapeMode};
 use crate::{
-    logic::term::{self, TypeShapeMode},
-    ArrayLen, ConstArg, GenericArg, InferTypes, Lit, PathType, PathTypeResolution, Type, TypeId,
+    logic::LogicTerm, ArrayLen, ConstArg, GenericArg, InferTypes, Lit, PathType,
+    PathTypeResolution, Type, TypeId,
 };
 use syn_sem_common::{CommonCx, Map};
 
-type LogicTerm<'cx> = term::LogicTerm<'cx>;
-
-pub(in crate::logic) struct TypeShape<'cx> {
-    pub(in crate::logic) term: LogicTerm<'cx>,
+pub(crate) struct TypeShape<'cx> {
+    pub(crate) term: LogicTerm<'cx>,
     /// Type ids recoverable from subterms emitted while building `shape`.
     ///
     /// Logic answers can bind shape variables to structural terms such as `#primitive(u32)` or
@@ -21,16 +20,16 @@ pub(in crate::logic) struct TypeShape<'cx> {
     /// encoding different root types, and a root-level map would lose which shape produced that
     /// term. Within one shape, duplicate terms are equivalent for shape matching, so choosing one
     /// representative type id is enough to materialize the matched type component.
-    pub(in crate::logic) term_types: Map<LogicTerm<'cx>, TypeId>,
+    pub(crate) term_types: Map<LogicTerm<'cx>, TypeId>,
 }
 
-pub(in crate::logic) struct TypeShapeEncoder<'a, 'cx> {
+pub(crate) struct TypeShapeEncoder<'a, 'cx> {
     ccx: &'cx CommonCx,
     types: &'a InferTypes<'cx>,
 }
 
 impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
-    pub(in crate::logic) fn new(ccx: &'cx CommonCx, types: &'a InferTypes<'cx>) -> Self {
+    pub(crate) fn new(ccx: &'cx CommonCx, types: &'a InferTypes<'cx>) -> Self {
         Self { ccx, types }
     }
 
@@ -60,11 +59,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
     ///     type Item = T;
     /// }
     /// ```
-    pub(in crate::logic) fn encode(
-        &self,
-        ty: TypeId,
-        mode: TypeShapeMode,
-    ) -> Option<TypeShape<'cx>> {
+    pub(crate) fn encode(&self, ty: TypeId, mode: TypeShapeMode) -> Option<TypeShape<'cx>> {
         let mut term_types = Map::default();
         let term = self.type_term(ty, mode, &mut term_types)?;
         Some(TypeShape { term, term_types })

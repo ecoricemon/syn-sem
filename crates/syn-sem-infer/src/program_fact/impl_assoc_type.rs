@@ -1,33 +1,32 @@
-//! Associated type implementation fact collection for inference.
+//! Impl associated-type collection for inference.
 
-use super::infer_types::{InferTypes, TypeLowerer};
-use crate::TypeId;
+use crate::{InferTypes, TypeId, TypeLowerer};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb, Namespace, ResolveResult};
 
-pub(crate) struct AssocTypeImplFactCollector<'a, 'cx> {
+pub(crate) struct ImplAssocTypeCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
-    facts: Vec<AssocTypeImplFact>,
+    impl_assoc_types: Vec<ImplAssocType>,
 }
 
-impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
+impl<'a, 'cx> ImplAssocTypeCollector<'a, 'cx> {
     pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
-    ) -> Vec<AssocTypeImplFact> {
+    ) -> Vec<ImplAssocType> {
         Self {
             hir,
             names,
             ty_lowerer: TypeLowerer::new(hir, names, types),
-            facts: Vec::new(),
+            impl_assoc_types: Vec::new(),
         }
         .collect_inner()
     }
 
-    fn collect_inner(mut self) -> Vec<AssocTypeImplFact> {
+    fn collect_inner(mut self) -> Vec<ImplAssocType> {
         for item in self.hir.items() {
             let hir::ItemKind::Impl {
                 trait_,
@@ -59,7 +58,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
                     continue;
                 };
                 let value_ty = self.ty_lowerer.lower_hir_type(ty);
-                self.facts.push(AssocTypeImplFact {
+                self.impl_assoc_types.push(ImplAssocType {
                     impl_self,
                     trait_: trait_ty_id,
                     assoc,
@@ -67,7 +66,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
                 });
             }
         }
-        self.facts
+        self.impl_assoc_types
     }
 }
 
@@ -77,7 +76,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
 /// is `Vec`, `trait_` is `Iterator`, `assoc` is the definition of `Iterator::Item`, and `value_ty`
 /// is `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AssocTypeImplFact {
+pub(crate) struct ImplAssocType {
     /// Implementing self type in `impl Trait for Self`.
     pub(crate) impl_self: TypeId,
     /// Implemented trait type in `impl Trait for Self`.
