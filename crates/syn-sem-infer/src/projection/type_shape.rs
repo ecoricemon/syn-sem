@@ -174,6 +174,7 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
     fn array_len_term(&self, len: ArrayLen) -> LogicTerm<'cx> {
         match len {
             ArrayLen::Expr(expr) => term::shape_len_expr(self.ccx, expr),
+            ArrayLen::ConstUsize(value) => term::shape_len_const_usize(self.ccx, value),
         }
     }
 }

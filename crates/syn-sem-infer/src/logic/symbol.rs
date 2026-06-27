@@ -9,9 +9,11 @@ pub(crate) mod func {
     pub(crate) const CONST_BOOL: &str = "#const_bool";
     pub(crate) const CONST_FLOAT: &str = "#const_float";
     pub(crate) const CONST_INT: &str = "#const_int";
+    pub(crate) const CONST_USIZE: &str = "#const_usize";
     pub(crate) const DEF: &str = "#def";
     pub(crate) const GENERIC_PARAM: &str = "#generic_param";
     pub(crate) const INFER: &str = "#infer";
+    pub(crate) const LEN_CONST: &str = "#len_const";
     pub(crate) const LEN_EXPR: &str = "#len_expr";
     pub(crate) const MUT: &str = "#mut";
     pub(crate) const NAME: &str = "#name";

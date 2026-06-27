@@ -13,8 +13,8 @@
 //!   `<T as Iterator>::Item`;
 //! * Type relation resolution follows equality edges between definitions, expressions, and known
 //!   type candidates;
-//! * Expression result inference is intentionally still narrow; only expression forms that feed
-//!   type relation facts are available through [`InferDb::type_for_hir_expr`].
+//! * Expression result and pattern binding inference are intentionally still narrow; only forms
+//!   that feed type relation facts are available through [`InferDb`] query methods.
 //!
 //! Upper phases should enter through [`InferDb::analyze`], ask for a type occurrence with
 //! [`InferDb::type_for_hir_type`] or [`InferDb::normalized_type_for_hir_type`], and inspect the
@@ -41,7 +41,7 @@ pub(crate) use program_fact::{
 };
 pub(crate) use type_lowering::{TypeLowerer, TypeLowering};
 pub(crate) use type_relation::{
-    ExprTypeDeriver, TypeEqualityFact, TypeRelationCollector, TypeRelationDb, TypeRelationResolver,
-    TypeSubject,
+    ExprTypeDeriver, PatTypeDeriver, TypeEqualityFact, TypeRelationCollector, TypeRelationDb,
+    TypeRelationResolver, TypeSubject,
 };
 pub(crate) use type_store::InferTypes;

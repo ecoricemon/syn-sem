@@ -255,6 +255,8 @@ pub enum GenericArg<'cx> {
 pub enum ArrayLen {
     /// Length is still a HIR expression.
     Expr(hir::ExprId),
+    /// Length is a known `usize` const value.
+    ConstUsize(usize),
 }
 
 impl ArrayLen {
