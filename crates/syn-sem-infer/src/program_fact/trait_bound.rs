@@ -1,31 +1,30 @@
-//! Trait-bound fact collection for inference.
+//! Trait-bound collection for inference.
 
-use super::infer_types::{InferTypes, TypeLowerer};
-use crate::TypeId;
+use crate::{InferTypes, TypeId, TypeLowerer};
 use syn_sem_hir as hir;
 use syn_sem_name::NameDb;
 
-pub(crate) struct TraitBoundFactCollector<'a, 'cx> {
+pub(crate) struct TraitBoundCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     ty_lowerer: TypeLowerer<'a, 'cx>,
-    facts: Vec<TraitBoundFact>,
+    trait_bounds: Vec<TraitBound>,
 }
 
-impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
+impl<'a, 'cx> TraitBoundCollector<'a, 'cx> {
     pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
         types: &'a mut InferTypes<'cx>,
-    ) -> Vec<TraitBoundFact> {
+    ) -> Vec<TraitBound> {
         Self {
             hir,
             ty_lowerer: TypeLowerer::new(hir, names, types),
-            facts: Vec::new(),
+            trait_bounds: Vec::new(),
         }
         .collect_inner()
     }
 
-    fn collect_inner(mut self) -> Vec<TraitBoundFact> {
+    fn collect_inner(mut self) -> Vec<TraitBound> {
         for item in self.hir.items() {
             match &item.kind {
                 hir::ItemKind::Enum { generics, .. }
@@ -41,7 +40,7 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
                 | hir::ItemKind::Use { .. } => {}
             }
         }
-        self.facts
+        self.trait_bounds
     }
 
     fn collect_generics(&mut self, generics: &hir::Generics<'cx>) {
@@ -57,18 +56,18 @@ impl<'a, 'cx> TraitBoundFactCollector<'a, 'cx> {
                 let trait_ = self
                     .ty_lowerer
                     .lower_plain_path_as_type(path, generics.scope);
-                self.facts.push(TraitBoundFact { subject, trait_ });
+                self.trait_bounds.push(TraitBound { subject, trait_ });
             }
         }
     }
 }
 
-/// One trait bound fact collected as solver input.
+/// One trait bound collected as solver input.
 ///
 /// A type-bound predicate can contain multiple bounds, such as `T: Debug + Clone`;
 /// inference flattens that into one fact per trait bound, e.g. `T: Debug` and `T: Clone`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TraitBoundFact {
+pub(crate) struct TraitBound {
     /// Type constrained by the trait bound.
     pub(crate) subject: TypeId,
     /// Trait type required by the bound.

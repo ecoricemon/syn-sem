@@ -1,17 +1,20 @@
-//! Logic rules and predicates for subject type equality resolution.
+//! Logic rules and predicates for type relation resolution.
 
-use super::{
-    atom::{type_id, type_subject, CreateTerm, LogicAtom, LogicClause, LogicTerm},
-    equality::{same_type, same_type_rules, SameTypeRules},
-    symbol::{pred, var},
+use crate::{
+    logic::{
+        same_type, same_type_rules,
+        symbol::{pred, var},
+        type_equal_clause as raw_type_equal_clause, type_id, type_subject, CreateTerm, LogicAtom,
+        LogicClause, LogicTerm, SameTypeRules,
+    },
+    TypeEqualityFact, TypeId, TypeSubject,
 };
-use crate::{TypeEqualFact, TypeId, TypeSubject};
 use logic_eval::{Clause, Expr};
 use syn_sem_common::CommonCx;
 
-/// Subject type resolution follows collected equality edges, needs reverse and transitive closure,
+/// Type relation resolution follows collected equality edges, needs reverse and transitive closure,
 /// and does not need global reflexivity.
-const SUBJECT_TYPE_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
+const TYPE_RELATION_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
     reflexive: false,
     reverse: true,
     transitive: true,
@@ -28,8 +31,8 @@ const SUBJECT_TYPE_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
 ///   `#type_candidate(ty2).`
 /// * Query - `#resolved_type(expr1, $Type).`
 /// * Output - `$Type = ty2`
-pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> Vec<LogicClause<'cx>> {
-    let mut rules = same_type_rules(ccx, SUBJECT_TYPE_SAME_TYPE_RULES);
+pub(crate) fn type_relation_rules<'cx>(ccx: &'cx CommonCx) -> Vec<LogicClause<'cx>> {
+    let mut rules = same_type_rules(ccx, TYPE_RELATION_SAME_TYPE_RULES);
     rules.push(Clause {
         head: resolved_type(ccx, ccx.atom(var::SUBJECT), ccx.atom(var::TYPE)),
         body: Some(Expr::And(vec![
@@ -40,33 +43,30 @@ pub(in crate::logic) fn subject_type_rules<'cx>(ccx: &'cx CommonCx) -> Vec<Logic
     rules
 }
 
-/// * fact - One subject type equality edge
+/// * fact - One type relation equality edge
 ///
 /// # Examples
 ///
 /// * Input - `left = def0`, `right = expr1`
 /// * Output - `#type_equal(def0, expr1).`
-pub(in crate::logic) fn type_equal_clause<'cx>(
+pub(crate) fn type_equality_clause<'cx>(
     ccx: &'cx CommonCx,
-    fact: TypeEqualFact,
+    fact: TypeEqualityFact,
 ) -> LogicClause<'cx> {
-    super::equality::type_equal_clause(
+    raw_type_equal_clause(
         ccx,
         type_subject(ccx, fact.left),
         type_subject(ccx, fact.right),
     )
 }
 
-/// * ty - Inference type candidate known to subject type logic
+/// * ty - Inference type candidate known to type relation logic
 ///
 /// # Examples
 ///
 /// * Input - `ty = ty0`
 /// * Output - `#type_candidate(ty0).`
-pub(in crate::logic) fn type_candidate_clause<'cx>(
-    ccx: &'cx CommonCx,
-    ty: TypeId,
-) -> LogicClause<'cx> {
+pub(crate) fn type_candidate_clause<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicClause<'cx> {
     Clause {
         head: type_candidate(ccx, type_id(ccx, ty)),
         body: None,
@@ -79,7 +79,7 @@ pub(in crate::logic) fn type_candidate_clause<'cx>(
 ///
 /// * Input - `subject = expr0`
 /// * Output - `Expr::Term(#resolved_type(expr0, $Type))`
-pub(in crate::logic) fn resolved_type_query<'cx>(
+pub(crate) fn resolved_type_query<'cx>(
     ccx: &'cx CommonCx,
     subject: TypeSubject,
 ) -> Expr<LogicAtom<'cx>> {

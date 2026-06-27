@@ -15,13 +15,13 @@ use syn_sem_name::DefId;
 ///
 /// * Input - `ty = TypeId::new(0)`
 /// * Output - `ty0`
-pub(in crate::logic) fn type_id<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicTerm<'cx> {
+pub(crate) fn type_id<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicTerm<'cx> {
     let functor = intern_prefixed_number(ccx, symbol::id::TYPE, ty.index());
     atom(functor)
 }
 
 /// Decodes an inference type id from a logic term.
-pub(in crate::logic) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId> {
+pub(crate) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId> {
     let functor = term.functor.as_ref();
     let index = functor.strip_prefix(symbol::id::TYPE)?.parse().ok()?;
     if !term.args.is_empty() {
@@ -38,7 +38,7 @@ pub(in crate::logic) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId
 ///
 /// * Input - `id = DefId::new(2)`
 /// * Output - `def2`
-pub(in crate::logic) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
+pub(crate) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
     let functor = intern_prefixed_number(ccx, symbol::id::DEF, id.index());
     atom(functor)
 }
@@ -51,19 +51,13 @@ pub(in crate::logic) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<
 ///
 /// * Input - `id = ExprId::new(1)`
 /// * Output - `expr1`
-pub(in crate::logic) fn expr_id<'cx>(
-    ccx: &'cx CommonCx,
-    id: syn_sem_hir::ExprId,
-) -> LogicTerm<'cx> {
+pub(crate) fn expr_id<'cx>(ccx: &'cx CommonCx, id: syn_sem_hir::ExprId) -> LogicTerm<'cx> {
     let functor = intern_prefixed_number(ccx, symbol::id::EXPR, id.index());
     atom(functor)
 }
 
 /// Encodes an inference subject as a logic atom.
-pub(in crate::logic) fn type_subject<'cx>(
-    ccx: &'cx CommonCx,
-    subject: TypeSubject,
-) -> LogicTerm<'cx> {
+pub(crate) fn type_subject<'cx>(ccx: &'cx CommonCx, subject: TypeSubject) -> LogicTerm<'cx> {
     match subject {
         TypeSubject::Def(def) => def_id(ccx, def),
         TypeSubject::Expr(expr) => expr_id(ccx, expr),
@@ -72,19 +66,16 @@ pub(in crate::logic) fn type_subject<'cx>(
 }
 
 /// Creates a zero-argument logic atom.
-pub(in crate::logic) fn atom<'cx>(functor: LogicAtom<'cx>) -> LogicTerm<'cx> {
+pub(crate) fn atom<'cx>(functor: LogicAtom<'cx>) -> LogicTerm<'cx> {
     term(functor, Vec::new())
 }
 
 /// Creates a logic term with a functor and arguments.
-pub(in crate::logic) fn term<'cx>(
-    functor: LogicAtom<'cx>,
-    args: Vec<LogicTerm<'cx>>,
-) -> LogicTerm<'cx> {
+pub(crate) fn term<'cx>(functor: LogicAtom<'cx>, args: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
     Term { functor, args }
 }
 
-pub(in crate::logic) trait CreateTerm<Func> {
+pub(crate) trait CreateTerm<Func> {
     fn atom(&self, functor: Func) -> LogicTerm<'_>;
     fn term<'a>(&'a self, functor: Func, args: Vec<LogicTerm<'a>>) -> LogicTerm<'a>;
 }
@@ -99,6 +90,6 @@ impl CreateTerm<&str> for CommonCx {
     }
 }
 
-pub(in crate::logic) type LogicAtom<'cx> = InternedStr<'cx>;
-pub(in crate::logic) type LogicTerm<'cx> = Term<LogicAtom<'cx>>;
-pub(in crate::logic) type LogicClause<'cx> = Clause<LogicAtom<'cx>>;
+pub(crate) type LogicAtom<'cx> = InternedStr<'cx>;
+pub(crate) type LogicTerm<'cx> = Term<LogicAtom<'cx>>;
+pub(crate) type LogicClause<'cx> = Clause<LogicAtom<'cx>>;

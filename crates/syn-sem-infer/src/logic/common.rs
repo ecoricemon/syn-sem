@@ -1,13 +1,13 @@
 //! Shared helpers for logic term handling.
 
-use super::term::{LogicAtom, LogicTerm};
+use super::{LogicAtom, LogicTerm};
 
 /// Visits each left-side variable and the corresponding right-side term when the two terms are
 /// shape-compatible.
 ///
 /// Returns `true` after visiting compatible terms, or `false` without calling `visit` when their
 /// shapes are incompatible.
-pub(in crate::logic) fn visit_left_var<'cx, 'right, F>(
+pub(crate) fn visit_left_var<'cx, 'right, F>(
     left: &LogicTerm<'cx>,
     right: &'right LogicTerm<'cx>,
     visit: &mut F,

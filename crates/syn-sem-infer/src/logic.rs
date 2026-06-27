@@ -1,8 +1,17 @@
-mod common;
-mod derive;
-mod term;
-mod type_shape;
+//! Shared `logic-eval` substrate used by inference phases.
+//!
+//! Domain-specific rules live with their owning phase, such as `projection::term` and
+//! `type_relation::term`. This module keeps only common atom encoding, equality rules, solver
+//! symbols, and small term utilities.
 
-pub(in crate::logic) use common::visit_left_var;
-pub(crate) use derive::*;
-pub(in crate::logic) use type_shape::{TypeShape, TypeShapeEncoder};
+mod atom;
+mod common;
+mod equality;
+pub(crate) mod symbol;
+
+pub(crate) use atom::{
+    atom, def_id, expr_id, type_id, type_id_from_term, type_subject, CreateTerm, LogicAtom,
+    LogicClause, LogicTerm,
+};
+pub(crate) use common::visit_left_var;
+pub(crate) use equality::{same_type, same_type_rules, type_equal_clause, SameTypeRules};

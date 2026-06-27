@@ -1,3 +1,9 @@
+//! Inference-owned type model.
+//!
+//! These types preserve the source shape of lowered HIR type occurrences while adding inference
+//! metadata such as path resolution, associated type projection metadata, and abstract numeric
+//! literal primitives.
+
 use crate::TypeId;
 use syn_sem_hir as hir;
 use syn_sem_name::DefId;
