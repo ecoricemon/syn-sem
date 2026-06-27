@@ -7,6 +7,7 @@
 
 mod collect;
 mod expr;
+mod pat;
 mod resolve;
 mod term;
 
@@ -15,6 +16,7 @@ mod tests;
 
 pub(crate) use collect::TypeRelationCollector;
 pub(crate) use expr::ExprTypeDeriver;
+pub(crate) use pat::PatTypeDeriver;
 pub(crate) use resolve::TypeRelationResolver;
 
 use crate::TypeId;

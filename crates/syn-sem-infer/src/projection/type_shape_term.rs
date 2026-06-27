@@ -144,6 +144,16 @@ pub(crate) fn shape_len_expr<'cx>(ccx: &'cx CommonCx, expr: syn_sem_hir::ExprId)
     ccx.term(func::LEN_EXPR, vec![expr_id(ccx, expr)])
 }
 
+pub(crate) fn shape_len_const_usize<'cx>(ccx: &'cx CommonCx, value: usize) -> LogicTerm<'cx> {
+    ccx.term(
+        func::LEN_CONST,
+        vec![ccx.term(
+            func::CONST_USIZE,
+            vec![atom(intern_prefixed_number(ccx, "usize", value))],
+        )],
+    )
+}
+
 pub(crate) fn shape_name<'cx>(ccx: &'cx CommonCx, name: &str) -> LogicTerm<'cx> {
     ccx.term(func::NAME, vec![ccx.atom(name)])
 }

@@ -96,10 +96,12 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
                         );
                     }
                 }
+                hir::ExprKind::Call { func, args } => {
+                    self.collect_call_facts(expr.id, *func, args);
+                }
                 hir::ExprKind::Array { .. }
                 | hir::ExprKind::Assign { .. }
                 | hir::ExprKind::Binary { .. }
-                | hir::ExprKind::Call { .. }
                 | hir::ExprKind::Closure { .. }
                 | hir::ExprKind::Field { .. }
                 | hir::ExprKind::Index { .. }
@@ -113,6 +115,69 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             }
         }
 
+        self.collect_fn_return_facts();
+    }
+
+    fn collect_call_facts(&mut self, call: hir::ExprId, func: hir::ExprId, args: &[hir::ExprId]) {
+        let hir::ExprKind::Path(path) = &self.hir[func].kind else {
+            return;
+        };
+        let Some(def) = Self::resolve_value_path(self.names, self.hir[func].scope, &path.segments)
+        else {
+            return;
+        };
+        let Some(signature) = self.fn_signature_for_def(def) else {
+            return;
+        };
+        let params = &self.hir[signature].params;
+        let Some(return_param) = params.first() else {
+            return;
+        };
+        let input_params = &params[1..];
+        if args.len() != input_params.len() {
+            return;
+        }
+        // Multi-argument call facts can currently make transitive type-relation queries grow
+        // too much; keep the first call slice to zero- and one-argument functions.
+        if input_params.len() > 1 {
+            return;
+        }
+
+        let Some(return_ty) = self.types.type_for_hir_type(return_param.ty) else {
+            return;
+        };
+        // Non-primitive return shapes can currently make transitive type-relation queries grow
+        // too much; keep the first call-result slice to primitive signatures.
+        if matches!(self.types[return_ty], Type::Primitive(_)) {
+            self.intern_type_equality(TypeSubject::Expr(call), TypeSubject::Type(return_ty));
+        }
+
+        let arg_param_tys = args
+            .iter()
+            .zip(input_params)
+            .filter_map(|(arg, param)| Some((*arg, self.types.type_for_hir_type(param.ty)?)))
+            .collect::<Vec<_>>();
+        if arg_param_tys.len() != args.len() {
+            return;
+        }
+        for (arg, param_ty) in arg_param_tys {
+            self.intern_type_equality(TypeSubject::Expr(arg), TypeSubject::Type(param_ty));
+        }
+    }
+
+    fn fn_signature_for_def(&self, def: name::DefId) -> Option<hir::SignatureId> {
+        self.hir.items().iter().find_map(|item| {
+            if item.def != Some(def) {
+                return None;
+            }
+            let hir::ItemKind::Fn { signature, .. } = item.kind else {
+                return None;
+            };
+            Some(signature)
+        })
+    }
+
+    fn collect_fn_return_facts(&mut self) {
         for item in self.hir.items() {
             let hir::ItemKind::Fn {
                 signature, block, ..
@@ -120,19 +185,104 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             else {
                 continue;
             };
-            let Some(tail_expr) = self.hir.lowered_blocks()[block].tail_expr else {
-                continue;
-            };
             let Some(return_param) = self.hir[signature].params.first() else {
                 continue;
             };
-            let Some(return_ty_id) = self.types.type_for_hir_type(return_param.ty) else {
+            let Some(return_ty) = self.types.type_for_hir_type(return_param.ty) else {
                 continue;
             };
-            self.intern_type_equality(
-                TypeSubject::Expr(tail_expr),
-                TypeSubject::Type(return_ty_id),
-            );
+            self.collect_tail_return_fact(block, return_ty);
+            self.collect_return_expr_facts_in_block(block, return_ty);
+        }
+    }
+
+    fn collect_tail_return_fact(&mut self, block: hir::BlockId, return_ty: TypeId) {
+        let Some(tail_expr) = self.hir.lowered_blocks()[block].tail_expr else {
+            return;
+        };
+        self.intern_type_equality(TypeSubject::Expr(tail_expr), TypeSubject::Type(return_ty));
+    }
+
+    fn collect_return_expr_facts_in_block(&mut self, block: hir::BlockId, return_ty: TypeId) {
+        let exprs = self.hir.lowered_blocks()[block]
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                hir::lower::Stmt::Expr(expr) => Some(*expr),
+                hir::lower::Stmt::Local(local) => local.init,
+                hir::lower::Stmt::Item(_) => None,
+            })
+            .collect::<Vec<_>>();
+        for expr in exprs {
+            self.collect_return_expr_facts_in_expr(expr, return_ty);
+        }
+    }
+
+    fn collect_return_expr_facts_in_expr(&mut self, expr: hir::ExprId, return_ty: TypeId) {
+        match &self.hir[expr].kind {
+            hir::ExprKind::Return { expr: Some(value) } => {
+                let value = *value;
+                self.intern_type_equality(TypeSubject::Expr(value), TypeSubject::Type(return_ty));
+                self.collect_return_expr_facts_in_expr(value, return_ty);
+            }
+            hir::ExprKind::Return { expr: None }
+            | hir::ExprKind::Closure { .. }
+            | hir::ExprKind::Const { .. }
+            | hir::ExprKind::Lit(_)
+            | hir::ExprKind::Path(_) => {}
+            hir::ExprKind::Array { elems } | hir::ExprKind::Tuple { elems } => {
+                let elems = elems.clone();
+                for elem in elems {
+                    self.collect_return_expr_facts_in_expr(elem, return_ty);
+                }
+            }
+            hir::ExprKind::Assign { left, right } | hir::ExprKind::Binary { left, right } => {
+                let (left, right) = (*left, *right);
+                self.collect_return_expr_facts_in_expr(left, return_ty);
+                self.collect_return_expr_facts_in_expr(right, return_ty);
+            }
+            hir::ExprKind::Block { block } => {
+                self.collect_return_expr_facts_in_block(*block, return_ty);
+            }
+            hir::ExprKind::Call { func, args } => {
+                let func = *func;
+                let args = args.clone();
+                self.collect_return_expr_facts_in_expr(func, return_ty);
+                for arg in args {
+                    self.collect_return_expr_facts_in_expr(arg, return_ty);
+                }
+            }
+            hir::ExprKind::Cast { expr, .. }
+            | hir::ExprKind::Field { base: expr, .. }
+            | hir::ExprKind::Paren { expr }
+            | hir::ExprKind::Reference { expr, .. }
+            | hir::ExprKind::Repeat { expr, .. }
+            | hir::ExprKind::Unary { expr } => {
+                self.collect_return_expr_facts_in_expr(*expr, return_ty);
+            }
+            hir::ExprKind::Index { expr, index } => {
+                let (expr, index) = (*expr, *index);
+                self.collect_return_expr_facts_in_expr(expr, return_ty);
+                self.collect_return_expr_facts_in_expr(index, return_ty);
+            }
+            hir::ExprKind::MethodCall { receiver, args, .. } => {
+                let receiver = *receiver;
+                let args = args.clone();
+                self.collect_return_expr_facts_in_expr(receiver, return_ty);
+                for arg in args {
+                    self.collect_return_expr_facts_in_expr(arg, return_ty);
+                }
+            }
+            hir::ExprKind::Struct { fields, rest, .. } => {
+                let fields = fields.clone();
+                let rest = *rest;
+                for field in fields {
+                    self.collect_return_expr_facts_in_expr(field.expr, return_ty);
+                }
+                if let Some(rest) = rest {
+                    self.collect_return_expr_facts_in_expr(rest, return_ty);
+                }
+            }
         }
     }
 
@@ -167,10 +317,22 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
                 self.bind_pat_to_type(*pat, ty);
             }
+            hir::PatKind::Tuple { elems } => {
+                let pat_elems = elems.clone();
+                let Type::Tuple { elems: ty_elems } = &self.types[ty] else {
+                    return;
+                };
+                if pat_elems.len() != ty_elems.len() {
+                    return;
+                }
+                let ty_elems = ty_elems.clone();
+                for (pat, ty) in pat_elems.into_iter().zip(ty_elems) {
+                    self.bind_pat_to_type(pat, ty);
+                }
+            }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
             | hir::PatKind::Struct { .. }
-            | hir::PatKind::Tuple { .. }
             | hir::PatKind::Unsupported => {}
         }
     }

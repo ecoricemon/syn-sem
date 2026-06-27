@@ -6,8 +6,8 @@
 //! focused query methods for upper semantic phases.
 
 use crate::{
-    ExprTypeDeriver, GenericArg, ImplAssocType, ImplAssocTypeCollector, InferTypes, Path,
-    PathSegment, PathType, PathTypeResolution, ProjectionCollector, ProjectionDb,
+    ExprTypeDeriver, GenericArg, ImplAssocType, ImplAssocTypeCollector, InferTypes, PatTypeDeriver,
+    Path, PathSegment, PathType, PathTypeResolution, ProjectionCollector, ProjectionDb,
     ProjectionNormalizationResult, ProjectionNormalizer, ProjectionType, QSelf, TraitBound,
     TraitBoundCollector, Type, TypeId, TypeLowering, TypeParamBound, TypeRelationCollector,
     TypeRelationDb, TypeRelationResolver,
@@ -65,7 +65,7 @@ impl<'cx> InferDb<'cx> {
     /// * collect trait bounds, HIR type occurrences, impl associated types, type
     ///   relation equality facts, and projection obligations;
     /// * normalize associated type projections through trait matches and impl associated types;
-    /// * iterate type relation resolution with expression result fact derivation;
+    /// * iterate type relation resolution with expression result and pattern binding fact derivation;
     /// * expose the resolved expression and definition type lookups.
     ///
     /// Expression result inference is still narrow and currently derives only the expression forms
@@ -85,7 +85,8 @@ impl<'cx> InferDb<'cx> {
         loop {
             db.type_relations.clear_resolved();
             TypeRelationResolver::new(&mut db.type_relations, ccx, &db.types).resolve();
-            let changed = ExprTypeDeriver::new(hir, &mut db.type_relations, &mut db.types).derive();
+            let changed = ExprTypeDeriver::new(hir, &mut db.type_relations, &mut db.types).derive()
+                | PatTypeDeriver::new(hir, &mut db.type_relations, &db.types).derive();
             if !changed {
                 break;
             }
@@ -2112,7 +2113,9 @@ mod tests {
         let Type::Array { len, .. } = &infer[infer_ty_id] else {
             panic!("array field should lower to an array type");
         };
-        let ArrayLen::Expr(expr) = len;
+        let ArrayLen::Expr(expr) = len else {
+            panic!("source array type length should remain a HIR expression");
+        };
         let hir::TypeKind::Array {
             len: hir::ArrayLen::Expr(hir_expr),
             ..

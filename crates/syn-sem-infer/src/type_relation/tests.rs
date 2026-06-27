@@ -1,5 +1,5 @@
 use super::*;
-use crate::{InferDb, PrimitiveType, Type, TypeId};
+use crate::{ArrayLen, InferDb, PrimitiveType, Type, TypeId};
 use syn_sem_ast as ast;
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::CommonCx;
@@ -128,6 +128,297 @@ fn derives_reference_expression_types_from_resolved_operands() {
         PrimitiveType::Usize,
         false,
     );
+}
+
+#[test]
+fn derives_tuple_expression_types_from_resolved_operands() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize, y: bool) {
+            let t = (x, y);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Tuple { elems } = &hir[init].kind else {
+        panic!("expected tuple initializer");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    let [x_expr, y_expr] = elems.as_slice() else {
+        panic!("expected two tuple elements");
+    };
+    assert_usize(&infer, infer.type_for_hir_expr(*x_expr));
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(*y_expr),
+        PrimitiveType::Bool,
+    );
+    assert_tuple_of_primitives(
+        &infer,
+        infer.type_for_hir_expr(init),
+        &[PrimitiveType::Usize, PrimitiveType::Bool],
+    );
+    assert_tuple_of_primitives(
+        &infer,
+        infer.type_for_def(local_def),
+        &[PrimitiveType::Usize, PrimitiveType::Bool],
+    );
+}
+
+#[test]
+fn derives_array_expression_types_from_resolved_elements() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize, y: usize) {
+            let a = [x, y];
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Array { elems } = &hir[init].kind else {
+        panic!("expected array initializer");
+    };
+    let [x_expr, y_expr] = elems.as_slice() else {
+        panic!("expected two array elements");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(*x_expr));
+    assert_usize(&infer, infer.type_for_hir_expr(*y_expr));
+    assert_array_of_primitive(
+        &infer,
+        infer.type_for_hir_expr(init),
+        PrimitiveType::Usize,
+        ArrayLen::ConstUsize(2),
+    );
+    assert_array_of_primitive(
+        &infer,
+        infer.type_for_def(local_def),
+        PrimitiveType::Usize,
+        ArrayLen::ConstUsize(2),
+    );
+}
+
+#[test]
+fn derives_repeat_expression_types_from_resolved_operand() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize, n: usize) {
+            let a = [x; n];
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Repeat { expr, len } = hir[init].kind else {
+        panic!("expected repeat initializer");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(expr));
+    assert_usize(&infer, infer.type_for_hir_expr(len));
+    assert_array_of_primitive(
+        &infer,
+        infer.type_for_hir_expr(init),
+        PrimitiveType::Usize,
+        ArrayLen::Expr(len),
+    );
+    assert_array_of_primitive(
+        &infer,
+        infer.type_for_def(local_def),
+        PrimitiveType::Usize,
+        ArrayLen::Expr(len),
+    );
+}
+
+#[test]
+fn derives_free_function_call_result_and_argument_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn takes_usize(x: usize) -> usize {
+            x
+        }
+
+        fn f() {
+            let y = takes_usize(1);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Call { args, .. } = &hir[init].kind else {
+        panic!("expected call initializer");
+    };
+    let [arg] = args.as_slice() else {
+        panic!("expected one call argument");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(*arg));
+    assert_usize(&infer, infer.type_for_hir_expr(init));
+    assert_usize(&infer, infer.type_for_def(local_def));
+}
+
+#[test]
+fn derives_tuple_pattern_bindings_from_resolved_initializer() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(pair: (usize, bool)) {
+            let (a, b) = pair;
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let [a_def, b_def] = local.bindings.as_slice() else {
+        panic!("tuple pattern should introduce two bindings");
+    };
+
+    assert_primitive(&infer, infer.type_for_def(*a_def), PrimitiveType::Usize);
+    assert_primitive(&infer, infer.type_for_def(*b_def), PrimitiveType::Bool);
+}
+
+#[test]
+fn derives_tuple_pattern_bindings_from_annotation() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f() {
+            let (a, b): (usize, bool) = (1, true);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let [a_def, b_def] = local.bindings.as_slice() else {
+        panic!("tuple pattern should introduce two bindings");
+    };
+
+    assert_primitive(&infer, infer.type_for_def(*a_def), PrimitiveType::Usize);
+    assert_primitive(&infer, infer.type_for_def(*b_def), PrimitiveType::Bool);
+}
+
+#[test]
+fn constrains_return_operand_to_function_return_type() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize) -> usize {
+            return x;
+        }
+        "#,
+    );
+
+    let operand = first_return_operand_in_function(&hir, "f");
+
+    assert_usize(&infer, infer.type_for_hir_expr(operand));
+}
+
+#[test]
+fn refines_returned_abstract_numeric_literal_to_return_type() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f() -> i32 {
+            return 1;
+        }
+        "#,
+    );
+
+    let operand = first_return_operand_in_function(&hir, "f");
+
+    assert_primitive(&infer, infer.type_for_hir_expr(operand), PrimitiveType::I32);
+}
+
+#[test]
+fn constrains_return_operand_inside_nested_blocks() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize) -> usize {
+            {
+                return x;
+            }
+        }
+        "#,
+    );
+
+    let operand = first_return_operand_in_function(&hir, "f");
+
+    assert_usize(&infer, infer.type_for_hir_expr(operand));
 }
 
 #[test]
@@ -314,6 +605,39 @@ fn assert_primitive(infer: &InferDb<'_>, ty: Option<TypeId>, expected: Primitive
     assert_eq!(infer[ty_id], Type::Primitive(expected));
 }
 
+fn first_return_operand_in_function(hir: &Hir<'_>, name: &str) -> hir::ExprId {
+    first_return_operand_in_block(hir, function_block(hir, name))
+        .unwrap_or_else(|| panic!("expected function `{name}` to contain a value return"))
+}
+
+fn first_return_operand_in_block(hir: &Hir<'_>, block: hir::BlockId) -> Option<hir::ExprId> {
+    for stmt in &hir.lowered_blocks()[block].stmts {
+        let expr = match stmt {
+            hir::lower::Stmt::Expr(expr) => *expr,
+            hir::lower::Stmt::Local(local) => {
+                if let Some(expr) = local.init {
+                    expr
+                } else {
+                    continue;
+                }
+            }
+            hir::lower::Stmt::Item(_) => continue,
+        };
+        if let Some(operand) = first_return_operand_in_expr(hir, expr) {
+            return Some(operand);
+        }
+    }
+    None
+}
+
+fn first_return_operand_in_expr(hir: &Hir<'_>, expr: hir::ExprId) -> Option<hir::ExprId> {
+    match &hir[expr].kind {
+        hir::ExprKind::Return { expr } => *expr,
+        hir::ExprKind::Block { block } => first_return_operand_in_block(hir, *block),
+        _ => None,
+    }
+}
+
 fn assert_reference_to_primitive(
     infer: &InferDb<'_>,
     ty: Option<TypeId>,
@@ -326,4 +650,29 @@ fn assert_reference_to_primitive(
     };
     assert_eq!(is_mut, expected_mut);
     assert_eq!(infer[elem], Type::Primitive(expected));
+}
+
+fn assert_array_of_primitive(
+    infer: &InferDb<'_>,
+    ty: Option<TypeId>,
+    expected: PrimitiveType,
+    expected_len: ArrayLen,
+) {
+    let ty_id = ty.expect("expected a resolved type");
+    let Type::Array { elem, len } = infer[ty_id] else {
+        panic!("expected array type");
+    };
+    assert_eq!(infer[elem], Type::Primitive(expected));
+    assert_eq!(len, expected_len);
+}
+
+fn assert_tuple_of_primitives(infer: &InferDb<'_>, ty: Option<TypeId>, expected: &[PrimitiveType]) {
+    let ty_id = ty.expect("expected a resolved type");
+    let Type::Tuple { elems } = &infer[ty_id] else {
+        panic!("expected tuple type");
+    };
+    assert_eq!(elems.len(), expected.len());
+    for (elem, expected) in elems.iter().zip(expected) {
+        assert_eq!(infer[*elem], Type::Primitive(*expected));
+    }
 }
