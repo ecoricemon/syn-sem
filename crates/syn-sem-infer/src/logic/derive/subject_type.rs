@@ -1,11 +1,11 @@
 //! Logic-backed subject type equality derivation.
 
 use crate::{
-    logic::term, InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId,
-    TypeSubject,
+    logic::term::{self, symbol::var},
+    InferTypes, PrimitiveType, ResolvedTypeFact, SubjectTypeDb, Type, TypeId, TypeSubject,
 };
 use logic_eval::Database;
-use syn_sem_common::{CommonCx, Set};
+use syn_sem_common::{CommonCx, Set, VecUniqueExt};
 
 /// Uses [`SubjectTypeLogic`] to resolve subject equality, then stores the derived type facts.
 pub(crate) struct SubjectTypeDeriver<'a, 'cx> {
@@ -47,7 +47,7 @@ impl<'a, 'cx> SubjectTypeDeriver<'a, 'cx> {
                 }
                 let candidates = logic.resolved_types(subject);
                 self.canonical_type(&candidates)
-                    .map(|ty_id| ResolvedTypeFact { subject, ty_id })
+                    .map(|ty| ResolvedTypeFact { subject, ty })
             })
             .collect()
     }
@@ -122,31 +122,27 @@ impl<'a, 'cx> SubjectTypeLogic<'a, 'cx> {
             self.db
                 .insert_clause(term::type_equal_clause(self.ccx, *fact));
         }
-        for (ty_id, _) in self
+        for (ty, _) in self
             .types
             .iter()
             .filter(|(_, ty)| !matches!(ty, Type::Infer))
         {
             self.db
-                .insert_clause(term::type_candidate_clause(self.ccx, ty_id));
+                .insert_clause(term::type_candidate_clause(self.ccx, ty));
         }
     }
 
     fn resolved_types(&mut self, subject: TypeSubject) -> Vec<TypeId> {
         let mut query = self.db.query(term::resolved_type_query(self.ccx, subject));
         let mut types = Vec::new();
-        while let Some(result) = query.prove_next() {
-            for assignment in result {
-                if assignment.get_lhs_variable().as_ref() != term::VAR_TYPE {
-                    continue;
-                }
-                let Some(ty_id) = term::type_id_from_term(&assignment.rhs()) else {
-                    continue;
-                };
-                if !types.contains(&ty_id) {
-                    types.push(ty_id);
-                }
-            }
+        while let Some(answer) = query.prove_next() {
+            let Some(ty) = answer
+                .get(var::TYPE)
+                .and_then(|term| term::type_id_from_term(&term))
+            else {
+                continue;
+            };
+            types.push_unique(ty);
         }
         types
     }

@@ -8,7 +8,7 @@ pub enum Type<'cx> {
     /// Fixed-length array type.
     Array {
         /// Element type.
-        elem_id: TypeId,
+        elem: TypeId,
         /// Array length expression shape.
         len: ArrayLen,
     },
@@ -21,19 +21,19 @@ pub enum Type<'cx> {
     /// Borrowed reference type.
     Reference {
         /// Referenced type.
-        elem_id: TypeId,
+        elem: TypeId,
         /// Whether the reference is mutable.
         is_mut: bool,
     },
     /// Dynamically sized slice type.
     Slice {
         /// Element type.
-        elem_id: TypeId,
+        elem: TypeId,
     },
     /// Tuple type.
     Tuple {
         /// Tuple element types.
-        elem_ids: Vec<TypeId>,
+        elems: Vec<TypeId>,
     },
 }
 
@@ -44,43 +44,50 @@ pub enum PrimitiveType {
     AbstractInt,
     /// Unsuffixed floating-point literal type before it is constrained to a concrete float primitive.
     AbstractFloat,
-    /// `bool`.
     Bool,
-    /// `char`.
     Char,
-    /// `str`.
     Str,
-    /// `i8`.
     I8,
-    /// `i16`.
     I16,
-    /// `i32`.
     I32,
-    /// `i64`.
     I64,
-    /// `i128`.
     I128,
-    /// `isize`.
     Isize,
-    /// `u8`.
     U8,
-    /// `u16`.
     U16,
-    /// `u32`.
     U32,
-    /// `u64`.
     U64,
-    /// `u128`.
     U128,
-    /// `usize`.
     Usize,
-    /// `f32`.
     F32,
-    /// `f64`.
     F64,
 }
 
 impl PrimitiveType {
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::AbstractInt => "abstract_int",
+            Self::AbstractFloat => "abstract_float",
+            Self::Bool => "bool",
+            Self::Char => "char",
+            Self::Str => "str",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I128 => "i128",
+            Self::Isize => "isize",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::Usize => "usize",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+
     pub(crate) fn is_abstract_of(self, concrete: Self) -> bool {
         matches!(
             (self, concrete),
@@ -151,9 +158,9 @@ pub struct PathType<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QSelf {
     /// Self type written inside `<...>`.
-    pub self_ty_id: TypeId,
+    pub self_: TypeId,
     /// Trait path in `<Self as Trait>`, when present.
-    pub trait_ty_id: Option<TypeId>,
+    pub trait_: Option<TypeId>,
 }
 
 /// Resolution state for a non-primitive path type.
@@ -179,11 +186,11 @@ pub enum PathTypeResolution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionType {
     /// Associated type definition selected for the projection.
-    pub assoc_type: DefId,
+    pub assoc: DefId,
     /// Self type for the projection, when represented.
-    pub self_ty_id: Option<TypeId>,
+    pub self_: Option<TypeId>,
     /// Trait type for the projection, when represented.
-    pub trait_ty_id: Option<TypeId>,
+    pub trait_: Option<TypeId>,
 }
 
 /// Plain path segments used by inference.
@@ -217,7 +224,7 @@ pub enum GenericArg<'cx> {
         /// Associated type name.
         name: syn_sem_name::Name<'cx>,
         /// Assigned type.
-        ty_id: TypeId,
+        ty: TypeId,
     },
     /// Associated const equality.
     AssocConst {

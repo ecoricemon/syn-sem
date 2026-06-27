@@ -294,6 +294,29 @@ pub fn absolute_file_path(file_path: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+/// Interns a string built from `prefix` followed by `number`.
+pub fn intern_prefixed_number<'cx>(
+    ccx: &'cx CommonCx,
+    prefix: &str,
+    number: usize,
+) -> InternedStr<'cx> {
+    struct PrefixedNumber<'a> {
+        prefix: &'a str,
+        number: usize,
+    }
+
+    impl Display for PrefixedNumber<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.prefix)?;
+            Display::fmt(&self.number, f)
+        }
+    }
+
+    let len = prefix.len() + number.checked_ilog10().unwrap_or(0) as usize + 1;
+    ccx.intern_display(&PrefixedNumber { prefix, number }, len)
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,7 +31,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
         for item in self.hir.items() {
             let hir::ItemKind::Impl {
                 trait_,
-                self_ty_id,
+                self_,
                 items,
                 ..
             } = &item.kind
@@ -41,7 +41,7 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
             let Some(trait_) = trait_ else {
                 continue;
             };
-            let impl_self_ty_id = self.ty_lowerer.lower_hir_type(*self_ty_id);
+            let impl_self = self.ty_lowerer.lower_hir_type(*self_);
             let trait_ty_id = self
                 .ty_lowerer
                 .lower_plain_path_as_type(trait_, item.parent_scope);
@@ -49,21 +49,21 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
                 continue;
             };
             for assoc_item in items.iter().map(|id| &self.hir[*id]) {
-                let hir::AssocItemKind::ImplType { ty_id } = assoc_item.kind else {
+                let hir::AssocItemKind::ImplType { ty } = assoc_item.kind else {
                     continue;
                 };
-                let ResolveResult::Found(assoc_type) =
+                let ResolveResult::Found(assoc) =
                     self.names
                         .member(trait_def, Namespace::Type, assoc_item.name)
                 else {
                     continue;
                 };
-                let value_ty_id = self.ty_lowerer.lower_hir_type(ty_id);
+                let value_ty = self.ty_lowerer.lower_hir_type(ty);
                 self.facts.push(AssocTypeImplFact {
-                    impl_self_ty_id,
-                    trait_ty_id,
-                    assoc_type,
-                    value_ty_id,
+                    impl_self,
+                    trait_: trait_ty_id,
+                    assoc,
+                    value_ty,
                 });
             }
         }
@@ -73,17 +73,17 @@ impl<'a, 'cx> AssocTypeImplFactCollector<'a, 'cx> {
 
 /// Associated type value assigned by a trait implementation.
 ///
-/// For example, `impl Iterator for Vec { type Item = u32; }` lowers to one fact whose
-/// `impl_self_ty_id` is `Vec`, `trait_ty_id` is `Iterator`, `assoc_type` is the definition of
-/// `Iterator::Item`, and `value_ty_id` is `u32`.
+/// For example, `impl Iterator for Vec { type Item = u32; }` lowers to one fact whose `impl_self`
+/// is `Vec`, `trait_` is `Iterator`, `assoc` is the definition of `Iterator::Item`, and `value_ty`
+/// is `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AssocTypeImplFact {
     /// Implementing self type in `impl Trait for Self`.
-    pub(crate) impl_self_ty_id: TypeId,
+    pub(crate) impl_self: TypeId,
     /// Implemented trait type in `impl Trait for Self`.
-    pub(crate) trait_ty_id: TypeId,
+    pub(crate) trait_: TypeId,
     /// Associated type definition assigned by the impl item.
-    pub(crate) assoc_type: DefId,
+    pub(crate) assoc: DefId,
     /// Type assigned by the impl item.
-    pub(crate) value_ty_id: TypeId,
+    pub(crate) value_ty: TypeId,
 }

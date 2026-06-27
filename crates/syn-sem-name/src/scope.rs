@@ -1,4 +1,5 @@
 use crate::{DefId, Map, Name, Namespace, ScopeId};
+use syn_sem_common::VecUniqueExt;
 
 /// Lexical scope with namespace-partitioned bindings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,12 +96,7 @@ impl<'cx> Bindings<'cx> {
         def: DefId,
     ) -> bool {
         let binding = self.map_mut(namespace).entry(name).or_default();
-        if binding.contains(def) {
-            false
-        } else {
-            binding.push(def);
-            true
-        }
+        binding.push_unique(def)
     }
 
     /// Returns the mutable map for `namespace`.
@@ -149,8 +145,8 @@ impl Binding {
         self.defs.push(def);
     }
 
-    /// Returns whether this binding already contains `def`.
-    pub(crate) fn contains(&self, def: DefId) -> bool {
-        self.defs.contains(&def)
+    /// Appends a definition unless this binding already contains it.
+    pub(crate) fn push_unique(&mut self, def: DefId) -> bool {
+        self.defs.push_unique(def)
     }
 }

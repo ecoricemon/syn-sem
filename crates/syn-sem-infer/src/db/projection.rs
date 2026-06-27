@@ -16,12 +16,13 @@ impl ProjectionCollector {
                 let PathTypeResolution::Projection(projection) = &path_ty.resolution else {
                     return None;
                 };
+                let self_ = projection.self_?;
 
                 Some(ProjectionObligation {
-                    projection_ty_id: ty_id,
-                    assoc_type: projection.assoc_type,
-                    self_ty_id: projection.self_ty_id,
-                    trait_ty_id: projection.trait_ty_id,
+                    projection: ty_id,
+                    assoc: projection.assoc,
+                    self_,
+                    trait_: projection.trait_,
                 })
             })
             .collect();
@@ -57,9 +58,9 @@ pub(crate) struct ProjectionDb {
     /// Impl self type matches used for projection normalization.
     /// * Made in the derive stage.
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
-    /// Generic type bindings discovered from impl self type matches.
+    /// Type argument bindings discovered from impl self type matches.
     /// * Made in the derive stage.
-    pub(crate) type_bindings: Vec<TypeBindingFact>,
+    pub(crate) type_bindings: Vec<ImplSelfTypeArgBinding>,
     /// Type substitutions used for projection normalization.
     /// * Made in the derive stage.
     pub(crate) type_substitutions: Vec<TypeSubstitution>,
@@ -83,11 +84,11 @@ impl ProjectionDb {
     /// Returns normalization results for one projection type occurrence.
     pub(crate) fn normalizations_for(
         &self,
-        projection_ty_id: TypeId,
+        projection: TypeId,
     ) -> impl Iterator<Item = &ProjectionNormalization> {
         self.normalizations
             .iter()
-            .filter(move |normalization| normalization.projection_ty_id == projection_ty_id)
+            .filter(move |normalization| normalization.projection == projection)
     }
 
     /// Returns the unique normalized value type for one associated type projection.
@@ -97,11 +98,11 @@ impl ProjectionDb {
     #[cfg(test)]
     pub(crate) fn normalized_type(
         &self,
-        projection_ty_id: TypeId,
+        projection: TypeId,
         is_projection: bool,
     ) -> Option<TypeId> {
-        match self.normalization(projection_ty_id, is_projection) {
-            ProjectionNormalizationResult::Known(value_ty_id) => Some(value_ty_id),
+        match self.normalization(projection, is_projection) {
+            ProjectionNormalizationResult::Known(value_ty) => Some(value_ty),
             ProjectionNormalizationResult::NotProjection
             | ProjectionNormalizationResult::NoNormalization
             | ProjectionNormalizationResult::Ambiguous => None,
@@ -111,24 +112,24 @@ impl ProjectionDb {
     /// Returns the normalization query result for one associated type projection.
     pub fn normalization(
         &self,
-        projection_ty_id: TypeId,
+        projection: TypeId,
         is_projection: bool,
     ) -> ProjectionNormalizationResult {
         if !is_projection {
             return ProjectionNormalizationResult::NotProjection;
         }
 
-        let mut normalizations = self.normalizations_for(projection_ty_id);
-        let Some(value_ty_id) = normalizations
+        let mut normalizations = self.normalizations_for(projection);
+        let Some(value_ty) = normalizations
             .next()
-            .map(|normalization| normalization.value_ty_id)
+            .map(|normalization| normalization.value_ty)
         else {
             return ProjectionNormalizationResult::NoNormalization;
         };
         if normalizations.next().is_some() {
             return ProjectionNormalizationResult::Ambiguous;
         }
-        ProjectionNormalizationResult::Known(value_ty_id)
+        ProjectionNormalizationResult::Known(value_ty)
     }
 }
 
@@ -136,84 +137,90 @@ impl ProjectionDb {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionObligation {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection_ty_id: TypeId,
+    pub(crate) projection: TypeId,
     /// Definition that provides the associated type name requested by the projection.
     ///
     /// For `<T>::Item`, this is the requested `Item`, not necessarily the concrete target `Item`
     /// such as `Iterator::Item`. The concrete trait member definition is selected later in
     /// [`ProjectionMatch`].
-    pub(crate) assoc_type: DefId,
-    /// Self type for the projection, when represented.
-    pub(crate) self_ty_id: Option<TypeId>,
+    pub(crate) assoc: DefId,
+    /// Self type for the projection.
+    pub(crate) self_: TypeId,
     /// Trait type for the projection, when represented.
-    pub(crate) trait_ty_id: Option<TypeId>,
+    pub(crate) trait_: Option<TypeId>,
 }
 
 /// Associated type projection matched against a concrete trait member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionMatch {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection_ty_id: TypeId,
+    pub(crate) projection: TypeId,
     /// Self type for the projection.
-    pub(crate) self_ty_id: TypeId,
+    pub(crate) self_: TypeId,
     /// Associated type member found in the candidate trait.
-    pub(crate) assoc_type: DefId,
+    pub(crate) assoc: DefId,
     /// Trait type that provides the associated type member.
-    pub(crate) trait_ty_id: TypeId,
+    pub(crate) trait_: TypeId,
 }
 
 /// Impl self type pattern matched against a projection self type.
+///
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that projection
+/// self `Vec<u32>` matches impl self `Vec<T>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ImplSelfMatch {
     /// Self type from the projection, such as `Vec<u32>`.
-    pub(crate) projection_self_ty_id: TypeId,
+    pub(crate) projection_self: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
-    pub(crate) impl_self_ty_id: TypeId,
+    pub(crate) impl_self: TypeId,
 }
 
-/// Generic type binding discovered while matching an impl self type.
+/// Type argument bound to an impl-self generic while matching an impl self type.
+///
+/// For `<Vec<u32> as Trait>::Output` and `impl<T> Trait for Vec<T>`, this records that generic `T`
+/// from impl self `Vec<T>` is bound to projection argument `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TypeBindingFact {
+pub(crate) struct ImplSelfTypeArgBinding {
     /// Self type from the projection, such as `Vec<u32>`.
-    pub(crate) projection_self_ty_id: TypeId,
+    pub(crate) projection_self: TypeId,
     /// Self type from the impl header, such as `Vec<T>`.
-    pub(crate) impl_self_ty_id: TypeId,
+    pub(crate) impl_self: TypeId,
     /// Generic type occurrence from the impl self type, such as `T`.
-    pub(crate) generic_ty_id: TypeId,
+    pub(crate) generic: TypeId,
     /// Type argument matched for the generic, such as `u32`.
-    pub(crate) arg_ty_id: TypeId,
+    pub(crate) arg: TypeId,
 }
 
 /// Type substitution fact used while normalizing associated type projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TypeSubstitution {
     /// Self type from the projection that requested the substitution.
-    pub(crate) projection_self_ty_id: TypeId,
+    pub(crate) projection_self: TypeId,
     /// Self type from the impl header whose value type is substituted.
-    pub(crate) impl_self_ty_id: TypeId,
+    pub(crate) impl_self: TypeId,
     /// Type before substitution, such as `T`.
-    pub(crate) value_ty_id: TypeId,
+    pub(crate) value_ty: TypeId,
     /// Generic type occurrence being substituted, such as `T`.
-    pub(crate) generic_ty_id: TypeId,
+    pub(crate) generic: TypeId,
     /// Type argument used for the generic, such as `u32`.
-    pub(crate) arg_ty_id: TypeId,
+    pub(crate) arg: TypeId,
     /// Type after substitution, such as `u32`.
-    pub(crate) substituted_ty_id: TypeId,
+    pub(crate) substituted: TypeId,
 }
 
 /// Associated type projection normalized to an impl-provided value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionNormalization {
     /// Type occurrence whose value is the projection result.
-    pub(crate) projection_ty_id: TypeId,
+    pub(crate) projection: TypeId,
     /// Self type for the projection.
-    pub(crate) self_ty_id: TypeId,
+    pub(crate) self_: TypeId,
     /// Associated type member used for normalization.
-    pub(crate) assoc_type: DefId,
+    pub(crate) assoc: DefId,
     /// Trait type that provides the associated type member.
-    pub(crate) trait_ty_id: TypeId,
+    pub(crate) trait_: TypeId,
     /// Type assigned by the matching impl item.
-    pub(crate) value_ty_id: TypeId,
+    pub(crate) value_ty: TypeId,
 }
 
 /// Result of asking whether one projection type can normalize to a value type.
