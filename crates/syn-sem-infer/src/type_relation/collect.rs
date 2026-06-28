@@ -1,7 +1,11 @@
 //! Initial type relation equality fact collection.
 
 use super::{TypeEqualityFact, TypeRelationDb, TypeSubject};
-use crate::{InferTypes, PrimitiveType, Type, TypeId};
+use crate::{
+    GenericArg, InferTypes, PathType, PathTypeResolution, PrimitiveType, ProjectionType, QSelf,
+    Type, TypeId,
+};
+use std::collections::hash_map::Entry;
 use syn_sem_common::{Map, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name as name;
@@ -11,6 +15,12 @@ pub(crate) struct TypeRelationCollector<'a, 'cx> {
     names: &'a name::NameDb<'cx>,
     types: &'a mut InferTypes<'cx>,
     equalities: Vec<TypeEqualityFact>,
+}
+
+#[derive(Default)]
+struct CallTypeSubstitutions<'cx> {
+    by_def: Map<name::DefId, TypeId>,
+    by_name: Map<name::Name<'cx>, TypeId>,
 }
 
 impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
@@ -137,32 +147,254 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
         if args.len() != input_params.len() {
             return;
         }
-        // Multi-argument call facts can currently make transitive type-relation queries grow
-        // too much; keep the first call slice to zero- and one-argument functions.
-        if input_params.len() > 1 {
-            return;
-        }
+
+        let mut call_substitutions = CallTypeSubstitutions::default();
 
         let Some(return_ty) = self.types.type_for_hir_type(return_param.ty) else {
             return;
         };
-        // Non-primitive return shapes can currently make transitive type-relation queries grow
-        // too much; keep the first call-result slice to primitive signatures.
-        if matches!(self.types[return_ty], Type::Primitive(_)) {
-            self.intern_type_equality(TypeSubject::Expr(call), TypeSubject::Type(return_ty));
-        }
+        let return_ty = self.instantiate_call_type(return_ty, &mut call_substitutions);
+        self.intern_type_equality(TypeSubject::Expr(call), TypeSubject::Type(return_ty));
 
         let arg_param_tys = args
             .iter()
             .zip(input_params)
-            .filter_map(|(arg, param)| Some((*arg, self.types.type_for_hir_type(param.ty)?)))
+            .filter_map(|(arg, param)| {
+                let param_ty = self.types.type_for_hir_type(param.ty)?;
+                let param_ty = self.instantiate_call_type(param_ty, &mut call_substitutions);
+                Some((*arg, param_ty))
+            })
             .collect::<Vec<_>>();
         if arg_param_tys.len() != args.len() {
             return;
         }
         for (arg, param_ty) in arg_param_tys {
             self.intern_type_equality(TypeSubject::Expr(arg), TypeSubject::Type(param_ty));
+            if param_ty == return_ty {
+                self.intern_type_equality(TypeSubject::Expr(call), TypeSubject::Expr(arg));
+            }
         }
+    }
+
+    fn instantiate_call_type(
+        &mut self,
+        ty: TypeId,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> TypeId {
+        if let Some((def, name)) = self.generic_param_key(ty) {
+            if let Some(ty) = substitutions.by_def.get(&def).copied() {
+                return ty;
+            }
+            if let Some(name) = name {
+                if let Some(ty) = substitutions.by_name.get(&name).copied() {
+                    substitutions.by_def.insert(def, ty);
+                    return ty;
+                }
+            }
+            let fresh = self.types.insert_fresh_type(Type::Infer);
+            substitutions.by_def.insert(def, fresh);
+            if let Some(name) = name {
+                substitutions.by_name.insert(name, fresh);
+            }
+            return fresh;
+        }
+
+        match self.types[ty].clone() {
+            Type::Array { elem, len } => {
+                let elem = self.instantiate_call_type(elem, substitutions);
+                self.types.intern_type(Type::Array { elem, len })
+            }
+            Type::Infer => self.types.insert_fresh_type(Type::Infer),
+            Type::Primitive(_) => ty,
+            Type::Path(path) => self.instantiate_call_path_type(path, substitutions),
+            Type::Reference { elem, is_mut } => {
+                let elem = self.instantiate_call_type(elem, substitutions);
+                self.types.intern_type(Type::Reference { elem, is_mut })
+            }
+            Type::Slice { elem } => {
+                let elem = self.instantiate_call_type(elem, substitutions);
+                self.types.intern_type(Type::Slice { elem })
+            }
+            Type::Tuple { elems } => {
+                let elems = elems
+                    .into_iter()
+                    .map(|elem| self.instantiate_call_type(elem, substitutions))
+                    .collect();
+                self.types.intern_type(Type::Tuple { elems })
+            }
+        }
+    }
+
+    fn instantiate_call_path_type(
+        &mut self,
+        path: PathType<'cx>,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> TypeId {
+        let resolution = path.resolution;
+        let qself = path
+            .qself
+            .map(|qself| self.instantiate_call_qself(qself, substitutions));
+        let path = crate::Path {
+            segments: path
+                .path
+                .segments
+                .into_iter()
+                .map(|segment| crate::PathSegment {
+                    name: segment.name,
+                    args: segment
+                        .args
+                        .into_iter()
+                        .map(|arg| self.instantiate_call_generic_arg(arg, substitutions))
+                        .collect(),
+                })
+                .collect(),
+        };
+        let resolution = self.instantiate_call_path_resolution(resolution, substitutions);
+        self.types.intern_type(Type::Path(PathType {
+            qself,
+            path,
+            resolution,
+        }))
+    }
+
+    fn instantiate_call_qself(
+        &mut self,
+        qself: QSelf,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> QSelf {
+        QSelf {
+            self_: self.instantiate_call_type(qself.self_, substitutions),
+            trait_: qself
+                .trait_
+                .map(|trait_| self.instantiate_call_type(trait_, substitutions)),
+        }
+    }
+
+    fn instantiate_call_path_resolution(
+        &mut self,
+        resolution: PathTypeResolution,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> PathTypeResolution {
+        match resolution {
+            PathTypeResolution::Projection(projection) => PathTypeResolution::Projection(
+                self.instantiate_call_projection(projection, substitutions),
+            ),
+            PathTypeResolution::GenericParam(def) => {
+                if let Entry::Vacant(entry) = substitutions.by_def.entry(def) {
+                    let fresh = self.types.insert_fresh_type(Type::Infer);
+                    entry.insert(fresh);
+                }
+                PathTypeResolution::Unresolved
+            }
+            PathTypeResolution::Nominal(_)
+            | PathTypeResolution::Ambiguous(_)
+            | PathTypeResolution::Unresolved => resolution,
+        }
+    }
+
+    fn instantiate_call_projection(
+        &mut self,
+        projection: ProjectionType,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> ProjectionType {
+        ProjectionType {
+            assoc: projection.assoc,
+            self_: projection
+                .self_
+                .map(|self_| self.instantiate_call_type(self_, substitutions)),
+            trait_: projection
+                .trait_
+                .map(|trait_| self.instantiate_call_type(trait_, substitutions)),
+        }
+    }
+
+    fn instantiate_call_generic_arg(
+        &mut self,
+        arg: GenericArg<'cx>,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> GenericArg<'cx> {
+        match arg {
+            GenericArg::Type(ty) => GenericArg::Type(self.instantiate_call_type(ty, substitutions)),
+            GenericArg::Const(arg) => GenericArg::Const(arg),
+            GenericArg::AssocType { name, ty } => GenericArg::AssocType {
+                name,
+                ty: self.instantiate_call_type(ty, substitutions),
+            },
+            GenericArg::AssocConst { name, value } => GenericArg::AssocConst { name, value },
+            GenericArg::Constraint { name, bounds } => GenericArg::Constraint {
+                name,
+                bounds: bounds
+                    .into_iter()
+                    .map(|bound| self.instantiate_call_bound(bound, substitutions))
+                    .collect(),
+            },
+            GenericArg::Unsupported => GenericArg::Unsupported,
+        }
+    }
+
+    fn instantiate_call_bound(
+        &mut self,
+        bound: crate::TypeParamBound<'cx>,
+        substitutions: &mut CallTypeSubstitutions<'cx>,
+    ) -> crate::TypeParamBound<'cx> {
+        match bound {
+            crate::TypeParamBound::Trait(path) => crate::TypeParamBound::Trait(crate::Path {
+                segments: path
+                    .segments
+                    .into_iter()
+                    .map(|segment| crate::PathSegment {
+                        name: segment.name,
+                        args: segment
+                            .args
+                            .into_iter()
+                            .map(|arg| self.instantiate_call_generic_arg(arg, substitutions))
+                            .collect(),
+                    })
+                    .collect(),
+            }),
+            crate::TypeParamBound::Unsupported => crate::TypeParamBound::Unsupported,
+        }
+    }
+
+    fn struct_fields_for_type(&self, ty: TypeId) -> Option<&[hir::FieldId]> {
+        let def = self.types.nominal_def(ty)?;
+        self.hir.items().iter().find_map(|item| {
+            if item.def != Some(def) {
+                return None;
+            }
+            let hir::ItemKind::Struct { fields, .. } = &item.kind else {
+                return None;
+            };
+            Some(fields.as_slice())
+        })
+    }
+
+    fn field_type(
+        &self,
+        struct_fields: &[hir::FieldId],
+        member: name::Name<'cx>,
+    ) -> Option<TypeId> {
+        struct_fields.iter().find_map(|field| {
+            let field = &self.hir[*field];
+            if field.name != member {
+                return None;
+            }
+            self.types.type_for_hir_type(field.ty)
+        })
+    }
+
+    fn generic_param_key(&self, ty: TypeId) -> Option<(name::DefId, Option<name::Name<'cx>>)> {
+        let Type::Path(path) = &self.types[ty] else {
+            return None;
+        };
+        let PathTypeResolution::GenericParam(def) = path.resolution else {
+            return None;
+        };
+        let name = match path.path.segments.as_slice() {
+            [segment] => Some(segment.name),
+            _ => None,
+        };
+        Some((def, name))
     }
 
     fn fn_signature_for_def(&self, def: name::DefId) -> Option<hir::SignatureId> {
@@ -236,7 +468,7 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
                     self.collect_return_expr_facts_in_expr(elem, return_ty);
                 }
             }
-            hir::ExprKind::Assign { left, right } | hir::ExprKind::Binary { left, right } => {
+            hir::ExprKind::Assign { left, right } | hir::ExprKind::Binary { left, right, .. } => {
                 let (left, right) = (*left, *right);
                 self.collect_return_expr_facts_in_expr(left, return_ty);
                 self.collect_return_expr_facts_in_expr(right, return_ty);
@@ -257,7 +489,7 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             | hir::ExprKind::Paren { expr }
             | hir::ExprKind::Reference { expr, .. }
             | hir::ExprKind::Repeat { expr, .. }
-            | hir::ExprKind::Unary { expr } => {
+            | hir::ExprKind::Unary { expr, .. } => {
                 self.collect_return_expr_facts_in_expr(*expr, return_ty);
             }
             hir::ExprKind::Index { expr, index } => {
@@ -317,6 +549,9 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
                 self.bind_pat_to_type(*pat, ty);
             }
+            hir::PatKind::Struct { fields, .. } => {
+                self.bind_struct_pat_to_type(fields, ty);
+            }
             hir::PatKind::Tuple { elems } => {
                 let pat_elems = elems.clone();
                 let Type::Tuple { elems: ty_elems } = &self.types[ty] else {
@@ -332,8 +567,20 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
-            | hir::PatKind::Struct { .. }
             | hir::PatKind::Unsupported => {}
+        }
+    }
+
+    fn bind_struct_pat_to_type(&mut self, fields: &[hir::PatStructField<'cx>], ty: TypeId) {
+        let Some(struct_fields) = self.struct_fields_for_type(ty) else {
+            return;
+        };
+        let struct_fields = struct_fields.to_vec();
+        for field in fields {
+            let Some(field_ty) = self.field_type(&struct_fields, field.member) else {
+                continue;
+            };
+            self.bind_pat_to_type(field.pat, field_ty);
         }
     }
 

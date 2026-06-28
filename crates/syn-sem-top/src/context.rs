@@ -2,8 +2,13 @@ use crate::Semantics;
 use std::path::Path;
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result};
-use syn_sem_hir::HirBuilder;
+use syn_sem_eval::{ConstValue, EvalDb};
+use syn_sem_hir::{Hir, HirBuilder};
+use syn_sem_infer::{InferConstFacts, InferConstInt, InferConstValue, InferDb};
 use syn_sem_name::collect::NameCollector;
+use syn_sem_name::NameDb;
+
+const MAX_ANALYSIS_PHASE_ITERATIONS: usize = 8;
 
 /// Top-level orchestration context for extracted `syn-sem` crates.
 ///
@@ -46,7 +51,67 @@ impl<'tcx> TopCx<'tcx> {
         let names = NameCollector::new(name_inputs).collect(entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
         let hir = HirBuilder::new(&names).build(entry_path, file);
-        Ok(Semantics::new(self, names, hir))
+        let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names);
+        Ok(Semantics::new(self, names, hir, infer, eval))
+    }
+
+    fn analyze_phases_to_fixed_point(
+        &'tcx self,
+        hir: &Hir<'tcx>,
+        names: &NameDb<'tcx>,
+    ) -> (InferDb<'tcx>, EvalDb) {
+        let mut const_facts = InferConstFacts::default();
+        for _ in 0..MAX_ANALYSIS_PHASE_ITERATIONS {
+            let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
+            let eval = EvalDb::analyze(&self.common, hir, names, &infer);
+            let next_const_facts = self.infer_const_facts(hir, &eval);
+            if next_const_facts == const_facts {
+                return (infer, eval);
+            }
+            const_facts = next_const_facts;
+        }
+
+        let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
+        let eval = EvalDb::analyze(&self.common, hir, names, &infer);
+        (infer, eval)
+    }
+
+    fn infer_const_facts(&self, hir: &Hir<'tcx>, eval: &EvalDb) -> InferConstFacts {
+        let mut facts = InferConstFacts::default();
+        for expr in hir.exprs() {
+            if let Some(value) = eval
+                .value_for_hir_expr(expr.id)
+                .and_then(Self::infer_const_value)
+            {
+                facts.insert_expr_value(expr.id, value);
+            }
+        }
+        for item in hir.items() {
+            let syn_sem_hir::ItemKind::Const { .. } = item.kind else {
+                continue;
+            };
+            let Some(def) = item.def else {
+                continue;
+            };
+            if let Some(value) = eval
+                .value_for_const_def(def)
+                .and_then(Self::infer_const_value)
+            {
+                facts.insert_def_value(def, value);
+            }
+        }
+        facts
+    }
+
+    fn infer_const_value(value: ConstValue) -> Option<InferConstValue> {
+        match value {
+            ConstValue::Int(value) => Some(InferConstValue::Int(InferConstInt {
+                value: value.value,
+                primitive: value.primitive,
+            })),
+            ConstValue::Bool(value) => Some(InferConstValue::Bool(value)),
+            ConstValue::Float(_) => None,
+        }
     }
 }
 

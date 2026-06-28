@@ -54,6 +54,8 @@ impl<'cx> FromSyn<'cx, syn::Lit> for Lit<'cx> {
 pub struct LitInt<'cx> {
     /// Normalized base-10 digits.
     pub literal: Interned<'cx, str>,
+    /// Primitive suffix text, such as `usize`, when present.
+    pub suffix: Interned<'cx, str>,
     /// Source span of the literal.
     pub span: Span<'cx>,
 }
@@ -68,12 +70,18 @@ impl LitInt<'_> {
     pub fn base10_parse<F: FromStr>(&self) -> Result<F, F::Err> {
         self.base10_digits().parse()
     }
+
+    /// Returns the primitive suffix text, or an empty string when unsuffixed.
+    pub fn suffix(&self) -> &str {
+        &self.suffix
+    }
 }
 
 impl<'cx> FromSyn<'cx, syn::LitInt> for LitInt<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::LitInt>) -> Self {
         Self {
             literal: scx.intern(desc.input.base10_digits()),
+            suffix: scx.intern(desc.input.suffix()),
             span: desc.span(desc.input),
         }
     }
@@ -86,6 +94,8 @@ impl<'cx> FromSyn<'cx, syn::LitInt> for LitInt<'cx> {
 pub struct LitFloat<'cx> {
     /// Normalized base-10 digits.
     pub literal: Interned<'cx, str>,
+    /// Primitive suffix text, such as `f32`, when present.
+    pub suffix: Interned<'cx, str>,
     /// Source span of the literal.
     pub span: Span<'cx>,
 }
@@ -100,12 +110,18 @@ impl LitFloat<'_> {
     pub fn base10_parse<F: FromStr>(&self) -> Result<F, F::Err> {
         self.base10_digits().parse()
     }
+
+    /// Returns the primitive suffix text, or an empty string when unsuffixed.
+    pub fn suffix(&self) -> &str {
+        &self.suffix
+    }
 }
 
 impl<'cx> FromSyn<'cx, syn::LitFloat> for LitFloat<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::LitFloat>) -> Self {
         Self {
             literal: scx.intern(desc.input.base10_digits()),
+            suffix: scx.intern(desc.input.suffix()),
             span: desc.span(desc.input),
         }
     }

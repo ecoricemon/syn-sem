@@ -1,3 +1,4 @@
+use syn_sem_eval::ConstValue;
 use syn_sem_hir::ItemKind;
 use syn_sem_name::{AstNodeId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
 use syn_sem_top::TopCx;
@@ -153,6 +154,59 @@ mod upper_phase_integration {
     use syn_sem_hir as hir;
     use syn_sem_infer as infer;
 
+    fn const_value<'tcx>(
+        semantics: &syn_sem_top::Semantics<'tcx>,
+        name: &str,
+    ) -> Option<ConstValue> {
+        let item = semantics
+            .hir()
+            .items()
+            .iter()
+            .find(|item| matches!(item.name, Some(item_name) if item_name.as_ref() == name))?;
+        let def = item.def?;
+        assert_eq!(semantics.names()[def].kind, DefKind::Const);
+        semantics.eval().value_for_const_def(def)
+    }
+
+    fn assert_const_int(
+        semantics: &syn_sem_top::Semantics<'_>,
+        name: &str,
+        expected_value: u128,
+        expected_primitive: infer::PrimitiveType,
+    ) {
+        let Some(ConstValue::Int(value)) = const_value(semantics, name) else {
+            panic!("{name} should evaluate to an integer");
+        };
+        assert_eq!(value.value, expected_value, "{name} value");
+        assert_eq!(value.primitive, expected_primitive, "{name} primitive");
+    }
+
+    fn assoc_const_arg_for_field<'cx>(
+        hir: &'cx hir::Hir<'cx>,
+        field: hir::FieldId,
+    ) -> &'cx hir::ConstArg<'cx> {
+        let hir::TypeKind::Path(field_path) = &hir[hir[field].ty].kind else {
+            panic!("field should be a path type");
+        };
+        let qself = field_path
+            .qself
+            .as_ref()
+            .expect("field should be a qualified projection");
+        let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+            panic!("projection self type should be a path");
+        };
+        let hir::GenericArg::Type(flag_ty) = &self_path.segments[0].args[0] else {
+            panic!("Uses first argument should be a type");
+        };
+        let hir::TypeKind::Path(flag_path) = &hir[*flag_ty].kind else {
+            panic!("Flag argument should be a path type");
+        };
+        let hir::GenericArg::AssocConst { value, .. } = &flag_path.segments[0].args[0] else {
+            panic!("Flag argument should carry an associated const equality");
+        };
+        value
+    }
+
     // Validates the intended upper-phase consumption pattern:
     // traverse HIR source spine through syn-sem-hir and query definition/scope facts through
     // syn-sem-name, without depending on syn-sem-ast directly.
@@ -181,7 +235,8 @@ mod upper_phase_integration {
             .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, names);
+        let infer =
+            infer::InferDb::analyze(&tcx.common, hir, names, &infer::InferConstFacts::default());
 
         let entry = hir
             .items()
@@ -285,6 +340,355 @@ mod upper_phase_integration {
     }
 
     #[test]
+    fn feeds_evaluated_array_lengths_back_into_inference() {
+        let tcx = TopCx::default();
+        let semantics = tcx
+            .analyze_virtual_file(
+                "array_len.rs",
+                r#"
+            fn f(x: usize) {
+                let a = [x; 1 + 2];
+            }
+            "#,
+            )
+            .unwrap();
+        let hir = semantics.hir();
+        let infer = semantics.infer();
+
+        let item = hir
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "f"))
+            .expect("function should be represented");
+        let ItemKind::Fn { block, .. } = item.kind else {
+            panic!("item should be a function");
+        };
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+            panic!("function should contain one local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let hir::ExprKind::Repeat { len, .. } = hir[init].kind else {
+            panic!("initializer should be a repeat array expression");
+        };
+
+        assert_eq!(semantics.eval().array_len_value(len), Some(3));
+        let init_ty = infer
+            .type_for_hir_expr(init)
+            .expect("repeat array type should be inferred");
+        let infer::Type::Array { elem, len } = infer[init_ty] else {
+            panic!("repeat array should infer to an array type");
+        };
+        assert_eq!(
+            infer[elem],
+            infer::Type::Primitive(infer::PrimitiveType::Usize)
+        );
+        assert_eq!(len, infer::ArrayLen::ConstUsize(3));
+    }
+
+    #[test]
+    fn feeds_evaluated_const_generic_args_into_projection_matching() {
+        let tcx = TopCx::default();
+        let semantics = tcx
+            .analyze_virtual_file(
+                "const_generic_projection.rs",
+                r#"
+            struct Array<T, const N: usize> {
+                field: T,
+            }
+
+            trait Trait {
+                type Out;
+            }
+
+            impl Trait for Array<u8, 3> {
+                type Out = u32;
+            }
+
+            struct S {
+                field: <Array<u8, { 1 + 2 }> as Trait>::Out,
+            }
+            "#,
+            )
+            .unwrap();
+        let hir = semantics.hir();
+        let names = semantics.names();
+        let infer = semantics.infer();
+
+        let output = hir
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "S"))
+            .expect("S struct should be represented");
+        let ItemKind::Struct { fields, .. } = &output.kind else {
+            panic!("S should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("S should have one field");
+        };
+        let hir::TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
+            panic!("S.field should be a path type");
+        };
+        let const_arg_expr = field_path
+            .qself
+            .as_ref()
+            .and_then(|qself| {
+                let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+                    return None;
+                };
+                self_path.segments.first()
+            })
+            .and_then(|segment| segment.args.get(1))
+            .and_then(|arg| {
+                let hir::GenericArg::Const(hir::ConstArg::Expr(expr)) = arg else {
+                    return None;
+                };
+                Some(*expr)
+            })
+            .expect("projection self type should carry a const expression argument");
+        assert_eq!(semantics.eval().array_len_value(const_arg_expr), Some(3));
+        let projection = infer
+            .type_for_hir_type(hir[*field].ty)
+            .expect("S.field type should be lowered");
+        let infer::ProjectionType { assoc, .. } = infer
+            .projection(projection)
+            .expect("S.field should remain a projection path");
+        assert_eq!(names[*assoc].kind, DefKind::AssocType);
+
+        let infer::ProjectionNormalizationResult::Known(value_ty) =
+            infer.projection_normalization(projection)
+        else {
+            panic!("const generic projection should normalize");
+        };
+        let infer::Type::Primitive(primitive) = infer[value_ty] else {
+            panic!("normalized projection value should lower to primitive type");
+        };
+        assert_eq!(primitive, infer::PrimitiveType::U32);
+    }
+
+    #[test]
+    fn feeds_evaluated_const_path_args_into_projection_matching() {
+        let tcx = TopCx::default();
+        let semantics = tcx
+            .analyze_virtual_file(
+                "const_path_projection.rs",
+                r#"
+            const N: usize = 1 + 2;
+
+            struct Array<T, const N: usize> {
+                field: T,
+            }
+
+            trait Trait {
+                type Out;
+            }
+
+            impl Trait for Array<u8, 3> {
+                type Out = u32;
+            }
+
+            struct S {
+                field: <Array<u8, N> as Trait>::Out,
+            }
+            "#,
+            )
+            .unwrap();
+        let hir = semantics.hir();
+        let names = semantics.names();
+        let infer = semantics.infer();
+
+        let const_item = hir
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "N"))
+            .expect("N const item should be represented");
+        let Some(const_def) = const_item.def else {
+            panic!("N should have a definition");
+        };
+        let ConstValue::Int(value) = semantics
+            .eval()
+            .value_for_const_def(const_def)
+            .expect("N should be evaluated")
+        else {
+            panic!("N should evaluate to an integer");
+        };
+        assert_eq!(value.value, 3);
+
+        let output = hir
+            .items()
+            .iter()
+            .find(|item| item.name.is_some_and(|name| name.as_ref() == "S"))
+            .expect("S struct should be represented");
+        let ItemKind::Struct { fields, .. } = &output.kind else {
+            panic!("S should be represented as a struct item");
+        };
+        let [field] = fields.as_slice() else {
+            panic!("S should have one field");
+        };
+        let hir::TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
+            panic!("S.field should be a path type");
+        };
+        let const_arg = field_path
+            .qself
+            .as_ref()
+            .and_then(|qself| {
+                let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+                    return None;
+                };
+                self_path.segments.first()
+            })
+            .and_then(|segment| segment.args.get(1))
+            .and_then(|arg| {
+                let hir::GenericArg::Const(arg) = arg else {
+                    return None;
+                };
+                Some(arg)
+            })
+            .expect("projection self type should carry a const path argument");
+        let ConstValue::Int(value) = semantics
+            .eval()
+            .value_for_const_arg(names, const_arg)
+            .expect("N const argument should be evaluated")
+        else {
+            panic!("N const argument should evaluate to an integer");
+        };
+        assert_eq!(value.value, 3);
+
+        let projection = infer
+            .type_for_hir_type(hir[*field].ty)
+            .expect("S.field type should be lowered");
+        let infer::ProjectionNormalizationResult::Known(value_ty) =
+            infer.projection_normalization(projection)
+        else {
+            panic!("const path projection should normalize");
+        };
+        let infer::Type::Primitive(primitive) = infer[value_ty] else {
+            panic!("normalized projection value should lower to primitive type");
+        };
+        assert_eq!(primitive, infer::PrimitiveType::U32);
+    }
+
+    #[test]
+    fn feeds_evaluated_assoc_const_args_into_projection_matching() {
+        let tcx = TopCx::default();
+        let semantics = tcx
+            .analyze_virtual_file(
+                "assoc_const_projection.rs",
+                r#"
+            const NO: bool = false;
+
+            struct Uses<I, T>;
+
+            trait Flag {
+                const PANIC: bool;
+            }
+
+            trait Identity {
+                type Output;
+            }
+
+            impl<T> Identity for Uses<Flag<PANIC = false>, T> {
+                type Output = T;
+            }
+
+            struct Result {
+                expr: <Uses<Flag<PANIC = { false }>, u32> as Identity>::Output,
+                path: <Uses<Flag<PANIC = NO>, bool> as Identity>::Output,
+                different: <Uses<Flag<PANIC = true>, u32> as Identity>::Output,
+            }
+            "#,
+            )
+            .unwrap();
+        let hir = semantics.hir();
+        let names = semantics.names();
+        let infer = semantics.infer();
+
+        let result = hir
+            .items()
+            .iter()
+            .find(|item| matches!(item.name, Some(name) if name.as_ref() == "Result"))
+            .expect("Result struct should be represented");
+        let ItemKind::Struct { fields, .. } = &result.kind else {
+            panic!("Result should be represented as a struct item");
+        };
+        let [expr_field, path_field, different_field] = fields.as_slice() else {
+            panic!("Result should have three fields");
+        };
+        let ConstValue::Bool(expr_value) = semantics
+            .eval()
+            .value_for_const_arg(names, assoc_const_arg_for_field(hir, *expr_field))
+            .expect("expr associated const arg should evaluate")
+        else {
+            panic!("expr associated const arg should evaluate to bool");
+        };
+        let ConstValue::Bool(path_value) = semantics
+            .eval()
+            .value_for_const_arg(names, assoc_const_arg_for_field(hir, *path_field))
+            .expect("path associated const arg should evaluate")
+        else {
+            panic!("path associated const arg should evaluate to bool");
+        };
+        assert!(!expr_value);
+        assert!(!path_value);
+
+        let expr_projection = infer
+            .type_for_hir_type(hir[*expr_field].ty)
+            .expect("expr field should be lowered");
+        let path_projection = infer
+            .type_for_hir_type(hir[*path_field].ty)
+            .expect("path field should be lowered");
+        let different = infer
+            .type_for_hir_type(hir[*different_field].ty)
+            .expect("different field should be lowered");
+        let infer::ProjectionNormalizationResult::Known(expr_ty) =
+            infer.projection_normalization(expr_projection)
+        else {
+            panic!("expr associated const projection should normalize");
+        };
+        let infer::ProjectionNormalizationResult::Known(path_ty) =
+            infer.projection_normalization(path_projection)
+        else {
+            panic!("path associated const projection should normalize");
+        };
+
+        let infer::Type::Primitive(expr_primitive) = infer[expr_ty] else {
+            panic!("expr field should normalize to a primitive");
+        };
+        let infer::Type::Primitive(path_primitive) = infer[path_ty] else {
+            panic!("path field should normalize to a primitive");
+        };
+        assert_eq!(expr_primitive, infer::PrimitiveType::U32);
+        assert_eq!(path_primitive, infer::PrimitiveType::Bool);
+        assert_eq!(
+            infer.projection_normalization(different),
+            infer::ProjectionNormalizationResult::NoNormalization
+        );
+    }
+
+    #[test]
+    fn evaluates_typed_integer_const_values() {
+        let tcx = TopCx::default();
+        let semantics = tcx
+            .analyze_virtual_file(
+                "typed_const_values.rs",
+                r#"
+            const SUFFIXED: usize = 3usize;
+            const CASTED: usize = (1 + 2) as usize;
+            const EXPECTED: usize = 1 + 2;
+            const TOO_WIDE: u8 = 300u8;
+            "#,
+            )
+            .unwrap();
+
+        assert_const_int(&semantics, "SUFFIXED", 3, infer::PrimitiveType::Usize);
+        assert_const_int(&semantics, "CASTED", 3, infer::PrimitiveType::Usize);
+        assert_const_int(&semantics, "EXPECTED", 3, infer::PrimitiveType::Usize);
+        assert!(
+            const_value(&semantics, "TOO_WIDE").is_none(),
+            "overflowing suffixed integer literal should stay unknown"
+        );
+    }
+
+    #[test]
     fn consumes_projection_normalization_query_from_hir() {
         let tcx = TopCx::default();
         let semantics = tcx
@@ -309,7 +713,8 @@ mod upper_phase_integration {
             .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, names);
+        let infer =
+            infer::InferDb::analyze(&tcx.common, hir, names, &infer::InferConstFacts::default());
 
         let output = hir
             .items()
@@ -374,7 +779,12 @@ mod upper_phase_integration {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, semantics.names());
+        let infer = infer::InferDb::analyze(
+            &tcx.common,
+            hir,
+            semantics.names(),
+            &infer::InferConstFacts::default(),
+        );
 
         let output = hir
             .items()
@@ -428,7 +838,12 @@ mod upper_phase_integration {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, semantics.names());
+        let infer = infer::InferDb::analyze(
+            &tcx.common,
+            hir,
+            semantics.names(),
+            &infer::InferConstFacts::default(),
+        );
 
         let result = hir
             .items()
@@ -482,7 +897,12 @@ mod upper_phase_integration {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, semantics.names());
+        let infer = infer::InferDb::analyze(
+            &tcx.common,
+            hir,
+            semantics.names(),
+            &infer::InferConstFacts::default(),
+        );
 
         let result = hir
             .items()
@@ -546,7 +966,12 @@ mod upper_phase_integration {
             )
             .unwrap();
         let hir = semantics.hir();
-        let mut infer = infer::InferDb::analyze(&tcx.common, hir, semantics.names());
+        let mut infer = infer::InferDb::analyze(
+            &tcx.common,
+            hir,
+            semantics.names(),
+            &infer::InferConstFacts::default(),
+        );
 
         let result = hir
             .items()
@@ -598,7 +1023,12 @@ mod upper_phase_integration {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(&tcx.common, hir, semantics.names());
+        let infer = infer::InferDb::analyze(
+            &tcx.common,
+            hir,
+            semantics.names(),
+            &infer::InferConstFacts::default(),
+        );
 
         let result = hir
             .items()

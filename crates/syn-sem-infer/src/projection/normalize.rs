@@ -2,8 +2,8 @@
 
 use super::logic::ProjectionLogic;
 use crate::{
-    GenericArg, ImplAssocType, ImplSelfGenericBinding, ImplSelfMatch, InferTypes, PathType,
-    PathTypeResolution, ProjectionDb, ProjectionMatch, ProjectionNormalization,
+    GenericArg, ImplAssocType, ImplSelfGenericBinding, ImplSelfMatch, InferConstFacts, InferTypes,
+    PathType, PathTypeResolution, ProjectionDb, ProjectionMatch, ProjectionNormalization,
     ProjectionTypeSubstitution, TraitBound, Type, TypeId,
 };
 use syn_sem_common::{CommonCx, VecUniqueExt};
@@ -21,6 +21,7 @@ pub(crate) struct ProjectionNormalizer<'a, 'cx> {
     trait_bounds: &'a [TraitBound],
     impl_assoc_types: &'a [ImplAssocType],
     names: &'a NameDb<'cx>,
+    const_facts: &'a InferConstFacts,
 }
 
 impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
@@ -31,6 +32,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         trait_bounds: &'a [TraitBound],
         impl_assoc_types: &'a [ImplAssocType],
         names: &'a NameDb<'cx>,
+        const_facts: &'a InferConstFacts,
     ) -> Self {
         Self {
             projections,
@@ -39,6 +41,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             trait_bounds,
             impl_assoc_types,
             names,
+            const_facts,
         }
     }
 
@@ -87,6 +90,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             self.types,
             self.trait_bounds,
             self.impl_assoc_types,
+            self.const_facts,
         );
         logic.load_projection_candidates();
 
@@ -133,6 +137,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             self.types,
             self.trait_bounds,
             self.impl_assoc_types,
+            self.const_facts,
         );
         logic.load_impl_self_matches();
 
@@ -191,6 +196,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             self.types,
             self.trait_bounds,
             self.impl_assoc_types,
+            self.const_facts,
         );
         logic.load_projection_normalizations();
 
@@ -215,7 +221,9 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
                         projection_match.assoc,
                         projection_match.trait_,
                         value_ty,
-                    ) {
+                    ) || (value_ty == impl_assoc_type.value_ty
+                        && self.matches_without_generic_bindings(projection_match, impl_assoc_type))
+                    {
                         let normalization = ProjectionNormalization {
                             projection: projection_match.projection,
                             self_: projection_match.self_,
@@ -229,6 +237,33 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             }
         }
         normalizations
+    }
+
+    fn matches_without_generic_bindings(
+        &self,
+        projection_match: &ProjectionMatch,
+        impl_assoc_type: &ImplAssocType,
+    ) -> bool {
+        if projection_match.trait_ != impl_assoc_type.trait_
+            && self.types[projection_match.trait_] != self.types[impl_assoc_type.trait_]
+        {
+            return false;
+        }
+        let matched = self.projections.impl_self_matches.iter().any(|match_| {
+            match_.projection_self == projection_match.self_
+                && match_.impl_self == impl_assoc_type.impl_self
+        });
+        if !matched {
+            return false;
+        }
+        !self
+            .projections
+            .impl_self_generic_bindings
+            .iter()
+            .any(|binding| {
+                binding.projection_self == projection_match.self_
+                    && binding.impl_self == impl_assoc_type.impl_self
+            })
     }
 
     /// Returns the associated type member in `trait_` whose name matches

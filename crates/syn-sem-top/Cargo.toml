@@ -12,7 +12,8 @@ syn-sem-common = { workspace = true }
 syn-sem-ast = { workspace = true }
 syn-sem-name = { workspace = true }
 syn-sem-hir = { workspace = true }
+syn-sem-infer = { workspace = true }
+syn-sem-eval = { workspace = true }
 syn = { workspace = true, features = ["full", "extra-traits"] }
 
 [dev-dependencies]
-syn-sem-infer = { workspace = true }
