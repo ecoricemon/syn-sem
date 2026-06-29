@@ -24,6 +24,9 @@ pub type Error = Box<dyn StdError + Send + Sync>;
 /// Result type shared by internal `syn-sem` crates.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Fallible result whose successful value may be absent.
+pub type MaybeResult<T> = Result<Option<T>>;
+
 /// Hash map type used by internal `syn-sem` crates.
 pub type Map<K, V> = HashMap<K, V, fxhash::FxBuildHasher>;
 

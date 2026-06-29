@@ -1,4 +1,4 @@
-use crate::{FilePath, FrozenMap, InternedStr, RawSourceText, Result, SourceText};
+use crate::{FilePath, FrozenMap, InternedStr, MaybeResult, RawSourceText, Result, SourceText};
 use any_intern::DroplessInterner;
 use std::{
     fmt::{self, Display},
@@ -104,7 +104,7 @@ impl CommonCx {
         &self,
         name: &str,
         file_path: FilePath<'_>,
-    ) -> Result<Option<FilePath<'_>>> {
+    ) -> MaybeResult<FilePath<'_>> {
         let old = self.files.set_known_library(name, file_path.as_ref())?;
         Ok(old.map(|path| self.intern_path(&path)))
     }
@@ -211,11 +211,7 @@ impl AbstractFiles {
         self.insert_source(file_path.as_ref().to_path_buf(), raw_source_text)
     }
 
-    fn set_known_library(
-        &self,
-        name: &str,
-        file_path: impl AsRef<Path>,
-    ) -> Result<Option<PathBuf>> {
+    fn set_known_library(&self, name: &str, file_path: impl AsRef<Path>) -> MaybeResult<PathBuf> {
         debug_assert!(
             !name.ends_with(".rs"),
             "expected library name, but received file path-like name `{name}`"

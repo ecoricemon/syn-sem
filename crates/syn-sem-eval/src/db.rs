@@ -1,5 +1,5 @@
 use crate::{ConstInt, ConstValue};
-use syn_sem_common::{CommonCx, Map};
+use syn_sem_common::{CommonCx, Map, MaybeResult, Result};
 use syn_sem_hir as hir;
 use syn_sem_infer::{InferDb, PrimitiveType, Type};
 use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult};
@@ -24,12 +24,12 @@ impl EvalDb {
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut db = Self::default();
         db.collect_const_item_inits(hir);
-        db.collect_const_item_values(hir, names, infer);
-        db.collect_expr_values(hir, names, infer);
-        db
+        db.collect_const_item_values(hir, names, infer)?;
+        db.collect_expr_values(hir, names, infer)?;
+        Ok(db)
     }
 
     /// Returns the value evaluated for a HIR expression.
@@ -47,25 +47,31 @@ impl EvalDb {
         &self,
         names: &NameDb<'cx>,
         arg: &hir::ConstArg<'cx>,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         match arg {
-            hir::ConstArg::Lit(lit) => ConstValue::from_hir_lit(lit),
-            hir::ConstArg::Expr(expr) => self.value_for_hir_expr(*expr),
+            hir::ConstArg::Lit(lit) => ConstValue::from_hir_lit(lit)
+                .map_err(|e| format!("EvalDb::value_for_const_arg: {e}").into()),
+            hir::ConstArg::Expr(expr) => Ok(self.value_for_hir_expr(*expr)),
             hir::ConstArg::Path { path, scope } => {
                 let def = self.resolve_const_item(names, path, *scope)?;
-                self.value_for_const_def(def)
+                Ok(def.and_then(|def| self.value_for_const_def(def)))
             }
         }
     }
 
     /// Returns the evaluated array length when the value is known as an unsigned integer.
-    pub fn array_len_value(&self, expr: hir::ExprId) -> Option<usize> {
-        let ConstValue::Int(value) = self.value_for_hir_expr(expr)? else {
-            return None;
+    pub fn array_len_value(&self, expr: hir::ExprId) -> MaybeResult<usize> {
+        let Some(value) = self.value_for_hir_expr(expr) else {
+            return Ok(None);
+        };
+        let ConstValue::Int(value) = value else {
+            return Ok(None);
         };
         match value.primitive {
-            PrimitiveType::AbstractInt | PrimitiveType::Usize => usize::try_from(value.value).ok(),
-            _ => None,
+            PrimitiveType::AbstractInt | PrimitiveType::Usize => {
+                Ok(usize::try_from(value.value).ok())
+            }
+            _ => Ok(None),
         }
     }
 
@@ -87,11 +93,12 @@ impl EvalDb {
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
-    ) {
+    ) -> Result<()> {
         let defs = self.const_item_inits.keys().copied().collect::<Vec<_>>();
         for def in defs {
-            self.evaluate_const_item(hir, names, infer, def, &mut Vec::new());
+            self.evaluate_const_item(hir, names, infer, def, &mut Vec::new())?;
         }
+        Ok(())
     }
 
     fn collect_expr_values<'cx>(
@@ -99,10 +106,11 @@ impl EvalDb {
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
-    ) {
+    ) -> Result<()> {
         for expr in hir.exprs() {
-            self.evaluate_expr(hir, names, infer, expr.id, &mut Vec::new());
+            self.evaluate_expr(hir, names, infer, expr.id, &mut Vec::new())?;
         }
+        Ok(())
     }
 
     fn evaluate_expr<'cx>(
@@ -112,38 +120,71 @@ impl EvalDb {
         infer: &InferDb<'cx>,
         expr: hir::ExprId,
         stack: &mut Vec<DefId>,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         if let Some(value) = self.value_for_hir_expr(expr) {
-            return Some(value);
+            return Ok(Some(value));
         }
 
         let value = match &hir[expr].kind {
             hir::ExprKind::Binary { op, left, right } => {
-                let left = self.evaluate_expr(hir, names, infer, *left, stack)?;
-                let right = self.evaluate_expr(hir, names, infer, *right, stack)?;
-                Self::evaluate_binary(*op, left, right)?
+                let Some(left) = self.evaluate_expr(hir, names, infer, *left, stack)? else {
+                    return Ok(None);
+                };
+                let Some(right) = self.evaluate_expr(hir, names, infer, *right, stack)? else {
+                    return Ok(None);
+                };
+                let Some(value) = Self::evaluate_binary(*op, left, right)? else {
+                    return Ok(None);
+                };
+                value
             }
             hir::ExprKind::Block { block } => {
-                self.evaluate_block(hir, names, infer, *block, stack)?
+                let Some(value) = self.evaluate_block(hir, names, infer, *block, stack)? else {
+                    return Ok(None);
+                };
+                value
             }
             hir::ExprKind::Cast { expr, ty } => {
-                let value = self.evaluate_expr(hir, names, infer, *expr, stack)?;
-                let primitive = self.primitive_for_hir_type(hir, *ty)?;
-                Self::cast_value(value, primitive)?
+                let Some(value) = self.evaluate_expr(hir, names, infer, *expr, stack)? else {
+                    return Ok(None);
+                };
+                let Some(primitive) = self.primitive_for_hir_type(hir, *ty)? else {
+                    return Ok(None);
+                };
+                let Some(value) = Self::cast_value(value, primitive)? else {
+                    return Ok(None);
+                };
+                value
             }
-            hir::ExprKind::Lit(lit) => ConstValue::from_hir_lit(lit)?,
-            hir::ExprKind::Paren { expr } => self.evaluate_expr(hir, names, infer, *expr, stack)?,
+            hir::ExprKind::Lit(lit) => {
+                let Some(value) = ConstValue::from_hir_lit(lit)? else {
+                    return Ok(None);
+                };
+                value
+            }
+            hir::ExprKind::Paren { expr } => {
+                return self.evaluate_expr(hir, names, infer, *expr, stack);
+            }
             hir::ExprKind::Path(path) => {
-                self.evaluate_path(hir, names, infer, path, hir[expr].scope, stack)?
+                let Some(value) =
+                    self.evaluate_path(hir, names, infer, path, hir[expr].scope, stack)?
+                else {
+                    return Ok(None);
+                };
+                value
             }
             hir::ExprKind::Unary { op, expr } => {
-                let value = self.evaluate_expr(hir, names, infer, *expr, stack)?;
-                Self::evaluate_unary(*op, value)?
+                let Some(value) = self.evaluate_expr(hir, names, infer, *expr, stack)? else {
+                    return Ok(None);
+                };
+                let Some(value) = Self::evaluate_unary(*op, value)? else {
+                    return Ok(None);
+                };
+                value
             }
             hir::ExprKind::Array { .. }
             | hir::ExprKind::Assign { .. }
             | hir::ExprKind::Call { .. }
-            | hir::ExprKind::Closure { .. }
             | hir::ExprKind::Const { .. }
             | hir::ExprKind::Field { .. }
             | hir::ExprKind::Index { .. }
@@ -152,13 +193,21 @@ impl EvalDb {
             | hir::ExprKind::Repeat { .. }
             | hir::ExprKind::Return { .. }
             | hir::ExprKind::Struct { .. }
-            | hir::ExprKind::Tuple { .. } => return None,
+            | hir::ExprKind::Tuple { .. } => return Ok(None),
+            hir::ExprKind::Closure { .. } => {
+                return Err(format!(
+                    "EvalDb::evaluate_expr: unsupported closure expression for {expr:?}"
+                )
+                .into());
+            }
         };
-        let value = self.refine_with_infer_expr_type(infer, expr, value)?;
+        let Some(value) = self.refine_with_infer_expr_type(infer, expr, value)? else {
+            return Ok(None);
+        };
 
         let old = self.expr_values.insert(expr, value);
         assert!(old.is_none(), "HIR expression ids must be unique");
-        Some(value)
+        Ok(Some(value))
     }
 
     fn evaluate_block<'cx>(
@@ -168,14 +217,16 @@ impl EvalDb {
         infer: &InferDb<'cx>,
         block: hir::BlockId,
         stack: &mut Vec<DefId>,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         let block = &hir.lowered_blocks()[block];
-        let tail = block.tail_expr?;
+        let Some(tail) = block.tail_expr else {
+            return Ok(None);
+        };
         let [hir::lower::Stmt::Expr(expr)] = block.stmts.as_slice() else {
-            return None;
+            return Ok(None);
         };
         if *expr != tail {
-            return None;
+            return Ok(None);
         }
         self.evaluate_expr(hir, names, infer, tail, stack)
     }
@@ -188,8 +239,10 @@ impl EvalDb {
         path: &hir::Path<'cx>,
         scope: Option<syn_sem_name::ScopeId>,
         stack: &mut Vec<DefId>,
-    ) -> Option<ConstValue> {
-        let def = self.resolve_const_item(names, path, scope)?;
+    ) -> MaybeResult<ConstValue> {
+        let Some(def) = self.resolve_const_item(names, path, scope)? else {
+            return Ok(None);
+        };
         self.evaluate_const_item(hir, names, infer, def, stack)
     }
 
@@ -200,14 +253,16 @@ impl EvalDb {
         infer: &InferDb<'cx>,
         def: DefId,
         stack: &mut Vec<DefId>,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         if stack.contains(&def) {
-            return None;
+            return Ok(None);
         }
 
-        let init = *self.const_item_inits.get(&def)?;
+        let Some(init) = self.const_item_inits.get(&def).copied() else {
+            return Ok(None);
+        };
         if let Some(value) = self.value_for_hir_expr(init) {
-            return Some(value);
+            return Ok(Some(value));
         }
 
         stack.push(def);
@@ -218,11 +273,14 @@ impl EvalDb {
             Some(def),
             "const evaluation stack must stay balanced"
         );
-        let value = value.and_then(|value| self.refine_with_const_item_type(hir, def, value));
+        let value = match value? {
+            Some(value) => self.refine_with_const_item_type(hir, def, value)?,
+            None => None,
+        };
         if let Some(value) = value {
             self.const_item_values.insert(def, value);
         }
-        value
+        Ok(value)
     }
 
     fn resolve_const_item<'cx>(
@@ -230,27 +288,36 @@ impl EvalDb {
         names: &NameDb<'cx>,
         path: &hir::Path<'cx>,
         scope: Option<syn_sem_name::ScopeId>,
-    ) -> Option<DefId> {
+    ) -> MaybeResult<DefId> {
         if path.qself.is_some() || path.segments.iter().any(|segment| !segment.args.is_empty()) {
-            return None;
+            return Err("EvalDb::resolve_const_item: unsupported const path shape".into());
         }
-        let scope = scope?;
+        let Some(scope) = scope else {
+            return Ok(None);
+        };
         let ResolveResult::Found(def) =
             names.resolve_value_path(scope, path.segments.iter().map(|segment| segment.name))
         else {
-            return None;
+            return Ok(None);
         };
-        (names[def].kind == DefKind::Const).then_some(def)
+        Ok((names[def].kind == DefKind::Const).then_some(def))
     }
 
-    fn primitive_for_hir_type(&self, hir: &hir::Hir<'_>, ty: hir::TypeId) -> Option<PrimitiveType> {
+    fn primitive_for_hir_type(
+        &self,
+        hir: &hir::Hir<'_>,
+        ty: hir::TypeId,
+    ) -> MaybeResult<PrimitiveType> {
         let hir::TypeKind::Path(path) = &hir[ty].kind else {
-            return None;
+            return Ok(None);
         };
         if path.qself.is_some() {
-            return None;
+            return Err(format!(
+                "EvalDb::primitive_for_hir_type: unsupported qualified type {ty:?}"
+            )
+            .into());
         }
-        PrimitiveType::from_hir_path(&path.segments)
+        Ok(PrimitiveType::from_hir_path(&path.segments))
     }
 
     fn refine_with_infer_expr_type(
@@ -258,20 +325,20 @@ impl EvalDb {
         infer: &InferDb<'_>,
         expr: hir::ExprId,
         value: ConstValue,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         let Some(ty) = infer.type_for_hir_expr(expr) else {
-            return Some(value);
+            return Ok(Some(value));
         };
         let Type::Primitive(primitive) = infer[ty] else {
-            return Some(value);
+            return Ok(Some(value));
         };
         if matches!(
             primitive,
             PrimitiveType::AbstractInt | PrimitiveType::AbstractFloat
         ) {
-            return Some(value);
+            return Ok(Some(value));
         }
-        Self::coerce_value(value, primitive).or(Some(value))
+        Ok(Self::coerce_value(value, primitive)?.or(Some(value)))
     }
 
     fn refine_with_const_item_type(
@@ -279,22 +346,22 @@ impl EvalDb {
         hir: &hir::Hir<'_>,
         def: DefId,
         value: ConstValue,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         let Some(ty) = self.const_item_types.get(&def).copied() else {
-            return Some(value);
+            return Ok(Some(value));
         };
-        let Some(primitive) = self.primitive_for_hir_type(hir, ty) else {
-            return Some(value);
+        let Some(primitive) = self.primitive_for_hir_type(hir, ty)? else {
+            return Ok(Some(value));
         };
         Self::coerce_value(value, primitive)
     }
 
-    fn cast_value(value: ConstValue, primitive: PrimitiveType) -> Option<ConstValue> {
+    fn cast_value(value: ConstValue, primitive: PrimitiveType) -> MaybeResult<ConstValue> {
         Self::coerce_value(value, primitive)
     }
 
-    fn coerce_value(value: ConstValue, primitive: PrimitiveType) -> Option<ConstValue> {
-        match (value, primitive) {
+    fn coerce_value(value: ConstValue, primitive: PrimitiveType) -> MaybeResult<ConstValue> {
+        let value = match (value, primitive) {
             (ConstValue::Int(value), primitive) if is_integer_primitive(primitive) => {
                 fits_integer_primitive(value.value, primitive).then_some(ConstValue::Int(
                     ConstInt {
@@ -311,23 +378,24 @@ impl EvalDb {
             }
             (ConstValue::Bool(value), PrimitiveType::Bool) => Some(ConstValue::Bool(value)),
             _ => None,
-        }
+        };
+        Ok(value)
     }
 
     fn evaluate_binary(
         op: hir::BinaryOp,
         left: ConstValue,
         right: ConstValue,
-    ) -> Option<ConstValue> {
+    ) -> MaybeResult<ConstValue> {
         let (ConstValue::Int(left), ConstValue::Int(right)) = (left, right) else {
-            return None;
+            return Ok(None);
         };
         let value = match op {
-            hir::BinaryOp::Add => left.value.checked_add(right.value)?,
-            hir::BinaryOp::Sub => left.value.checked_sub(right.value)?,
-            hir::BinaryOp::Mul => left.value.checked_mul(right.value)?,
-            hir::BinaryOp::Div => left.value.checked_div(right.value)?,
-            hir::BinaryOp::Rem => left.value.checked_rem(right.value)?,
+            hir::BinaryOp::Add => left.value.checked_add(right.value),
+            hir::BinaryOp::Sub => left.value.checked_sub(right.value),
+            hir::BinaryOp::Mul => left.value.checked_mul(right.value),
+            hir::BinaryOp::Div => left.value.checked_div(right.value),
+            hir::BinaryOp::Rem => left.value.checked_rem(right.value),
             hir::BinaryOp::And
             | hir::BinaryOp::Or
             | hir::BinaryOp::BitXor
@@ -340,18 +408,27 @@ impl EvalDb {
             | hir::BinaryOp::Le
             | hir::BinaryOp::Ne
             | hir::BinaryOp::Ge
-            | hir::BinaryOp::Gt => return None,
+            | hir::BinaryOp::Gt => {
+                return Err(
+                    format!("EvalDb::evaluate_binary: unsupported binary op {op:?}").into(),
+                );
+            }
         };
-        Some(ConstValue::Int(ConstInt {
-            value,
-            primitive: integer_binary_primitive(left.primitive, right.primitive)?,
-        }))
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let Some(primitive) = integer_binary_primitive(left.primitive, right.primitive) else {
+            return Ok(None);
+        };
+        Ok(Some(ConstValue::Int(ConstInt { value, primitive })))
     }
 
-    fn evaluate_unary(op: hir::UnaryOp, value: ConstValue) -> Option<ConstValue> {
+    fn evaluate_unary(op: hir::UnaryOp, value: ConstValue) -> MaybeResult<ConstValue> {
         match (op, value) {
-            (hir::UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
-            (hir::UnaryOp::Deref | hir::UnaryOp::Neg, _) | (hir::UnaryOp::Not, _) => None,
+            (hir::UnaryOp::Not, ConstValue::Bool(value)) => Ok(Some(ConstValue::Bool(!value))),
+            (hir::UnaryOp::Deref | hir::UnaryOp::Neg, _) | (hir::UnaryOp::Not, _) => {
+                Err(format!("EvalDb::evaluate_unary: unsupported unary op {op:?}").into())
+            }
         }
     }
 }

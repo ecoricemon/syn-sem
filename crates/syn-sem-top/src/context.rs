@@ -51,7 +51,7 @@ impl<'tcx> TopCx<'tcx> {
         let names = NameCollector::new(name_inputs).collect(entry_path)?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
         let hir = HirBuilder::new(&names).build(entry_path, file);
-        let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names);
+        let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names)?;
         Ok(Semantics::new(self, names, hir, infer, eval))
     }
 
@@ -59,21 +59,21 @@ impl<'tcx> TopCx<'tcx> {
         &'tcx self,
         hir: &Hir<'tcx>,
         names: &NameDb<'tcx>,
-    ) -> (InferDb<'tcx>, EvalDb) {
+    ) -> Result<(InferDb<'tcx>, EvalDb)> {
         let mut const_facts = InferConstFacts::default();
         for _ in 0..MAX_ANALYSIS_PHASE_ITERATIONS {
             let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-            let eval = EvalDb::analyze(&self.common, hir, names, &infer);
+            let eval = EvalDb::analyze(&self.common, hir, names, &infer)?;
             let next_const_facts = self.infer_const_facts(hir, &eval);
             if next_const_facts == const_facts {
-                return (infer, eval);
+                return Ok((infer, eval));
             }
             const_facts = next_const_facts;
         }
 
         let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-        let eval = EvalDb::analyze(&self.common, hir, names, &infer);
-        (infer, eval)
+        let eval = EvalDb::analyze(&self.common, hir, names, &infer)?;
+        Ok((infer, eval))
     }
 
     fn infer_const_facts(&self, hir: &Hir<'tcx>, eval: &EvalDb) -> InferConstFacts {

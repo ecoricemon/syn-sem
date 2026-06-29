@@ -1,6 +1,6 @@
 use crate::{File, Item, ItemMod, SyntaxCx};
 use std::path::{Path, PathBuf};
-use syn_sem_common::{FilePath, Result, Set};
+use syn_sem_common::{FilePath, MaybeResult, Result, Set};
 
 /// Parsed source file used as input to upper semantic phases.
 #[derive(Clone, Copy)]
@@ -91,26 +91,26 @@ impl<'cx> ModuleTreeBuilder<'cx> {
         };
 
         if let Some(items) = module.items {
-            let path = path.enter_inline_module(module);
+            let path = path.enter_inline_module(module)?;
             for item in items {
                 self.scan_item(item, &path)?;
             }
             return Ok(());
         }
 
-        let candidates = path.child_file_candidates(module);
+        let candidates = path.child_file_candidates(module)?;
         let Some(file_path) = self.find_child_file(&candidates)? else {
             return Ok(());
         };
         let file = self.scx.lookup_source(file_path)?.ast();
         if self.add_file(file_path, file) {
-            let path = path.enter_external_module(module, PathBuf::from(file_path.as_ref()));
+            let path = path.enter_external_module(module, PathBuf::from(file_path.as_ref()))?;
             self.scan_file(file, &path)?;
         }
         Ok(())
     }
 
-    fn find_child_file(&self, candidates: &[PathBuf]) -> Result<Option<FilePath<'cx>>> {
+    fn find_child_file(&self, candidates: &[PathBuf]) -> MaybeResult<FilePath<'cx>> {
         for path in candidates {
             let file_path = self.scx.common.intern_path(path);
             if self.scx.has_source(file_path) {
@@ -162,40 +162,43 @@ impl ModulePath {
     }
 
     /// Returns path state for an inline child module.
-    pub fn enter_inline_module(&self, module: &ItemMod<'_>) -> Self {
-        Self {
+    pub fn enter_inline_module(&self, module: &ItemMod<'_>) -> Result<Self> {
+        Ok(Self {
             source_file: self.source_file.clone(),
-            module_dir: self.child_dir(module),
-        }
+            module_dir: self.child_dir(module)?,
+        })
     }
 
     /// Returns path state for an out-of-line child module stored in `file_path`.
-    pub fn enter_external_module(&self, module: &ItemMod<'_>, file_path: PathBuf) -> Self {
-        Self {
+    pub fn enter_external_module(&self, module: &ItemMod<'_>, file_path: PathBuf) -> Result<Self> {
+        Ok(Self {
             source_file: file_path,
-            module_dir: self.child_dir(module),
-        }
+            module_dir: self.child_dir(module)?,
+        })
     }
 
     /// Returns candidate source files for an out-of-line child module.
-    pub fn child_file_candidates(&self, module: &ItemMod<'_>) -> Vec<PathBuf> {
-        if let Some(path) = path_attr(module) {
-            return vec![self.module_dir.join(&path), self.source_dir().join(path)];
+    pub fn child_file_candidates(&self, module: &ItemMod<'_>) -> Result<Vec<PathBuf>> {
+        if let Some(path) = path_attr(module)? {
+            return Ok(vec![
+                self.module_dir.join(&path),
+                self.source_dir().join(path),
+            ]);
         }
 
         let name = module.ident.inner.as_ref();
-        vec![
+        Ok(vec![
             self.module_dir.join(format!("{name}.rs")),
             self.module_dir.join(name).join("mod.rs"),
-        ]
+        ])
     }
 
-    fn child_dir(&self, module: &ItemMod<'_>) -> PathBuf {
-        if let Some(path) = path_attr(module) {
-            return self.resolve_attr_path(path);
+    fn child_dir(&self, module: &ItemMod<'_>) -> Result<PathBuf> {
+        if let Some(path) = path_attr(module)? {
+            return Ok(self.resolve_attr_path(path));
         }
 
-        self.module_dir.join(module.ident.inner.as_ref())
+        Ok(self.module_dir.join(module.ident.inner.as_ref()))
     }
 
     fn resolve_attr_path(&self, path: PathBuf) -> PathBuf {
@@ -208,10 +211,11 @@ impl ModulePath {
     }
 }
 
-fn path_attr(item: &ItemMod<'_>) -> Option<PathBuf> {
-    let item = syn::parse_str::<syn::ItemMod>(item.span.source_text()).ok()?;
+fn path_attr(item: &ItemMod<'_>) -> MaybeResult<PathBuf> {
+    let item = syn::parse_str::<syn::ItemMod>(item.span.source_text())
+        .map_err(|e| format!("ModulePath::path_attr: failed to parse module item: {e}"))?;
 
-    item.attrs.into_iter().find_map(|attr| {
+    Ok(item.attrs.into_iter().find_map(|attr| {
         if !attr.path().is_ident("path") {
             return None;
         }
@@ -226,5 +230,5 @@ fn path_attr(item: &ItemMod<'_>) -> Option<PathBuf> {
             return None;
         };
         Some(PathBuf::from(path.value()))
-    })
+    }))
 }

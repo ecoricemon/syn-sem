@@ -4,6 +4,7 @@
 
 - Extract focused sub-crates from `crates/syn-sem` incrementally.
 - Keep `syn-sem` as the facade/orchestrator while internals migrate.
+- Do not edit `crates/syn-sem` unless required to fix compilation.
 - Implement new migration work in `syn-sem-top` instead of reshaping `syn-sem`.
 - Treat current crate boundaries, phase ordering, and ownership choices as
   migration guidance unless this file or the active user task makes them durable.
@@ -68,6 +69,8 @@
 
 - Keep `lib.rs` clean.
 - Keep `mod.rs` clean like `lib.rs`; put implementation in named module files.
+- Prefer `Result` over `Option` when absence means unsupported or unimplemented behavior.
+- Treat macros and closures as unsupported unless the active task explicitly adds them.
 - Prefer incremental refactors.
 - Prefer iterator-family inputs over slices when callers can avoid building
   temporary `Vec`s.

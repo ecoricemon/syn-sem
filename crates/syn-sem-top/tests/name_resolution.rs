@@ -371,7 +371,7 @@ mod upper_phase_integration {
             panic!("initializer should be a repeat array expression");
         };
 
-        assert_eq!(semantics.eval().array_len_value(len), Some(3));
+        assert_eq!(semantics.eval().array_len_value(len).unwrap(), Some(3));
         let init_ty = infer
             .type_for_hir_expr(init)
             .expect("repeat array type should be inferred");
@@ -445,7 +445,10 @@ mod upper_phase_integration {
                 Some(*expr)
             })
             .expect("projection self type should carry a const expression argument");
-        assert_eq!(semantics.eval().array_len_value(const_arg_expr), Some(3));
+        assert_eq!(
+            semantics.eval().array_len_value(const_arg_expr).unwrap(),
+            Some(3)
+        );
         let projection = infer
             .type_for_hir_type(hir[*field].ty)
             .expect("S.field type should be lowered");
@@ -544,7 +547,7 @@ mod upper_phase_integration {
                 Some(arg)
             })
             .expect("projection self type should carry a const path argument");
-        let ConstValue::Int(value) = semantics
+        let Some(ConstValue::Int(value)) = semantics
             .eval()
             .value_for_const_arg(names, const_arg)
             .expect("N const argument should be evaluated")
@@ -613,14 +616,14 @@ mod upper_phase_integration {
         let [expr_field, path_field, different_field] = fields.as_slice() else {
             panic!("Result should have three fields");
         };
-        let ConstValue::Bool(expr_value) = semantics
+        let Some(ConstValue::Bool(expr_value)) = semantics
             .eval()
             .value_for_const_arg(names, assoc_const_arg_for_field(hir, *expr_field))
             .expect("expr associated const arg should evaluate")
         else {
             panic!("expr associated const arg should evaluate to bool");
         };
-        let ConstValue::Bool(path_value) = semantics
+        let Some(ConstValue::Bool(path_value)) = semantics
             .eval()
             .value_for_const_arg(names, assoc_const_arg_for_field(hir, *path_field))
             .expect("path associated const arg should evaluate")
@@ -686,6 +689,24 @@ mod upper_phase_integration {
             const_value(&semantics, "TOO_WIDE").is_none(),
             "overflowing suffixed integer literal should stay unknown"
         );
+    }
+
+    #[test]
+    fn reports_unsupported_closure_during_evaluation() {
+        let tcx = TopCx::default();
+        let err = tcx
+            .analyze_virtual_file(
+                "unsupported_closure.rs",
+                r#"
+            fn main() {
+                let _f = |x| x;
+            }
+            "#,
+            )
+            .expect_err("closures should be reported as unsupported");
+        let message = err.to_string();
+        assert!(message.contains("EvalDb::evaluate_expr"));
+        assert!(message.contains("unsupported closure expression"));
     }
 
     #[test]

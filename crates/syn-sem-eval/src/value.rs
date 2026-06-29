@@ -1,3 +1,4 @@
+use syn_sem_common::MaybeResult;
 use syn_sem_hir as hir;
 use syn_sem_infer::PrimitiveType;
 
@@ -13,22 +14,39 @@ pub enum ConstValue {
 }
 
 impl ConstValue {
-    pub(crate) fn from_hir_lit(lit: &hir::Lit<'_>) -> Option<Self> {
+    pub(crate) fn from_hir_lit(lit: &hir::Lit<'_>) -> MaybeResult<Self> {
         match lit {
             hir::Lit::Int(lit) => {
-                let value = lit.digits.as_ref().parse().ok()?;
-                let primitive = integer_suffix_primitive(lit.suffix.as_ref())?;
+                let value = lit.digits.as_ref().parse().map_err(|e| {
+                    format!("ConstValue::from_hir_lit: invalid integer literal: {e}")
+                })?;
+                let Some(primitive) = integer_suffix_primitive(lit.suffix.as_ref()) else {
+                    return Err(format!(
+                        "ConstValue::from_hir_lit: unsupported integer suffix `{}`",
+                        lit.suffix
+                    )
+                    .into());
+                };
                 if !fits_integer_primitive(value, primitive) {
-                    return None;
+                    return Ok(None);
                 }
-                Some(Self::Int(ConstInt { value, primitive }))
+                Ok(Some(Self::Int(ConstInt { value, primitive })))
             }
             hir::Lit::Float(lit) => {
-                let value = lit.digits.as_ref().parse().ok()?;
-                let primitive = float_suffix_primitive(lit.suffix.as_ref())?;
-                Some(Self::Float(ConstFloat { value, primitive }))
+                let value =
+                    lit.digits.as_ref().parse().map_err(|e| {
+                        format!("ConstValue::from_hir_lit: invalid float literal: {e}")
+                    })?;
+                let Some(primitive) = float_suffix_primitive(lit.suffix.as_ref()) else {
+                    return Err(format!(
+                        "ConstValue::from_hir_lit: unsupported float suffix `{}`",
+                        lit.suffix
+                    )
+                    .into());
+                };
+                Ok(Some(Self::Float(ConstFloat { value, primitive })))
             }
-            hir::Lit::Bool(value) => Some(Self::Bool(*value)),
+            hir::Lit::Bool(value) => Ok(Some(Self::Bool(*value))),
         }
     }
 }

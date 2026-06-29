@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
-use syn_sem_common::{FilePath, Result};
+use syn_sem_common::{FilePath, MaybeResult, Result};
 
 /// Collects name-resolution facts from prepared AST inputs.
 pub struct NameCollector<'cx> {
@@ -56,10 +56,11 @@ impl<'cx> NameCollector<'cx> {
         &self,
         path: &ast::ModulePath,
         module: &ast::ItemMod<'cx>,
-    ) -> Option<ast::SourceInput<'cx>> {
-        path.child_file_candidates(module)
+    ) -> MaybeResult<ast::SourceInput<'cx>> {
+        Ok(path
+            .child_file_candidates(module)?
             .into_iter()
-            .find_map(|candidate| self.files.get(&candidate).copied())
+            .find_map(|candidate| self.files.get(&candidate).copied()))
     }
 
     /// Collects one item while walking a crate's module tree.
@@ -116,12 +117,12 @@ impl<'cx> NameCollector<'cx> {
         self.db.set_path_scope(module_def, module_scope);
 
         if let Some(items) = item.items {
-            let path = path.enter_inline_module(item);
+            let path = path.enter_inline_module(item)?;
             for item in items {
                 self.collect_item_from_module_tree(module_scope, item, &path)?;
             }
-        } else if let Some(input) = self.child_file(path, item) {
-            let path = path.enter_external_module(item, PathBuf::from(input.file_path.as_ref()));
+        } else if let Some(input) = self.child_file(path, item)? {
+            let path = path.enter_external_module(item, PathBuf::from(input.file_path.as_ref()))?;
             for item in input.file.items {
                 self.collect_item_from_module_tree(module_scope, item, &path)?;
             }
