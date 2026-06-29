@@ -470,14 +470,14 @@ impl InferConstFacts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferConstValue {
     /// Integer const value.
-    Int(InferConstInt),
+    Int(ConstInt),
     /// Boolean const value.
     Bool(bool),
 }
 
 /// Integer constant value plus its current primitive type state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InferConstInt {
+pub struct ConstInt {
     /// Integer value before signed-width interpretation.
     pub value: u128,
     /// Current integer primitive, such as `abstract_int`, `i32`, or `usize`.
@@ -546,7 +546,7 @@ mod tests {
         let mut facts = InferConstFacts::default();
         let expr = hir::ExprId::new(0);
         let def = syn_sem_name::DefId::new(0);
-        let value = InferConstValue::Int(InferConstInt {
+        let value = InferConstValue::Int(ConstInt {
             value: 3,
             primitive: PrimitiveType::Usize,
         });

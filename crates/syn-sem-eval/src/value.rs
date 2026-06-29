@@ -1,5 +1,6 @@
 use syn_sem_common::MaybeResult;
 use syn_sem_hir as hir;
+pub use syn_sem_infer::ConstInt;
 use syn_sem_infer::PrimitiveType;
 
 /// Compile-time value known to the evaluator.
@@ -96,15 +97,6 @@ fn float_suffix_primitive(suffix: &str) -> Option<PrimitiveType> {
         "f64" => Some(PrimitiveType::F64),
         _ => None,
     }
-}
-
-/// Integer constant value plus its current primitive type state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConstInt {
-    /// Integer value before signed-width interpretation.
-    pub value: u128,
-    /// Current integer primitive, such as `abstract_int`, `i32`, or `usize`.
-    pub primitive: PrimitiveType,
 }
 
 /// Floating-point constant value plus its current primitive type state.

@@ -4,7 +4,7 @@ use syn_sem_ast::SyntaxCx;
 use syn_sem_common::{CommonCx, FilePath, Result};
 use syn_sem_eval::{ConstValue, EvalDb};
 use syn_sem_hir::{Hir, HirBuilder};
-use syn_sem_infer::{InferConstFacts, InferConstInt, InferConstValue, InferDb};
+use syn_sem_infer::{InferConstFacts, InferConstValue, InferDb};
 use syn_sem_name::collect::NameCollector;
 use syn_sem_name::NameDb;
 
@@ -105,10 +105,7 @@ impl<'tcx> TopCx<'tcx> {
 
     fn infer_const_value(value: ConstValue) -> Option<InferConstValue> {
         match value {
-            ConstValue::Int(value) => Some(InferConstValue::Int(InferConstInt {
-                value: value.value,
-                primitive: value.primitive,
-            })),
+            ConstValue::Int(value) => Some(InferConstValue::Int(value)),
             ConstValue::Bool(value) => Some(InferConstValue::Bool(value)),
             ConstValue::Float(_) => None,
         }
