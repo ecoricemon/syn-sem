@@ -2,8 +2,8 @@
 
 use super::type_shape_term::{self as term, TypeShapeMode};
 use crate::{
-    logic::LogicTerm, ArrayLen, ConstArg, GenericArg, InferTypes, Lit, PathType,
-    PathTypeResolution, Type, TypeId,
+    logic::LogicTerm, ArrayLen, ConstArg, GenericArg, InferConstFacts, InferConstValue, InferTypes,
+    Lit, PathType, PathTypeResolution, Type, TypeId,
 };
 use syn_sem_common::{CommonCx, Map};
 
@@ -26,11 +26,20 @@ pub(crate) struct TypeShape<'cx> {
 pub(crate) struct TypeShapeEncoder<'a, 'cx> {
     ccx: &'cx CommonCx,
     types: &'a InferTypes<'cx>,
+    const_facts: &'a InferConstFacts,
 }
 
 impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
-    pub(crate) fn new(ccx: &'cx CommonCx, types: &'a InferTypes<'cx>) -> Self {
-        Self { ccx, types }
+    pub(crate) fn new(
+        ccx: &'cx CommonCx,
+        types: &'a InferTypes<'cx>,
+        const_facts: &'a InferConstFacts,
+    ) -> Self {
+        Self {
+            ccx,
+            types,
+            const_facts,
+        }
     }
 
     /// Encodes a type as the structural term used by `#type_shape`.
@@ -167,7 +176,24 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
                 Some(term::shape_const_float(self.ccx, value.as_ref()))
             }
             ConstArg::Lit(Lit::Bool(value)) => Some(term::shape_const_bool(self.ccx, *value)),
-            ConstArg::Path(_) | ConstArg::Expr(_) => None,
+            ConstArg::Expr(expr) => self
+                .const_facts
+                .const_expr_value(*expr)
+                .map(|value| self.const_value_term(value)),
+            ConstArg::Path { def: Some(def), .. } => self
+                .const_facts
+                .const_def_value(*def)
+                .map(|value| self.const_value_term(value)),
+            ConstArg::Path { def: None, .. } => None,
+        }
+    }
+
+    fn const_value_term(&self, value: InferConstValue) -> LogicTerm<'cx> {
+        match value {
+            InferConstValue::Int(value) => {
+                term::shape_const_int(self.ccx, &value.value.to_string())
+            }
+            InferConstValue::Bool(value) => term::shape_const_bool(self.ccx, value),
         }
     }
 

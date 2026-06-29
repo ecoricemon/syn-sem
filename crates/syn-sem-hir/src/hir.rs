@@ -768,6 +768,8 @@ pub enum ExprKind<'cx> {
     },
     /// Binary operator expression.
     Binary {
+        /// Binary operator.
+        op: BinaryOp,
         /// Left-hand side expression.
         left: ExprId,
         /// Right-hand side expression.
@@ -871,9 +873,98 @@ pub enum ExprKind<'cx> {
     },
     /// Unary operator expression.
     Unary {
+        /// Unary operator.
+        op: UnaryOp,
         /// Operand expression.
         expr: ExprId,
     },
+}
+
+/// HIR-native binary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    /// Addition operator `+`.
+    Add,
+    /// Subtraction operator `-`.
+    Sub,
+    /// Multiplication operator `*`.
+    Mul,
+    /// Division operator `/`.
+    Div,
+    /// Remainder operator `%`.
+    Rem,
+    /// Logical and operator `&&`.
+    And,
+    /// Logical or operator `||`.
+    Or,
+    /// Bitwise xor operator `^`.
+    BitXor,
+    /// Bitwise and operator `&`.
+    BitAnd,
+    /// Bitwise or operator `|`.
+    BitOr,
+    /// Left shift operator `<<`.
+    Shl,
+    /// Right shift operator `>>`.
+    Shr,
+    /// Equality operator `==`.
+    Eq,
+    /// Less-than operator `<`.
+    Lt,
+    /// Less-than-or-equal operator `<=`.
+    Le,
+    /// Inequality operator `!=`.
+    Ne,
+    /// Greater-than-or-equal operator `>=`.
+    Ge,
+    /// Greater-than operator `>`.
+    Gt,
+}
+
+impl From<ast::BinOp> for BinaryOp {
+    fn from(op: ast::BinOp) -> Self {
+        match op {
+            ast::BinOp::Add => Self::Add,
+            ast::BinOp::Sub => Self::Sub,
+            ast::BinOp::Mul => Self::Mul,
+            ast::BinOp::Div => Self::Div,
+            ast::BinOp::Rem => Self::Rem,
+            ast::BinOp::And => Self::And,
+            ast::BinOp::Or => Self::Or,
+            ast::BinOp::BitXor => Self::BitXor,
+            ast::BinOp::BitAnd => Self::BitAnd,
+            ast::BinOp::BitOr => Self::BitOr,
+            ast::BinOp::Shl => Self::Shl,
+            ast::BinOp::Shr => Self::Shr,
+            ast::BinOp::Eq => Self::Eq,
+            ast::BinOp::Lt => Self::Lt,
+            ast::BinOp::Le => Self::Le,
+            ast::BinOp::Ne => Self::Ne,
+            ast::BinOp::Ge => Self::Ge,
+            ast::BinOp::Gt => Self::Gt,
+        }
+    }
+}
+
+/// HIR-native unary operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    /// Dereference operator `*`.
+    Deref,
+    /// Logical or bitwise not operator `!`.
+    Not,
+    /// Negation operator `-`.
+    Neg,
+}
+
+impl From<ast::UnOp> for UnaryOp {
+    fn from(op: ast::UnOp) -> Self {
+        match op {
+            ast::UnOp::Deref => Self::Deref,
+            ast::UnOp::Not => Self::Not,
+            ast::UnOp::Neg => Self::Neg,
+        }
+    }
 }
 
 /// One field initializer inside a represented struct expression.
@@ -1017,7 +1108,12 @@ pub enum ConstArg<'cx> {
     /// Literal const argument.
     Lit(Lit<'cx>),
     /// Path const argument.
-    Path(Path<'cx>),
+    Path {
+        /// Source path.
+        path: Path<'cx>,
+        /// Scope used to resolve the path.
+        scope: Option<ScopeId>,
+    },
     /// Const expression.
     Expr(ExprId),
 }
@@ -1025,12 +1121,30 @@ pub enum ConstArg<'cx> {
 /// HIR-native literal shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lit<'cx> {
-    /// Integer literal stored as normalized base-10 digits.
-    Int(InternedStr<'cx>),
-    /// Floating-point literal stored as normalized base-10 digits.
-    Float(InternedStr<'cx>),
+    /// Integer literal.
+    Int(LitInt<'cx>),
+    /// Floating-point literal.
+    Float(LitFloat<'cx>),
     /// Boolean literal.
     Bool(bool),
+}
+
+/// HIR-native integer literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LitInt<'cx> {
+    /// Normalized base-10 digits.
+    pub digits: InternedStr<'cx>,
+    /// Primitive suffix text, such as `usize`, when present.
+    pub suffix: InternedStr<'cx>,
+}
+
+/// HIR-native floating-point literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LitFloat<'cx> {
+    /// Normalized base-10 digits.
+    pub digits: InternedStr<'cx>,
+    /// Primitive suffix text, such as `f32`, when present.
+    pub suffix: InternedStr<'cx>,
 }
 
 /// Source role for a HIR type occurrence.

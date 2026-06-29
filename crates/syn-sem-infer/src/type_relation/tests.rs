@@ -1,8 +1,9 @@
 use super::*;
-use crate::{ArrayLen, InferDb, PrimitiveType, Type, TypeId};
+use crate::{ArrayLen, InferConstFacts, InferDb, PrimitiveType, Type, TypeId};
 use syn_sem_ast as ast;
 use syn_sem_ast::SyntaxCx;
 use syn_sem_common::CommonCx;
+use syn_sem_hir as hir;
 use syn_sem_hir::{Hir, HirBuilder, ItemKind};
 use syn_sem_name::{collect::NameCollector, DefKind, NameDb};
 
@@ -20,7 +21,7 @@ fn analyze<'cx>(
         .collect(file_path)
         .expect("name collection should succeed");
     let hir = HirBuilder::new(&names).build(file_path, file);
-    let infer = InferDb::analyze(ccx, &hir, &names);
+    let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
     (names, hir, infer)
 }
 
@@ -271,6 +272,151 @@ fn derives_repeat_expression_types_from_resolved_operand() {
 }
 
 #[test]
+fn derives_binary_arithmetic_expression_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize) {
+            let y = x + 1;
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Binary { left, right, .. } = hir[init].kind else {
+        panic!("expected binary initializer");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(left));
+    assert_usize(&infer, infer.type_for_hir_expr(right));
+    assert_usize(&infer, infer.type_for_hir_expr(init));
+    assert_usize(&infer, infer.type_for_def(local_def));
+}
+
+#[test]
+fn derives_binary_comparison_and_logic_expression_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: usize, flag: bool) {
+            let same = x == 1;
+            let both = flag && true;
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(eq_local), hir::lower::Stmt::Local(and_local)] =
+        hir.lowered_blocks()[block].stmts.as_slice()
+    else {
+        panic!("expected two local statements");
+    };
+    let eq_init = eq_local
+        .init
+        .expect("comparison local should have initializer");
+    let hir::ExprKind::Binary {
+        left: eq_left,
+        right: eq_right,
+        ..
+    } = hir[eq_init].kind
+    else {
+        panic!("expected comparison initializer");
+    };
+    let and_init = and_local.init.expect("logic local should have initializer");
+    let hir::ExprKind::Binary {
+        left: and_left,
+        right: and_right,
+        ..
+    } = hir[and_init].kind
+    else {
+        panic!("expected logic initializer");
+    };
+
+    assert_usize(&infer, infer.type_for_hir_expr(eq_left));
+    assert_usize(&infer, infer.type_for_hir_expr(eq_right));
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(eq_init),
+        PrimitiveType::Bool,
+    );
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(and_left),
+        PrimitiveType::Bool,
+    );
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(and_right),
+        PrimitiveType::Bool,
+    );
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(and_init),
+        PrimitiveType::Bool,
+    );
+}
+
+#[test]
+fn derives_unary_expression_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn f(x: i32, flag: bool, mask: usize) {
+            let negated = -x;
+            let inverted = !flag;
+            let bits = !mask;
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(neg_local), hir::lower::Stmt::Local(bool_not_local), hir::lower::Stmt::Local(bit_not_local)] =
+        hir.lowered_blocks()[block].stmts.as_slice()
+    else {
+        panic!("expected three local statements");
+    };
+    let neg_init = neg_local
+        .init
+        .expect("negation local should have initializer");
+    let bool_not_init = bool_not_local
+        .init
+        .expect("boolean not local should have initializer");
+    let bit_not_init = bit_not_local
+        .init
+        .expect("bitwise not local should have initializer");
+
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(neg_init),
+        PrimitiveType::I32,
+    );
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(bool_not_init),
+        PrimitiveType::Bool,
+    );
+    assert_usize(&infer, infer.type_for_hir_expr(bit_not_init));
+}
+
+#[test]
 fn derives_free_function_call_result_and_argument_types() {
     let ccx = CommonCx::default();
     let scx = SyntaxCx::new(&ccx);
@@ -284,6 +430,140 @@ fn derives_free_function_call_result_and_argument_types() {
 
         fn f() {
             let y = takes_usize(1);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Call { args, .. } = &hir[init].kind else {
+        panic!("expected call initializer");
+    };
+    let [arg] = args.as_slice() else {
+        panic!("expected one call argument");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(*arg));
+    assert_usize(&infer, infer.type_for_hir_expr(init));
+    assert_usize(&infer, infer.type_for_def(local_def));
+}
+
+#[test]
+fn derives_multi_argument_function_call_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn choose(flag: bool, value: usize) -> usize {
+            value
+        }
+
+        fn f() {
+            let y = choose(true, 1);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Call { args, .. } = &hir[init].kind else {
+        panic!("expected call initializer");
+    };
+    let [flag_arg, value_arg] = args.as_slice() else {
+        panic!("expected two call arguments");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_primitive(
+        &infer,
+        infer.type_for_hir_expr(*flag_arg),
+        PrimitiveType::Bool,
+    );
+    assert_usize(&infer, infer.type_for_hir_expr(*value_arg));
+    assert_usize(&infer, infer.type_for_hir_expr(init));
+    assert_usize(&infer, infer.type_for_def(local_def));
+}
+
+#[test]
+fn derives_non_primitive_function_call_result_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn pair(x: usize, y: bool) -> (usize, bool) {
+            (x, y)
+        }
+
+        fn f() {
+            let result = pair(1, false);
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let init = local.init.expect("local should have initializer");
+    let hir::ExprKind::Call { args, .. } = &hir[init].kind else {
+        panic!("expected call initializer");
+    };
+    let [x_arg, y_arg] = args.as_slice() else {
+        panic!("expected two call arguments");
+    };
+    let local_def = local
+        .bindings
+        .first()
+        .copied()
+        .expect("local should introduce one binding");
+
+    assert_usize(&infer, infer.type_for_hir_expr(*x_arg));
+    assert_primitive(&infer, infer.type_for_hir_expr(*y_arg), PrimitiveType::Bool);
+    assert_tuple_of_primitives(
+        &infer,
+        infer.type_for_hir_expr(init),
+        &[PrimitiveType::Usize, PrimitiveType::Bool],
+    );
+    assert_tuple_of_primitives(
+        &infer,
+        infer.type_for_def(local_def),
+        &[PrimitiveType::Usize, PrimitiveType::Bool],
+    );
+}
+
+#[test]
+fn derives_generic_function_call_result_from_argument_types() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        fn identity<T>(value: T) -> T {
+            value
+        }
+
+        fn f(input: usize) {
+            let y = identity(input);
         }
         "#,
     );
@@ -334,6 +614,74 @@ fn derives_tuple_pattern_bindings_from_resolved_initializer() {
 
     assert_primitive(&infer, infer.type_for_def(*a_def), PrimitiveType::Usize);
     assert_primitive(&infer, infer.type_for_def(*b_def), PrimitiveType::Bool);
+}
+
+#[test]
+fn derives_struct_pattern_bindings_from_resolved_initializer() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        struct Point {
+            x: usize,
+            y: bool,
+        }
+
+        fn f(point: Point) {
+            let Point { x, y } = point;
+        }
+        "#,
+    );
+
+    let block = function_block(&hir, "f");
+    let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+        panic!("expected local statement");
+    };
+    let [x_def, y_def] = local.bindings.as_slice() else {
+        panic!("struct pattern should introduce two bindings");
+    };
+
+    assert_primitive(&infer, infer.type_for_def(*x_def), PrimitiveType::Usize);
+    assert_primitive(&infer, infer.type_for_def(*y_def), PrimitiveType::Bool);
+}
+
+#[test]
+fn derives_struct_pattern_bindings_from_parameter_type() {
+    let ccx = CommonCx::default();
+    let scx = SyntaxCx::new(&ccx);
+    let (_names, hir, infer) = analyze(
+        &ccx,
+        &scx,
+        r#"
+        struct Point {
+            x: usize,
+            y: bool,
+        }
+
+        fn f(Point { x, y }: Point) {}
+        "#,
+    );
+
+    let item = hir
+        .items()
+        .iter()
+        .find(|item| item.name.is_some_and(|name| name.as_ref() == "f"))
+        .expect("expected function item");
+    let ItemKind::Fn { signature, .. } = item.kind else {
+        panic!("expected function item");
+    };
+    let param_pat = hir[signature].params[1]
+        .pat
+        .expect("input parameter should have a pattern");
+    let bindings = pat_bindings(&hir, param_pat);
+    let [x_def, y_def] = bindings.as_slice() else {
+        panic!("struct parameter pattern should introduce two bindings");
+    };
+
+    assert_primitive(&infer, infer.type_for_def(*x_def), PrimitiveType::Usize);
+    assert_primitive(&infer, infer.type_for_def(*y_def), PrimitiveType::Bool);
 }
 
 #[test]
@@ -635,6 +983,34 @@ fn first_return_operand_in_expr(hir: &Hir<'_>, expr: hir::ExprId) -> Option<hir:
         hir::ExprKind::Return { expr } => *expr,
         hir::ExprKind::Block { block } => first_return_operand_in_block(hir, *block),
         _ => None,
+    }
+}
+
+fn pat_bindings(hir: &Hir<'_>, pat: hir::PatId) -> Vec<syn_sem_name::DefId> {
+    let mut bindings = Vec::new();
+    collect_pat_bindings(hir, pat, &mut bindings);
+    bindings
+}
+
+fn collect_pat_bindings(hir: &Hir<'_>, pat: hir::PatId, bindings: &mut Vec<syn_sem_name::DefId>) {
+    match &hir[pat].kind {
+        hir::PatKind::Ident { def: Some(def), .. } => bindings.push(*def),
+        hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
+            collect_pat_bindings(hir, *pat, bindings);
+        }
+        hir::PatKind::Struct { fields, .. } => {
+            for field in fields {
+                collect_pat_bindings(hir, field.pat, bindings);
+            }
+        }
+        hir::PatKind::Tuple { elems } => {
+            for elem in elems {
+                collect_pat_bindings(hir, *elem, bindings);
+            }
+        }
+        hir::PatKind::Ident { def: None, .. }
+        | hir::PatKind::Path(_)
+        | hir::PatKind::Unsupported => {}
     }
 }
 

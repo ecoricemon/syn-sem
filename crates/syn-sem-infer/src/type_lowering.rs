@@ -244,9 +244,27 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
     fn lower_const_arg(&mut self, arg: &hir::ConstArg<'cx>) -> ConstArg<'cx> {
         match arg {
             hir::ConstArg::Lit(lit) => ConstArg::Lit(crate::Lit::from_hir(lit)),
-            hir::ConstArg::Path(path) => ConstArg::Path(self.lower_plain_path(&path.segments)),
+            hir::ConstArg::Path { path, scope } => ConstArg::Path {
+                path: self.lower_plain_path(&path.segments),
+                def: self.resolve_const_item(&path.segments, *scope),
+            },
             hir::ConstArg::Expr(expr) => ConstArg::Expr(*expr),
         }
+    }
+
+    fn resolve_const_item(
+        &self,
+        path: &[hir::PathSegment<'cx>],
+        scope: Option<ScopeId>,
+    ) -> Option<DefId> {
+        let scope = scope?;
+        let ResolveResult::Found(def) = self
+            .names
+            .resolve_value_path(scope, path.iter().map(|segment| segment.name))
+        else {
+            return None;
+        };
+        (self.names[def].kind == DefKind::Const).then_some(def)
     }
 
     fn lower_type_bounds(

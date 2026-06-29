@@ -1,9 +1,9 @@
 use crate::hir::{
     item_visibility, ArrayLen, AssocItem, AssocItemKind, Block, ConstArg, ConstParam, Expr,
     ExprKind, ExprStructField, Field, FieldSource, File, GenericArg, GenericParam, Generics, Hir,
-    HirArena, Item, ItemKind, Lit, Local, Pat, PatKind, PatStructField, Path, PathSegment, QSelf,
-    Signature, SignatureParam, SignatureSource, Stmt, StmtKind, Type, TypeKind, TypeParam,
-    TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
+    HirArena, Item, ItemKind, Lit, LitFloat, LitInt, Local, Pat, PatKind, PatStructField, Path,
+    PathSegment, QSelf, Signature, SignatureParam, SignatureSource, Stmt, StmtKind, Type, TypeKind,
+    TypeParam, TypeParamBound, TypeSource, Variant, Visibility, WherePredicate,
 };
 use crate::lower::{self, PredicateSubject};
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 use std::ops::{Index, IndexMut};
 use syn_sem_ast as ast;
 use syn_sem_common::{ArenaBuilder, FilePath};
-use syn_sem_name::{AstNodeId, DefId, Name, NameDb, ScopeId};
+use syn_sem_name::{AstNodeId, DefId, DefKind, Name, NameDb, ResolveResult, ScopeId};
 
 struct HirArenaBuilder<'cx> {
     files: ArenaBuilder<FileId, File<'cx>>,
@@ -794,16 +794,25 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> GenericArg<'cx> {
         match arg {
-            ast::GenericArg::Type(ty) => {
-                GenericArg::Type(self.collect_type(ty, scope, TypeSource::Nested))
-            }
+            ast::GenericArg::Type(ty) => self
+                .collect_type_shaped_const_arg(ty, scope)
+                .map(GenericArg::Const)
+                .unwrap_or_else(|| {
+                    GenericArg::Type(self.collect_type(ty, scope, TypeSource::Nested))
+                }),
             ast::GenericArg::Const(value) => {
                 GenericArg::Const(self.collect_const_arg(value, scope))
             }
-            ast::GenericArg::AssocType(arg) => GenericArg::AssocType {
-                name: arg.ident.inner,
-                ty: self.collect_type(&arg.ty, scope, TypeSource::Nested),
-            },
+            ast::GenericArg::AssocType(arg) => self
+                .collect_type_shaped_const_arg(&arg.ty, scope)
+                .map(|value| GenericArg::AssocConst {
+                    name: arg.ident.inner,
+                    value,
+                })
+                .unwrap_or_else(|| GenericArg::AssocType {
+                    name: arg.ident.inner,
+                    ty: self.collect_type(&arg.ty, scope, TypeSource::Nested),
+                }),
             ast::GenericArg::AssocConst(arg) => GenericArg::AssocConst {
                 name: arg.ident.inner,
                 value: self.collect_const_arg(&arg.value, scope),
@@ -820,6 +829,50 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         }
     }
 
+    fn collect_type_shaped_const_arg(
+        &mut self,
+        ty: &'cx ast::Type<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Option<ConstArg<'cx>> {
+        let ast::Type::Path(ty) = ty else {
+            return None;
+        };
+        if ty.qself.is_some()
+            || ty
+                .path
+                .segments
+                .iter()
+                .any(|segment| !segment.args.is_empty())
+        {
+            return None;
+        }
+        let [segment] = ty.path.segments else {
+            return None;
+        };
+        match segment.ident.inner.as_ref() {
+            "false" => return Some(ConstArg::Lit(Lit::Bool(false))),
+            "true" => return Some(ConstArg::Lit(Lit::Bool(true))),
+            _ => {}
+        }
+        let scope = scope?;
+        let ResolveResult::Found(def) = self.names.resolve_value_path(
+            scope,
+            ty.path.segments.iter().map(|segment| segment.ident.inner),
+        ) else {
+            return None;
+        };
+        match self.names[def].kind {
+            DefKind::Const | DefKind::GenericConst => Some(ConstArg::Path {
+                path: Path {
+                    qself: None,
+                    segments: self.collect_type_path(&ty.path, Some(scope)),
+                },
+                scope: Some(scope),
+            }),
+            _ => None,
+        }
+    }
+
     fn collect_const_arg(
         &mut self,
         arg: &'cx ast::Expr<'cx>,
@@ -827,18 +880,27 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     ) -> ConstArg<'cx> {
         match arg {
             ast::Expr::Lit(arg) => ConstArg::Lit(Self::collect_lit(&arg.lit)),
-            ast::Expr::Path(arg) => ConstArg::Path(Path {
-                qself: None,
-                segments: self.collect_type_path(&arg.path, scope),
-            }),
+            ast::Expr::Path(arg) => ConstArg::Path {
+                path: Path {
+                    qself: None,
+                    segments: self.collect_type_path(&arg.path, scope),
+                },
+                scope,
+            },
             _ => ConstArg::Expr(self.collect_expr(arg, scope)),
         }
     }
 
     fn collect_lit(lit: &ast::Lit<'cx>) -> Lit<'cx> {
         match lit {
-            ast::Lit::Int(lit) => Lit::Int(lit.literal),
-            ast::Lit::Float(lit) => Lit::Float(lit.literal),
+            ast::Lit::Int(lit) => Lit::Int(LitInt {
+                digits: lit.literal,
+                suffix: lit.suffix,
+            }),
+            ast::Lit::Float(lit) => Lit::Float(LitFloat {
+                digits: lit.literal,
+                suffix: lit.suffix,
+            }),
             ast::Lit::Bool(lit) => Lit::Bool(lit.value),
         }
     }
@@ -995,6 +1057,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 right: self.collect_expr(expr.right, scope),
             },
             ast::Expr::Binary(expr) => ExprKind::Binary {
+                op: expr.op.into(),
                 left: self.collect_expr(expr.left, scope),
                 right: self.collect_expr(expr.right, scope),
             },
@@ -1080,6 +1143,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                     .collect(),
             },
             ast::Expr::Unary(expr) => ExprKind::Unary {
+                op: expr.op.into(),
                 expr: self.collect_expr(expr.expr, scope),
             },
         };
@@ -1993,7 +2057,8 @@ mod tests {
         let GenericArg::Const(ConstArg::Lit(Lit::Int(value))) = &args[0] else {
             panic!("expected literal const argument");
         };
-        assert_eq!(value.as_ref(), "3");
+        assert_eq!(value.digits.as_ref(), "3");
+        assert_eq!(value.suffix.as_ref(), "");
 
         assert!(matches!(args[1], GenericArg::Const(ConstArg::Expr(_))));
     }

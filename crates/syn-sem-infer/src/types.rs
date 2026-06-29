@@ -48,24 +48,42 @@ pub enum Type<'cx> {
 pub enum PrimitiveType {
     /// Unsuffixed integer literal type before it is constrained to a concrete integer primitive.
     AbstractInt,
-    /// Unsuffixed floating-point literal type before it is constrained to a concrete float primitive.
+    /// Unsuffixed floating-point literal type before it is constrained to a concrete float
+    /// primitive.
     AbstractFloat,
+    /// Boolean primitive type.
     Bool,
+    /// Unicode scalar value primitive type.
     Char,
+    /// String slice primitive type.
     Str,
+    /// Signed 8-bit integer primitive type.
     I8,
+    /// Signed 16-bit integer primitive type.
     I16,
+    /// Signed 32-bit integer primitive type.
     I32,
+    /// Signed 64-bit integer primitive type.
     I64,
+    /// Signed 128-bit integer primitive type.
     I128,
+    /// Pointer-sized signed integer primitive type.
     Isize,
+    /// Unsigned 8-bit integer primitive type.
     U8,
+    /// Unsigned 16-bit integer primitive type.
     U16,
+    /// Unsigned 32-bit integer primitive type.
     U32,
+    /// Unsigned 64-bit integer primitive type.
     U64,
+    /// Unsigned 128-bit integer primitive type.
     U128,
+    /// Pointer-sized unsigned integer primitive type.
     Usize,
+    /// 32-bit floating-point primitive type.
     F32,
+    /// 64-bit floating-point primitive type.
     F64,
 }
 
@@ -115,7 +133,8 @@ impl PrimitiveType {
         )
     }
 
-    pub(crate) fn from_hir_path(path: &[hir::PathSegment<'_>]) -> Option<Self> {
+    /// Returns the primitive type named by a plain single-segment HIR path.
+    pub fn from_hir_path(path: &[hir::PathSegment<'_>]) -> Option<Self> {
         let [segment] = path else {
             return None;
         };
@@ -273,7 +292,12 @@ pub enum ConstArg<'cx> {
     /// Literal const argument.
     Lit(Lit<'cx>),
     /// Path const argument.
-    Path(Path<'cx>),
+    Path {
+        /// Source path.
+        path: Path<'cx>,
+        /// Resolved const item definition, when name resolution found one.
+        def: Option<syn_sem_name::DefId>,
+    },
     /// Const expression argument.
     Expr(hir::ExprId),
 }
@@ -292,8 +316,8 @@ pub enum Lit<'cx> {
 impl<'cx> Lit<'cx> {
     pub(crate) fn from_hir(lit: &hir::Lit<'cx>) -> Self {
         match lit {
-            hir::Lit::Int(value) => Self::Int(*value),
-            hir::Lit::Float(value) => Self::Float(*value),
+            hir::Lit::Int(value) => Self::Int(value.digits),
+            hir::Lit::Float(value) => Self::Float(value.digits),
             hir::Lit::Bool(value) => Self::Bool(*value),
         }
     }

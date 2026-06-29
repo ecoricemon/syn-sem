@@ -65,6 +65,7 @@ impl<'a, 'cx> PatTypeDeriver<'a, 'cx> {
             hir::PatKind::Reference { pat, .. } | hir::PatKind::Type { pat, .. } => {
                 self.derive_pat_type(*pat, ty)
             }
+            hir::PatKind::Struct { fields, .. } => self.derive_struct_pat_type(fields, ty),
             hir::PatKind::Tuple { elems } => {
                 let pat_elems = elems.clone();
                 let Type::Tuple { elems: ty_elems } = &self.types[ty] else {
@@ -83,8 +84,47 @@ impl<'a, 'cx> PatTypeDeriver<'a, 'cx> {
             }
             hir::PatKind::Ident { def: None, .. }
             | hir::PatKind::Path(_)
-            | hir::PatKind::Struct { .. }
             | hir::PatKind::Unsupported => false,
         }
+    }
+
+    fn derive_struct_pat_type(&mut self, fields: &[hir::PatStructField<'cx>], ty: TypeId) -> bool {
+        let Some(struct_fields) = self.struct_fields_for_type(ty) else {
+            return false;
+        };
+        let struct_fields = struct_fields.to_vec();
+        fields.iter().fold(false, |changed, field| {
+            let Some(field_ty) = self.field_type(&struct_fields, field.member) else {
+                return changed;
+            };
+            self.derive_pat_type(field.pat, field_ty) | changed
+        })
+    }
+
+    fn struct_fields_for_type(&self, ty: TypeId) -> Option<&[hir::FieldId]> {
+        let def = self.types.nominal_def(ty)?;
+        self.hir.items().iter().find_map(|item| {
+            if item.def != Some(def) {
+                return None;
+            }
+            let hir::ItemKind::Struct { fields, .. } = &item.kind else {
+                return None;
+            };
+            Some(fields.as_slice())
+        })
+    }
+
+    fn field_type(
+        &self,
+        struct_fields: &[hir::FieldId],
+        member: syn_sem_name::Name<'cx>,
+    ) -> Option<TypeId> {
+        struct_fields.iter().find_map(|field| {
+            let field = &self.hir[*field];
+            if field.name != member {
+                return None;
+            }
+            self.types.type_for_hir_type(field.ty)
+        })
     }
 }

@@ -12,6 +12,7 @@ use crate::{
     TraitBoundCollector, Type, TypeId, TypeLowering, TypeParamBound, TypeRelationCollector,
     TypeRelationDb, TypeRelationResolver,
 };
+use std::convert::TryFrom;
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
 use syn_sem_hir as hir;
@@ -58,7 +59,7 @@ pub struct InferDb<'cx> {
 }
 
 impl<'cx> InferDb<'cx> {
-    /// Builds inference type facts from HIR and name-resolution data.
+    /// Builds inference type facts from HIR, name-resolution data, and optional constant facts.
     ///
     /// Analysis runs in source-shaped phases:
     ///
@@ -70,7 +71,12 @@ impl<'cx> InferDb<'cx> {
     ///
     /// Expression result inference is still narrow and currently derives only the expression forms
     /// represented by the expression type derivation phase.
-    pub fn analyze(ccx: &'cx CommonCx, hir: &hir::Hir<'cx>, names: &NameDb<'cx>) -> Self {
+    pub fn analyze(
+        ccx: &'cx CommonCx,
+        hir: &hir::Hir<'cx>,
+        names: &NameDb<'cx>,
+        const_facts: &InferConstFacts,
+    ) -> Self {
         let mut db = InferDbBuilder::new(hir, names).build();
 
         ProjectionNormalizer::new(
@@ -80,19 +86,31 @@ impl<'cx> InferDb<'cx> {
             &db.trait_bounds,
             &db.impl_assoc_types,
             names,
+            const_facts,
         )
         .normalize();
+        db.resolve_type_relations(ccx, hir, const_facts);
+
+        db
+    }
+
+    fn resolve_type_relations(
+        &mut self,
+        ccx: &'cx CommonCx,
+        hir: &hir::Hir<'cx>,
+        const_facts: &InferConstFacts,
+    ) {
         loop {
-            db.type_relations.clear_resolved();
-            TypeRelationResolver::new(&mut db.type_relations, ccx, &db.types).resolve();
-            let changed = ExprTypeDeriver::new(hir, &mut db.type_relations, &mut db.types).derive()
-                | PatTypeDeriver::new(hir, &mut db.type_relations, &db.types).derive();
+            self.type_relations.clear_resolved();
+            TypeRelationResolver::new(&mut self.type_relations, ccx, &self.types).resolve();
+            let changed =
+                ExprTypeDeriver::new(hir, &mut self.type_relations, &mut self.types, const_facts)
+                    .derive()
+                    | PatTypeDeriver::new(hir, &mut self.type_relations, &self.types).derive();
             if !changed {
                 break;
             }
         }
-
-        db
     }
 
     /// Returns the inference type linked to a HIR type occurrence.
@@ -405,6 +423,67 @@ impl<'cx> Index<TypeId> for InferDb<'cx> {
     }
 }
 
+/// Constant facts supplied by top-level orchestration to improve inference precision.
+///
+/// `syn-sem-infer` does not run constant evaluation itself. Instead, `syn-sem-top` can evaluate
+/// constants in a separate phase and feed back only the facts inference needs for a pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InferConstFacts {
+    expr_values: Map<hir::ExprId, InferConstValue>,
+    def_values: Map<DefId, InferConstValue>,
+}
+
+impl InferConstFacts {
+    /// Records a known const value for a HIR expression.
+    pub fn insert_expr_value(&mut self, expr: hir::ExprId, value: InferConstValue) -> bool {
+        self.expr_values.insert(expr, value).is_none()
+    }
+
+    /// Returns a known const value for a HIR expression.
+    pub fn const_expr_value(&self, expr: hir::ExprId) -> Option<InferConstValue> {
+        self.expr_values.get(&expr).copied()
+    }
+
+    /// Records a known const value for a definition.
+    pub fn insert_def_value(&mut self, def: DefId, value: InferConstValue) -> bool {
+        self.def_values.insert(def, value).is_none()
+    }
+
+    /// Returns a known const value for a definition.
+    pub fn const_def_value(&self, def: DefId) -> Option<InferConstValue> {
+        self.def_values.get(&def).copied()
+    }
+
+    /// Returns a known integer value converted to the expected integer type.
+    pub fn expect_integer<T>(&self, expr: hir::ExprId) -> Option<T>
+    where
+        T: TryFrom<u128>,
+    {
+        let InferConstValue::Int(value) = self.const_expr_value(expr)? else {
+            return None;
+        };
+        T::try_from(value.value).ok()
+    }
+}
+
+/// Constant value input used by inference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InferConstValue {
+    /// Integer const value.
+    Int(InferConstInt),
+    /// Boolean const value.
+    Bool(bool),
+}
+
+/// Integer constant value plus its current primitive type state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InferConstInt {
+    /// Integer value before signed-width interpretation.
+    pub value: u128,
+    /// Current integer primitive, such as `abstract_int`, `i32`, or `usize`.
+    pub primitive: crate::PrimitiveType,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -426,7 +505,7 @@ mod tests {
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &hir, &names);
+        let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, infer)
     }
 
@@ -441,7 +520,7 @@ mod tests {
         scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let hir = hir::HirBuilder::new(names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &hir, names);
+        let infer = InferDb::analyze(ccx, &hir, names, &InferConstFacts::default());
         (hir, infer)
     }
 
@@ -458,8 +537,25 @@ mod tests {
             .collect(file_path)
             .unwrap();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &hir, &names);
+        let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, names, infer)
+    }
+
+    #[test]
+    fn const_facts_preserve_integer_primitive_state() {
+        let mut facts = InferConstFacts::default();
+        let expr = hir::ExprId::new(0);
+        let def = syn_sem_name::DefId::new(0);
+        let value = InferConstValue::Int(InferConstInt {
+            value: 3,
+            primitive: PrimitiveType::Usize,
+        });
+
+        assert!(facts.insert_expr_value(expr, value));
+        assert!(facts.insert_def_value(def, value));
+        assert_eq!(facts.const_expr_value(expr), Some(value));
+        assert_eq!(facts.const_def_value(def), Some(value));
+        assert_eq!(facts.expect_integer::<usize>(expr), Some(3));
     }
 
     fn struct_field_path_type<'a, 'cx>(
@@ -1043,7 +1139,7 @@ mod tests {
         names.set_def_ast_node(impl_item_def, AstNodeId::from_ref(&impl_item.items[0]));
 
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
-        let infer = InferDb::analyze(&ccx, &hir, &names);
+        let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());
         let [impl_assoc_type] = infer.impl_assoc_types.as_slice() else {
             panic!("expected one impl associated type");
         };

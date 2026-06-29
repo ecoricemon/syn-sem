@@ -177,6 +177,8 @@ impl<'cx> FromSyn<'cx, syn::ExprAssign> for ExprAssign<'cx> {
 /// For example, `a + b` or `x == y`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprBinary<'cx> {
+    /// Binary operator.
+    pub op: BinOp,
     /// Left-hand side expression.
     ///
     /// Stored by reference to break the recursive [`Expr`] shape.
@@ -192,9 +194,79 @@ pub struct ExprBinary<'cx> {
 impl<'cx> FromSyn<'cx, syn::ExprBinary> for ExprBinary<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ExprBinary>) -> Self {
         Self {
+            op: BinOp::from_syn(scx, desc.with_input(&desc.input.op)),
             left: scx.alloc(Expr::from_syn(scx, desc.with_input(&desc.input.left))),
             right: scx.alloc(Expr::from_syn(scx, desc.with_input(&desc.input.right))),
             span: desc.span(desc.input),
+        }
+    }
+}
+
+/// A binary operator.
+///
+/// Examples include arithmetic `+`, comparison `==`, and boolean `&&`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
+pub enum BinOp {
+    /// Addition operator `+`.
+    Add,
+    /// Subtraction operator `-`.
+    Sub,
+    /// Multiplication operator `*`.
+    Mul,
+    /// Division operator `/`.
+    Div,
+    /// Remainder operator `%`.
+    Rem,
+    /// Logical and operator `&&`.
+    And,
+    /// Logical or operator `||`.
+    Or,
+    /// Bitwise xor operator `^`.
+    BitXor,
+    /// Bitwise and operator `&`.
+    BitAnd,
+    /// Bitwise or operator `|`.
+    BitOr,
+    /// Left shift operator `<<`.
+    Shl,
+    /// Right shift operator `>>`.
+    Shr,
+    /// Equality operator `==`.
+    Eq,
+    /// Less-than operator `<`.
+    Lt,
+    /// Less-than-or-equal operator `<=`.
+    Le,
+    /// Inequality operator `!=`.
+    Ne,
+    /// Greater-than-or-equal operator `>=`.
+    Ge,
+    /// Greater-than operator `>`.
+    Gt,
+}
+
+impl<'cx> FromSyn<'cx, syn::BinOp> for BinOp {
+    fn from_syn(_: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::BinOp>) -> Self {
+        match desc.input {
+            syn::BinOp::Add(_) => Self::Add,
+            syn::BinOp::Sub(_) => Self::Sub,
+            syn::BinOp::Mul(_) => Self::Mul,
+            syn::BinOp::Div(_) => Self::Div,
+            syn::BinOp::Rem(_) => Self::Rem,
+            syn::BinOp::And(_) => Self::And,
+            syn::BinOp::Or(_) => Self::Or,
+            syn::BinOp::BitXor(_) => Self::BitXor,
+            syn::BinOp::BitAnd(_) => Self::BitAnd,
+            syn::BinOp::BitOr(_) => Self::BitOr,
+            syn::BinOp::Shl(_) => Self::Shl,
+            syn::BinOp::Shr(_) => Self::Shr,
+            syn::BinOp::Eq(_) => Self::Eq,
+            syn::BinOp::Lt(_) => Self::Lt,
+            syn::BinOp::Le(_) => Self::Le,
+            syn::BinOp::Ne(_) => Self::Ne,
+            syn::BinOp::Ge(_) => Self::Ge,
+            syn::BinOp::Gt(_) => Self::Gt,
+            _ => todo!(),
         }
     }
 }
@@ -672,6 +744,21 @@ mod tests {
         let expr = parse::<syn::ExprLit, ExprLit>(&scx, "1");
         let Lit::Int(v) = &expr.lit else { panic!() };
         assert_eq!(v.base10_parse::<i32>().unwrap(), 1);
+    }
+
+    #[test]
+    fn expr_binary() {
+        // Proves binary expressions classify the source operator.
+        let ccx = syn_sem_common::CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+
+        let expr = parse::<syn::ExprBinary, ExprBinary>(&scx, "left + right");
+        assert_eq!(expr.op, BinOp::Add);
+        assert!(matches!(expr.left, Expr::Path(_)));
+        assert!(matches!(expr.right, Expr::Path(_)));
+
+        let expr = parse::<syn::ExprBinary, ExprBinary>(&scx, "left == right");
+        assert_eq!(expr.op, BinOp::Eq);
     }
 
     #[test]

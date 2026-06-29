@@ -10,7 +10,7 @@ use crate::{
         self as logic_term, atom, symbol::var, type_id_from_term, visit_left_var, LogicAtom,
         LogicTerm,
     },
-    ImplAssocType, InferTypes, TraitBound, TypeId,
+    ImplAssocType, InferConstFacts, InferTypes, TraitBound, TypeId,
 };
 use logic_eval::Database;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
@@ -28,6 +28,7 @@ pub(super) struct ProjectionLogic<'a, 'cx> {
     types: &'a InferTypes<'cx>,
     trait_bounds: &'a [TraitBound],
     impl_assoc_types: &'a [ImplAssocType],
+    const_facts: &'a InferConstFacts,
     preserve_generic_shapes: Map<TypeId, TypeShape<'cx>>,
     variable_generic_shapes: Map<TypeId, TypeShape<'cx>>,
     db: Database<LogicAtom<'cx>>,
@@ -40,6 +41,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         types: &'a InferTypes<'cx>,
         trait_bounds: &'a [TraitBound],
         impl_assoc_types: &'a [ImplAssocType],
+        const_facts: &'a InferConstFacts,
     ) -> Self {
         Self {
             ccx,
@@ -47,6 +49,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             types,
             trait_bounds,
             impl_assoc_types,
+            const_facts,
             preserve_generic_shapes: Map::default(),
             variable_generic_shapes: Map::default(),
             db: Database::default(),
@@ -229,7 +232,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_type_shapes(&mut self) {
-        let encoder = TypeShapeEncoder::new(self.ccx, self.types);
+        let encoder = TypeShapeEncoder::new(self.ccx, self.types, self.const_facts);
         let mut preserve_generic_tys = Vec::new();
         for projection_match in &self.projections.projection_matches {
             preserve_generic_tys.push_unique(projection_match.self_);
