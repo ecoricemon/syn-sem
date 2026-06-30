@@ -197,135 +197,111 @@ fn resolve_lexical<'cx>(
     }
 }
 
-#[test]
-fn resolves_function_generics_params_and_locals_from_ast() {
-    let ccx = CommonCx::default();
-    let scx = ast::SyntaxCx::new(&ccx);
-    let source_text = ccx.intern(
-        r#"
+mod resolution {
+    use super::*;
+
+    #[test]
+    fn resolves_function_generics_params_locals_and_local_items_from_ast() {
+        // Proves AST collection resolves generics, params, locals, and local items by scope.
+        let ccx = CommonCx::default();
+        let scx = ast::SyntaxCx::new(&ccx);
+        let source_text = ccx.intern(
+            r#"
         fn f<T, const N: usize>(x: T) {
             let y = x;
-        }
-        "#,
-    );
-    let db = collect_ast_names(&scx, source_text);
-
-    let generic_scope = scope(&db, ScopeKind::Generic, 0);
-    let block_scope = scope(&db, ScopeKind::Block, 0);
-
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Type,
-        scx.common.intern("T"),
-        DefKind::GenericType,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("N"),
-        DefKind::GenericConst,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("x"),
-        DefKind::Local,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("y"),
-        DefKind::Local,
-    );
-    expect_def(
-        &db,
-        generic_scope,
-        Namespace::Type,
-        scx.common.intern("T"),
-        DefKind::GenericType,
-    );
-}
-
-#[test]
-fn resolves_local_item_declared_inside_function_from_ast() {
-    let ccx = CommonCx::default();
-    let scx = ast::SyntaxCx::new(&ccx);
-    let source_text = ccx.intern(
-        r#"
-        fn f<T>(x: T) {
             struct Local<U> {
                 value: U,
             }
 
-            let y: Local<T>;
+            let z: Local<T>;
         }
         "#,
-    );
-    let db = collect_ast_names(&scx, source_text);
+        );
+        let db = collect_ast_names(&scx, source_text);
 
-    let block_scope = scope(&db, ScopeKind::Block, 0);
+        let generic_scope = scope(&db, ScopeKind::Generic, 0);
+        let block_scope = scope(&db, ScopeKind::Block, 0);
 
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Type,
-        scx.common.intern("Local"),
-        DefKind::Struct,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Type,
-        scx.common.intern("T"),
-        DefKind::GenericType,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("x"),
-        DefKind::Local,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("y"),
-        DefKind::Local,
-    );
-}
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Type,
+            scx.common.intern("Local"),
+            DefKind::Struct,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Type,
+            scx.common.intern("T"),
+            DefKind::GenericType,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Value,
+            scx.common.intern("N"),
+            DefKind::GenericConst,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Value,
+            scx.common.intern("x"),
+            DefKind::Local,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Value,
+            scx.common.intern("y"),
+            DefKind::Local,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Value,
+            scx.common.intern("z"),
+            DefKind::Local,
+        );
+        expect_def(
+            &db,
+            generic_scope,
+            Namespace::Type,
+            scx.common.intern("T"),
+            DefKind::GenericType,
+        );
+    }
 
-#[test]
-fn keeps_type_and_value_namespaces_separate_from_ast() {
-    let ccx = CommonCx::default();
-    let scx = ast::SyntaxCx::new(&ccx);
-    let source_text = ccx.intern(
-        r#"
+    #[test]
+    fn keeps_type_and_value_namespaces_separate_from_ast() {
+        // Proves AST collection keeps same-spelled type and value names in separate namespaces.
+        let ccx = CommonCx::default();
+        let scx = ast::SyntaxCx::new(&ccx);
+        let source_text = ccx.intern(
+            r#"
         fn f<T>(T: i32) {
             let x: T = T;
         }
         "#,
-    );
-    let db = collect_ast_names(&scx, source_text);
+        );
+        let db = collect_ast_names(&scx, source_text);
 
-    let block_scope = scope(&db, ScopeKind::Block, 0);
+        let block_scope = scope(&db, ScopeKind::Block, 0);
 
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Type,
-        scx.common.intern("T"),
-        DefKind::GenericType,
-    );
-    expect_def(
-        &db,
-        block_scope,
-        Namespace::Value,
-        scx.common.intern("T"),
-        DefKind::Local,
-    );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Type,
+            scx.common.intern("T"),
+            DefKind::GenericType,
+        );
+        expect_def(
+            &db,
+            block_scope,
+            Namespace::Value,
+            scx.common.intern("T"),
+            DefKind::Local,
+        );
+    }
 }

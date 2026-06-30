@@ -193,6 +193,7 @@ mod tests {
 
     #[test]
     fn lowers_block_statement_order_and_local_bindings() {
+        // Proves lowered blocks preserve statement order and local binding defs.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (names, hir) = parsed_hir(
@@ -227,6 +228,7 @@ mod tests {
 
     #[test]
     fn lowers_tail_expression_only_without_semicolon() {
+        // Proves only expression statements without semicolons become tail expressions.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (_, hir) = parsed_hir(

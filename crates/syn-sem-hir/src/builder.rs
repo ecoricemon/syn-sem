@@ -1266,6 +1266,7 @@ mod tests {
 
     #[test]
     fn reserves_parent_ids_before_recursive_children() {
+        // Proves recursive HIR shapes reserve parent ids before child ids.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1316,6 +1317,7 @@ mod tests {
 
     #[test]
     fn uses_name_block_scope_for_hir_blocks() {
+        // Proves HIR blocks use the block scope collected by name resolution.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (file, names, model) = parsed_model_with_names(
@@ -1348,6 +1350,7 @@ mod tests {
 
     #[test]
     fn links_block_local_item_statement_to_name_definition() {
+        // Proves block-local item statements keep their collected name definition.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (file, names, model) = parsed_model_with_names(
@@ -1389,6 +1392,7 @@ mod tests {
 
     #[test]
     fn links_use_item_to_name_imports() {
+        // Proves HIR use items carry imports collected for the source use tree.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (file, names, model) = parsed_model_with_names(
@@ -1423,6 +1427,7 @@ mod tests {
 
     #[test]
     fn links_identifier_binding_patterns_to_name_definitions() {
+        // Proves identifier binding patterns link back to local name definitions.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (_, names, model) = parsed_model_with_names(
@@ -1459,6 +1464,7 @@ mod tests {
 
     #[test]
     fn builds_items_signatures_and_block_handles() {
+        // Proves item HIR stores signature, parameter, and body block handles.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1507,6 +1513,7 @@ mod tests {
 
     #[test]
     fn collects_closure_signatures_from_expression_bodies() {
+        // Proves closures in expression bodies create HIR signatures.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1544,6 +1551,7 @@ mod tests {
 
     #[test]
     fn represents_block_statements_and_local_initializers() {
+        // Proves blocks preserve locals, nested items, and tail expressions.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1591,6 +1599,7 @@ mod tests {
 
     #[test]
     fn represents_nested_patterns_and_pattern_type_annotations() {
+        // Proves nested patterns preserve tuple, reference, typed, and ref-mut forms.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1634,6 +1643,7 @@ mod tests {
 
     #[test]
     fn represents_path_and_struct_patterns() {
+        // Proves pattern lowering preserves path and struct pattern shapes.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1683,6 +1693,7 @@ mod tests {
 
     #[test]
     fn builds_struct_enum_trait_impl_type_and_use_shapes() {
+        // Proves HIR builds the main item families and their attached child facts.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1724,6 +1735,7 @@ mod tests {
 
     #[test]
     fn covers_all_supported_item_kinds() {
+        // Proves every supported free item kind is represented in HIR.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1751,6 +1763,7 @@ mod tests {
 
     #[test]
     fn covers_hir_native_names_visibility_and_paths() {
+        // Proves HIR-native names, visibilities, and trait paths preserve source facts.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1813,6 +1826,7 @@ mod tests {
 
     #[test]
     fn represents_impl_trait_path_generic_arguments() {
+        // Proves impl trait paths preserve generic type arguments.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1850,6 +1864,7 @@ mod tests {
 
     #[test]
     fn covers_all_supported_associated_item_kinds() {
+        // Proves every supported associated item kind is represented with its payload.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1924,6 +1939,7 @@ mod tests {
 
     #[test]
     fn covers_type_sources_for_declaration_roles() {
+        // Proves HIR type sources distinguish declaration roles and nested types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -1982,6 +1998,7 @@ mod tests {
 
     #[test]
     fn represents_type_paths_and_nested_generic_arguments() {
+        // Proves type paths preserve segments and nested generic arguments.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2027,6 +2044,7 @@ mod tests {
 
     #[test]
     fn represents_const_generic_arguments() {
+        // Proves const generic arguments preserve literal and expression values.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2065,6 +2083,7 @@ mod tests {
 
     #[test]
     fn represents_associated_const_arguments() {
+        // Proves associated const generic arguments preserve name and const value.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2101,6 +2120,7 @@ mod tests {
 
     #[test]
     fn represents_associated_type_constraint_bounds() {
+        // Proves associated type constraints preserve their nested trait bounds.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2138,6 +2158,7 @@ mod tests {
 
     #[test]
     fn represents_qualified_type_paths() {
+        // Proves qualified type paths preserve self type, trait path, and item path.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2187,6 +2208,7 @@ mod tests {
 
     #[test]
     fn represents_type_param_trait_bounds() {
+        // Proves type parameter trait bounds preserve param and where-clause predicates.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2227,6 +2249,7 @@ mod tests {
 
     #[test]
     fn covers_block_handles_and_source_exprs() {
+        // Proves item and associated defaults create the expected blocks and expressions.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2277,6 +2300,7 @@ mod tests {
 
     #[test]
     fn covers_module_field_and_variant_shapes() {
+        // Proves module, field, and variant shapes preserve inline and payload forms.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let model = parsed_model(
@@ -2340,6 +2364,7 @@ mod tests {
 
     #[test]
     fn links_items_to_current_name_definitions_when_available() {
+        // Proves HIR items reuse existing name definitions when source ids match.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
@@ -2367,6 +2392,7 @@ mod tests {
 
     #[test]
     fn ast_node_ids_distinguish_wrapper_and_payload_nodes() {
+        // Proves AST node ids distinguish item wrappers from payload nodes.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
@@ -2384,6 +2410,7 @@ mod tests {
 
     #[test]
     fn links_unnamed_impls_and_assoc_items_by_source() {
+        // Proves unnamed impls and associated items link by source identity.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");

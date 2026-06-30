@@ -39,25 +39,29 @@ mod tests {
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
-        // Public visibility
+        // Checks unrestricted public visibility is classified as `Public`.
+        // For example, `pub` has no restricting path.
         let vis = parse::<T, U>(&scx, "pub");
         assert!(matches!(&vis.value, Visibility::Public(..)));
 
-        // Restricted visibility - pub(super)
+        // Checks `pub(super)` keeps the restricting path.
+        // For example, `super` becomes the single path segment.
         let vis = parse::<T, U>(&scx, "pub(super)");
         let Visibility::Restricted(path) = &vis.value else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "super");
 
-        // Restricted visibility - pub(super)
+        // Checks `pub(crate)` keeps the crate-root restricting path.
+        // For example, `crate` becomes the single path segment.
         let vis = parse::<T, U>(&scx, "pub(crate)");
         let Visibility::Restricted(path) = &vis.value else {
             panic!()
         };
         assert_eq!(&**path.get_ident().unwrap(), "crate");
 
-        // Restricted visibility - pub(in path)
+        // Checks `pub(in path)` keeps the full restricting path.
+        // For example, `foo::bar` preserves both path segments.
         let vis = parse::<T, U>(&scx, "pub(in foo::bar)");
         let Visibility::Restricted(path) = &vis.value else {
             panic!()

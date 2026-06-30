@@ -319,6 +319,7 @@ mod tests {
 
     #[test]
     fn interner_deduplicates_strings() {
+        // Proves the string interner returns one stable value for repeated text.
         let interner = StringInterner::default();
 
         let a = interner.intern("hello");
@@ -332,36 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn abstract_files_stores_virtual_source_text() {
-        let files = AbstractFiles::default();
-        let interner = StringInterner::default();
-        let source_text = interner.intern("fn main() {}");
-
-        let file_path = files
-            .insert_virtual_file("/virtual/main.rs", source_text.raw())
-            .unwrap();
-
-        assert_eq!(file_path, PathBuf::from("/virtual/main.rs"));
-        assert!(files.contains(&file_path));
-        assert_eq!(files.raw_source_text(&file_path), Some(source_text.raw()));
-    }
-
-    #[test]
-    fn abstract_files_stores_physical_source_text_without_reading_disk() {
-        let files = AbstractFiles::default();
-        let interner = StringInterner::default();
-        let source_text = interner.intern("fn main() {}");
-
-        let file_path = files
-            .insert_physical_file("/virtual/main.rs", source_text.raw())
-            .unwrap();
-
-        assert_eq!(file_path, PathBuf::from("/virtual/main.rs"));
-        assert_eq!(files.raw_source_text(&file_path), Some(source_text.raw()));
-    }
-
-    #[test]
     fn common_context_interns_source_paths_and_text() {
+        // Proves `CommonCx` stores virtual source text under its interned path.
         let ccx = CommonCx::default();
         let file_path = ccx
             .insert_virtual_file("/virtual/main.rs", "fn main() {}")
@@ -375,6 +348,7 @@ mod tests {
 
     #[test]
     fn abstract_files_stores_source_handles() {
+        // Proves abstract file storage accepts both virtual and absolute physical paths.
         let files = AbstractFiles::default();
         let interner = StringInterner::default();
         let virtual_source_text = interner.intern("fn main() {}");
@@ -399,14 +373,17 @@ mod tests {
             files.raw_source_text("/virtual/main.rs"),
             Some(virtual_source_text.raw())
         );
+        assert!(files.contains(&virtual_path));
         assert_eq!(
             files.raw_source_text("/virtual/lib.rs"),
             Some(physical_source_text.raw())
         );
+        assert!(files.contains(&physical_path));
     }
 
     #[test]
     fn physical_file_path_must_be_absolute() {
+        // Proves physical source insertion rejects relative paths before storage.
         let files = AbstractFiles::default();
         let interner = StringInterner::default();
         let source_text = interner.intern("");
@@ -423,6 +400,7 @@ mod tests {
 
     #[test]
     fn known_libraries_point_to_file_paths() {
+        // Proves known libraries map stable library names to stored source paths.
         let files = AbstractFiles::default();
         let interner = StringInterner::default();
         let source_text = interner.intern("mod marker {}");

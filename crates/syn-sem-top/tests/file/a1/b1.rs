@@ -1,3 +1,5 @@
+// Fixture purpose: out-of-line child module loaded from `a1.rs`.
+// For example, this file proves `mod b1;` maps to `~::a1::b1`.
 // From a1.rs
 // Logical path: ~::a1::b1
 // Physical path: ~/a1/b1.rs

@@ -969,7 +969,7 @@ mod tests {
     use super::*;
     use syn_sem_common::CommonCx;
 
-    mod lexical_resolution {
+    mod lexical {
         use super::*;
 
         // Covers lexical lookup from this code shape:
@@ -984,6 +984,7 @@ mod tests {
         // Lookup from the function body finds the inner `x`; lookup from root finds the outer `x`.
         #[test]
         fn lexical_resolution_prefers_inner_scope() {
+            // Proves lexical lookup prefers inner scope bindings over outer bindings.
             let ccx = CommonCx::default();
             let x = ccx.intern("x");
 
@@ -1025,6 +1026,7 @@ mod tests {
         // The function body can see names declared in the generic-parameter scope.
         #[test]
         fn generic_scope_is_visible_from_function_body() {
+            // Proves function bodies can resolve names from their generic scope.
             let ccx = CommonCx::default();
             let t = ccx.intern("T");
 
@@ -1063,6 +1065,7 @@ mod tests {
         // The block-local item is visible from the same block in the type namespace.
         #[test]
         fn local_item_can_be_resolved_in_type_namespace() {
+            // Proves block-local items are visible in the same block type namespace.
             let ccx = CommonCx::default();
             let local = ccx.intern("Local");
 
@@ -1104,6 +1107,7 @@ mod tests {
         // The same spelling can resolve to different definitions in different namespaces.
         #[test]
         fn namespaces_are_independent() {
+            // Proves type and value namespaces can resolve the same spelling differently.
             let ccx = CommonCx::default();
             let t = ccx.intern("T");
 
@@ -1143,6 +1147,7 @@ mod tests {
         // The const parameter `N` lives in the value namespace, not the type namespace.
         #[test]
         fn const_generic_lives_in_value_namespace() {
+            // Proves const generic parameters resolve only in the value namespace.
             let ccx = CommonCx::default();
             let n = ccx.intern("N");
 
@@ -1182,6 +1187,7 @@ mod tests {
         // `DefScopes::path` or raw scope bindings directly.
         #[test]
         fn resolves_direct_members_from_definition_path_scope() {
+            // Proves member lookup reads direct bindings from a definition path scope.
             let ccx = CommonCx::default();
             let iterator = ccx.intern("Iterator");
             let item = ccx.intern("Item");
@@ -1217,6 +1223,7 @@ mod tests {
 
         #[test]
         fn member_lookup_without_path_scope_is_not_found() {
+            // Covers member lookup on a definition that has no path scope.
             let ccx = CommonCx::default();
             let unit = ccx.intern("Unit");
             let item = ccx.intern("Item");
@@ -1267,7 +1274,7 @@ mod tests {
         db[db.follow_aliases(def)].kind
     }
 
-    mod import_resolution {
+    mod imports {
         use super::*;
 
         // Covers imports from this module shape:
@@ -1286,6 +1293,7 @@ mod tests {
         // The first three introduce local bindings to the resolved target; `_` does not.
         #[test]
         fn resolves_single_rename_self_and_underscore_imports() {
+            // Proves import resolution handles single, renamed, self, and underscore imports.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
@@ -1369,6 +1377,7 @@ mod tests {
         // The first import preserves the ambiguous parent-path failure; the second is not found.
         #[test]
         fn self_import_preserves_parent_path_failure() {
+            // Proves self imports preserve ambiguous and missing parent-path failures.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
@@ -1428,6 +1437,7 @@ mod tests {
         // Chained re-exports resolve to the original target, and globs skip private children.
         #[test]
         fn resolves_chained_reexports_and_globs_with_visibility() {
+            // Proves chained reexports and glob imports respect visibility while resolving.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
@@ -1516,6 +1526,7 @@ mod tests {
         // The two globs make `X` ambiguous in `c`; `Missing` reports not found.
         #[test]
         fn import_resolution_reports_ambiguity_and_not_found() {
+            // Proves import resolution reports ambiguous glob results and missing names.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
@@ -1590,6 +1601,7 @@ mod tests {
         #[test]
         #[should_panic(expected = "import binding candidates must resolve to one final target")]
         fn single_import_panics_when_namespace_candidates_resolve_to_distinct_targets() {
+            // Proves one import binding cannot resolve to different final targets by namespace.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();
@@ -1640,6 +1652,7 @@ mod tests {
         // one final variant definition.
         #[test]
         fn imported_enum_variant_keeps_type_and_value_namespaces() {
+            // Proves imported enum variants populate both type and value namespaces.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
             let root = db.root_scope();

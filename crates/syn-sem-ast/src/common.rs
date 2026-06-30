@@ -228,7 +228,8 @@ mod tests {
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
-        // Non-empty ident
+        // Checks a non-empty identifier keeps its parsed spelling.
+        // For example, `A` stays available through the interned `Ident`.
         let ident = parse::<syn::Ident, Ident>(&scx, "A");
         assert_eq!(&**ident, "A");
     }

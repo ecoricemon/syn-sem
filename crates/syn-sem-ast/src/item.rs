@@ -906,12 +906,14 @@ mod tests {
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
-        // Empty struct
+        // Checks unit structs preserve their name without synthesized fields.
+        // For example, `struct A;` has ident `A` and an empty field list.
         let st = parse::<T, U>(&scx, "struct A;");
         assert_eq!(&*st.ident.inner, "A");
         assert!(st.fields.is_empty());
 
-        // Tuple struct with zero, one, and two fields.
+        // Checks tuple structs synthesize numeric field names in source order.
+        // For example, `struct A(B, C);` creates fields named `0` and `1`.
         let st = parse::<T, U>(&scx, "struct A();");
         assert!(st.fields.is_empty());
         let st = parse::<T, U>(&scx, "struct A(B);");
@@ -925,7 +927,8 @@ mod tests {
         assert_eq!(&*st.fields[0].ident, "0");
         assert_eq!(&*st.fields[1].ident, "1");
 
-        // Struct with zero, one, and two fields.
+        // Checks named-field structs preserve declared field names and types.
+        // For example, `struct A { f1: B, f2: C }` keeps `f1` and `f2`.
         let st = parse::<T, U>(&scx, "struct A{}");
         assert!(st.fields.is_empty());
         let st = parse::<T, U>(&scx, "struct A{ f1: B }");

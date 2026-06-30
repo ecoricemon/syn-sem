@@ -113,148 +113,133 @@ fn follow_aliases_kind<'cx>(
     direct_binding(db, scope, namespace, name).map(|def| db[db.follow_aliases(def)].kind)
 }
 
-#[test]
-fn collects_root_and_inline_module_items_from_prepared_ast() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+mod modules {
+    use super::*;
+
+    #[test]
+    fn collects_inline_external_and_missing_module_items_from_prepared_ast() {
+        // Proves prepared AST inputs collect inline modules, supplied external modules, and missing module stubs.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         struct Root;
 
         mod inline {
             struct Child;
         }
-        "#,
-    );
 
-    let db = collect([entry], entry.file_path);
-
-    let root = root_type(&db, tcx.common.intern("Root"));
-    assert_eq!(db[root].kind, DefKind::Struct);
-
-    let inline = root_type(&db, tcx.common.intern("inline"));
-    assert_eq!(db[inline].kind, DefKind::Module);
-
-    let inline_scope = db.def_path_scope(inline).unwrap();
-    let child = direct_type_binding(&db, inline_scope, tcx.common.intern("Child"))
-        .expect("inline::Child should be collected inside the module scope");
-    assert_eq!(db[child].kind, DefKind::Struct);
-}
-
-#[test]
-fn follows_external_module_when_file_input_is_prepared() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
         mod external;
+
+        mod missing;
         "#,
-    );
-    let external = tcx.parse(
-        &scx,
-        "src/external.rs",
-        r#"
+        );
+        let external = tcx.parse(
+            &scx,
+            "src/external.rs",
+            r#"
         pub struct FromExternal;
         "#,
-    );
+        );
 
-    let db = collect([entry, external], entry.file_path);
-    let found = path_type(
-        &db,
-        [
-            tcx.common.intern("crate"),
-            tcx.common.intern("external"),
-            tcx.common.intern("FromExternal"),
-        ],
-    );
+        let db = collect([entry, external], entry.file_path);
 
-    assert_eq!(db[found].kind, DefKind::Struct);
+        let root = root_type(&db, tcx.common.intern("Root"));
+        assert_eq!(db[root].kind, DefKind::Struct);
+
+        let inline = root_type(&db, tcx.common.intern("inline"));
+        assert_eq!(db[inline].kind, DefKind::Module);
+
+        let inline_scope = db.def_path_scope(inline).unwrap();
+        let child = direct_type_binding(&db, inline_scope, tcx.common.intern("Child"))
+            .expect("inline::Child should be collected inside the module scope");
+        assert_eq!(db[child].kind, DefKind::Struct);
+
+        let external_item = path_type(
+            &db,
+            [
+                tcx.common.intern("crate"),
+                tcx.common.intern("external"),
+                tcx.common.intern("FromExternal"),
+            ],
+        );
+        assert_eq!(db[external_item].kind, DefKind::Struct);
+
+        let missing_mod = path_type(
+            &db,
+            [tcx.common.intern("crate"), tcx.common.intern("missing")],
+        );
+        assert_eq!(db[missing_mod].kind, DefKind::Module);
+
+        let module_scope = db.def_path_scope(missing_mod).unwrap();
+        assert!(
+            direct_type_binding(&db, module_scope, tcx.common.intern("FromExternal")).is_none(),
+            "name collection must not synthesize or load missing external module contents"
+        );
+    }
 }
 
-#[test]
-fn does_not_load_missing_external_module_inputs() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
-        mod external;
-        "#,
-    );
+mod imports {
+    use super::*;
 
-    let db = collect([entry], entry.file_path);
-    let external_mod = path_type(
-        &db,
-        [tcx.common.intern("crate"), tcx.common.intern("external")],
-    );
-    assert_eq!(db[external_mod].kind, DefKind::Module);
-
-    let module_scope = db.def_path_scope(external_mod).unwrap();
-    assert!(
-        direct_type_binding(&db, module_scope, tcx.common.intern("FromExternal")).is_none(),
-        "name collection must not synthesize or load missing external module contents"
-    );
-}
-
-#[test]
-fn collects_import_declarations_from_use_trees() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+    #[test]
+    fn collects_import_declarations_from_use_trees() {
+        // Proves use trees collect single, rename, and glob import declarations.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         use a::{b, c as d, *};
         "#,
-    );
+        );
 
-    let db = collect([entry], entry.file_path);
-    let root = db.root_scope();
-    let a = tcx.common.intern("a");
-    let b = tcx.common.intern("b");
-    let c = tcx.common.intern("c");
-    let d = tcx.common.intern("d");
+        let db = collect([entry], entry.file_path);
+        let root = db.root_scope();
+        let a = tcx.common.intern("a");
+        let b = tcx.common.intern("b");
+        let c = tcx.common.intern("c");
+        let d = tcx.common.intern("d");
 
-    assert_eq!(db.import_count(), 3);
-    let single = import_for(&db, root, &[a, b]);
-    let renamed = import_for(&db, root, &[a, c]);
-    let glob = import_for(&db, root, &[a]);
-    assert_eq!(db[single].kind, ImportKind::Single);
-    assert_eq!(db[renamed].kind, ImportKind::Rename(d));
-    assert_eq!(db[glob].kind, ImportKind::Glob);
+        assert_eq!(db.import_count(), 3);
+        let single = import_for(&db, root, &[a, b]);
+        let renamed = import_for(&db, root, &[a, c]);
+        let glob = import_for(&db, root, &[a]);
+        assert_eq!(db[single].kind, ImportKind::Single);
+        assert_eq!(db[renamed].kind, ImportKind::Rename(d));
+        assert_eq!(db[glob].kind, ImportKind::Glob);
 
-    let ast::Item::Use(item) = &entry.file.items[0] else {
-        panic!("expected use item");
-    };
-    assert_eq!(
-        db.imports_for_ast_node(AstNodeId::from_ref(item)),
-        &[single, renamed, glob]
-    );
+        let ast::Item::Use(item) = &entry.file.items[0] else {
+            panic!("expected use item");
+        };
+        assert_eq!(
+            db.imports_for_ast_node(AstNodeId::from_ref(item)),
+            &[single, renamed, glob]
+        );
+    }
 }
 
-#[test]
-fn applies_restricted_visibility_to_imports() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+mod visibility {
+    use super::*;
+
+    #[test]
+    fn applies_restricted_visibility_to_imports() {
+        // Proves restricted visibility controls which imports resolve across module boundaries.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         mod a {
             pub(crate) struct CrateVisible;
             pub(super) struct SuperVisible;
@@ -271,131 +256,145 @@ fn applies_restricted_visibility_to_imports() {
             use crate::a::InA;
         }
         "#,
-    );
+        );
 
-    let db = collect([entry], entry.file_path);
-    let root = db.root_scope();
-    let a_scope = module_scope(&db, root, tcx.common.intern("a"));
-    let child_scope = module_scope(&db, a_scope, tcx.common.intern("child"));
-    let b_scope = module_scope(&db, root, tcx.common.intern("b"));
+        let db = collect([entry], entry.file_path);
+        let root = db.root_scope();
+        let a_scope = module_scope(&db, root, tcx.common.intern("a"));
+        let child_scope = module_scope(&db, a_scope, tcx.common.intern("child"));
+        let b_scope = module_scope(&db, root, tcx.common.intern("b"));
 
-    assert_eq!(
-        follow_aliases_kind(&db, child_scope, Namespace::Type, tcx.common.intern("InA")),
-        Some(DefKind::Struct)
-    );
-    assert_eq!(
-        follow_aliases_kind(
+        assert_eq!(
+            follow_aliases_kind(&db, child_scope, Namespace::Type, tcx.common.intern("InA")),
+            Some(DefKind::Struct)
+        );
+        assert_eq!(
+            follow_aliases_kind(
+                &db,
+                b_scope,
+                Namespace::Type,
+                tcx.common.intern("CrateVisible")
+            ),
+            Some(DefKind::Struct)
+        );
+        assert_eq!(
+            follow_aliases_kind(
+                &db,
+                b_scope,
+                Namespace::Type,
+                tcx.common.intern("SuperVisible")
+            ),
+            Some(DefKind::Struct)
+        );
+        assert_eq!(
+            follow_aliases_kind(&db, b_scope, Namespace::Type, tcx.common.intern("InA")),
+            None
+        );
+
+        let import = import_for(
             &db,
             b_scope,
-            Namespace::Type,
-            tcx.common.intern("CrateVisible")
-        ),
-        Some(DefKind::Struct)
-    );
-    assert_eq!(
-        follow_aliases_kind(
-            &db,
-            b_scope,
-            Namespace::Type,
-            tcx.common.intern("SuperVisible")
-        ),
-        Some(DefKind::Struct)
-    );
-    assert_eq!(
-        follow_aliases_kind(&db, b_scope, Namespace::Type, tcx.common.intern("InA")),
-        None
-    );
+            &[
+                tcx.common.intern("crate"),
+                tcx.common.intern("a"),
+                tcx.common.intern("InA"),
+            ],
+        );
+        assert_eq!(db[import].status, ImportStatus::NotFound);
+    }
 
-    let import = import_for(
-        &db,
-        b_scope,
-        &[
-            tcx.common.intern("crate"),
-            tcx.common.intern("a"),
-            tcx.common.intern("InA"),
-        ],
-    );
-    assert_eq!(db[import].status, ImportStatus::NotFound);
-}
-
-#[test]
-#[should_panic(expected = "restricted visibility path must start with `crate`, `self`, or `super`")]
-fn invalid_restricted_visibility_anchor_panics() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+    #[test]
+    #[should_panic(
+        expected = "restricted visibility path must start with `crate`, `self`, or `super`"
+    )]
+    fn invalid_restricted_visibility_anchor_panics() {
+        // Proves invalid restricted-visibility anchors are rejected during collection.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         mod a {
             pub(in a) struct Invalid;
         }
         "#,
-    );
+        );
 
-    let _ = collect([entry], entry.file_path);
-}
+        let _ = collect([entry], entry.file_path);
+    }
 
-#[test]
-#[should_panic(expected = "restricted visibility path segment must resolve")]
-fn unresolved_restricted_visibility_path_panics() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+    #[test]
+    #[should_panic(expected = "restricted visibility path segment must resolve")]
+    fn unresolved_restricted_visibility_path_panics() {
+        // Proves unresolved restricted-visibility paths are rejected during collection.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         mod a {
             pub(in crate::missing) struct Invalid;
         }
         "#,
-    );
+        );
 
-    let _ = collect([entry], entry.file_path);
+        let _ = collect([entry], entry.file_path);
+    }
 }
 
-#[test]
-fn collects_trait_associated_type_as_member() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+mod members {
+    use super::*;
+
+    #[test]
+    fn collects_trait_associated_type_as_member() {
+        // Proves trait associated types are collected as type-namespace members.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         trait Iterator {
             type Item;
         }
         "#,
-    );
+        );
 
-    let db = collect([entry], entry.file_path);
-    let iterator = root_type(&db, tcx.common.intern("Iterator"));
-    let ResolveResult::Found(item) =
-        db.member(iterator, Namespace::Type, tcx.common.intern("Item"))
-    else {
-        panic!("expected Iterator::Item to resolve as a member");
-    };
+        let db = collect([entry], entry.file_path);
+        let iterator = root_type(&db, tcx.common.intern("Iterator"));
+        let ResolveResult::Found(item) =
+            db.member(iterator, Namespace::Type, tcx.common.intern("Item"))
+        else {
+            panic!("expected Iterator::Item to resolve as a member");
+        };
 
-    assert_eq!(db[iterator].kind, DefKind::Trait);
-    assert_eq!(db[item].kind, DefKind::AssocType);
+        assert_eq!(db[iterator].kind, DefKind::Trait);
+        assert_eq!(db[item].kind, DefKind::AssocType);
+    }
 }
 
-#[test]
-fn collects_def_scope_links_for_items_and_members() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+mod scopes {
+    use super::*;
+
+    #[test]
+    fn collects_def_scope_links_for_items_and_members() {
+        // Proves collected definitions expose generic, path, body, trait, and impl scope links.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         struct S<T>;
 
         enum E<U> {
@@ -420,133 +419,135 @@ fn collects_def_scope_links_for_items_and_members() {
             let local = n;
         }
         "#,
-    );
+        );
 
-    let db = collect([entry], entry.file_path);
-    let root = db.root_scope();
+        let db = collect([entry], entry.file_path);
+        let root = db.root_scope();
 
-    let s = direct_type_binding(&db, root, tcx.common.intern("S")).unwrap();
-    assert_eq!(db[s].kind, DefKind::Struct);
-    assert_eq!(
-        db[db.def_generic_scope(s).unwrap()].kind,
-        ScopeKind::Generic
-    );
-    assert!(db.def_path_scope(s).is_none());
-    assert!(db.def_body_scope(s).is_none());
+        let s = direct_type_binding(&db, root, tcx.common.intern("S")).unwrap();
+        assert_eq!(db[s].kind, DefKind::Struct);
+        assert_eq!(
+            db[db.def_generic_scope(s).unwrap()].kind,
+            ScopeKind::Generic
+        );
+        assert!(db.def_path_scope(s).is_none());
+        assert!(db.def_body_scope(s).is_none());
 
-    let e = direct_type_binding(&db, root, tcx.common.intern("E")).unwrap();
-    assert_eq!(db[e].kind, DefKind::Enum);
-    let e_generic = db.def_generic_scope(e).unwrap();
-    let e_path = db.def_path_scope(e).unwrap();
-    assert_eq!(db[e_generic].kind, ScopeKind::Generic);
-    assert_eq!(db[e_path].kind, ScopeKind::Item);
-    assert_eq!(db[e_path].parent, Some(e_generic));
-    let variant = direct_type_binding(&db, e_path, tcx.common.intern("V")).unwrap();
-    assert_eq!(db[variant].kind, DefKind::Variant);
+        let e = direct_type_binding(&db, root, tcx.common.intern("E")).unwrap();
+        assert_eq!(db[e].kind, DefKind::Enum);
+        let e_generic = db.def_generic_scope(e).unwrap();
+        let e_path = db.def_path_scope(e).unwrap();
+        assert_eq!(db[e_generic].kind, ScopeKind::Generic);
+        assert_eq!(db[e_path].kind, ScopeKind::Item);
+        assert_eq!(db[e_path].parent, Some(e_generic));
+        let variant = direct_type_binding(&db, e_path, tcx.common.intern("V")).unwrap();
+        assert_eq!(db[variant].kind, DefKind::Variant);
 
-    let tr = direct_type_binding(&db, root, tcx.common.intern("Tr")).unwrap();
-    assert_eq!(db[tr].kind, DefKind::Trait);
-    let tr_generic = db.def_generic_scope(tr).unwrap();
-    let tr_scope = unique_child_scope(&db, tr_generic, ScopeKind::Trait);
-    let c = direct_value_binding(&db, tr_scope, tcx.common.intern("C")).unwrap();
-    assert_eq!(db[c].kind, DefKind::AssocConst);
-    let assoc = direct_type_binding(&db, tr_scope, tcx.common.intern("Assoc")).unwrap();
-    assert_eq!(db[assoc].kind, DefKind::AssocType);
-    assert_eq!(
-        db[db.def_generic_scope(assoc).unwrap()].kind,
-        ScopeKind::Generic
-    );
-    let m = direct_value_binding(&db, tr_scope, tcx.common.intern("m")).unwrap();
-    assert_eq!(db[m].kind, DefKind::AssocFn);
-    let m_generic = db.def_generic_scope(m).unwrap();
-    let m_body = db.def_body_scope(m).unwrap();
-    assert_eq!(db[m_body].kind, ScopeKind::Function);
-    assert_eq!(db[m_body].parent, Some(m_generic));
+        let tr = direct_type_binding(&db, root, tcx.common.intern("Tr")).unwrap();
+        assert_eq!(db[tr].kind, DefKind::Trait);
+        let tr_generic = db.def_generic_scope(tr).unwrap();
+        let tr_scope = unique_child_scope(&db, tr_generic, ScopeKind::Trait);
+        let c = direct_value_binding(&db, tr_scope, tcx.common.intern("C")).unwrap();
+        assert_eq!(db[c].kind, DefKind::AssocConst);
+        let assoc = direct_type_binding(&db, tr_scope, tcx.common.intern("Assoc")).unwrap();
+        assert_eq!(db[assoc].kind, DefKind::AssocType);
+        assert_eq!(
+            db[db.def_generic_scope(assoc).unwrap()].kind,
+            ScopeKind::Generic
+        );
+        let m = direct_value_binding(&db, tr_scope, tcx.common.intern("m")).unwrap();
+        assert_eq!(db[m].kind, DefKind::AssocFn);
+        let m_generic = db.def_generic_scope(m).unwrap();
+        let m_body = db.def_body_scope(m).unwrap();
+        assert_eq!(db[m_body].kind, ScopeKind::Function);
+        assert_eq!(db[m_body].parent, Some(m_generic));
 
-    let impl_def = single_def(&db, DefKind::Impl);
-    let impl_generic = db.def_generic_scope(impl_def).unwrap();
-    let impl_scope = unique_child_scope(&db, impl_generic, ScopeKind::Impl);
-    let make = direct_value_binding(&db, impl_scope, tcx.common.intern("make")).unwrap();
-    assert_eq!(db[make].kind, DefKind::AssocFn);
-    let make_generic = db.def_generic_scope(make).unwrap();
-    let make_body = db.def_body_scope(make).unwrap();
-    assert_eq!(db[make_body].kind, ScopeKind::Function);
-    assert_eq!(db[make_body].parent, Some(make_generic));
+        let impl_def = single_def(&db, DefKind::Impl);
+        let impl_generic = db.def_generic_scope(impl_def).unwrap();
+        let impl_scope = unique_child_scope(&db, impl_generic, ScopeKind::Impl);
+        let make = direct_value_binding(&db, impl_scope, tcx.common.intern("make")).unwrap();
+        assert_eq!(db[make].kind, DefKind::AssocFn);
+        let make_generic = db.def_generic_scope(make).unwrap();
+        let make_body = db.def_body_scope(make).unwrap();
+        assert_eq!(db[make_body].kind, ScopeKind::Function);
+        assert_eq!(db[make_body].parent, Some(make_generic));
 
-    let f = direct_value_binding(&db, root, tcx.common.intern("f")).unwrap();
-    assert_eq!(db[f].kind, DefKind::Fn);
-    let f_generic = db.def_generic_scope(f).unwrap();
-    let f_body = db.def_body_scope(f).unwrap();
-    assert_eq!(db[f_body].kind, ScopeKind::Function);
-    assert_eq!(db[f_body].parent, Some(f_generic));
-}
+        let f = direct_value_binding(&db, root, tcx.common.intern("f")).unwrap();
+        assert_eq!(db[f].kind, DefKind::Fn);
+        let f_generic = db.def_generic_scope(f).unwrap();
+        let f_body = db.def_body_scope(f).unwrap();
+        assert_eq!(db[f_body].kind, ScopeKind::Function);
+        assert_eq!(db[f_body].parent, Some(f_generic));
+    }
 
-#[test]
-fn keeps_function_generics_params_and_block_locals_in_separate_scopes() {
-    let tcx = TestCx {
-        common: CommonCx::default(),
-    };
-    let scx = ast::SyntaxCx::new(&tcx.common);
-    let entry = tcx.parse(
-        &scx,
-        "src/lib.rs",
-        r#"
+    #[test]
+    fn keeps_function_generics_params_and_block_locals_in_separate_scopes() {
+        // Proves function generics, params, and block locals occupy separate lexical scopes.
+        let tcx = TestCx {
+            common: CommonCx::default(),
+        };
+        let scx = ast::SyntaxCx::new(&tcx.common);
+        let entry = tcx.parse(
+            &scx,
+            "src/lib.rs",
+            r#"
         fn f<T>(x: T) {
             let y = x;
         }
         "#,
-    );
-    let ast::Item::Fn(item) = &entry.file.items[0] else {
-        panic!("expected function item");
-    };
-    let block_node = AstNodeId::from_ref(&item.block);
-    let ast::Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
-        panic!("expected parameter ident pattern");
-    };
-    let ast::Stmt::Local(local) = &item.block.stmts[0] else {
-        panic!("expected local statement");
-    };
-    let ast::Pat::Ident(y_pat) = &local.pat else {
-        panic!("expected local ident pattern");
-    };
+        );
+        let ast::Item::Fn(item) = &entry.file.items[0] else {
+            panic!("expected function item");
+        };
+        let block_node = AstNodeId::from_ref(&item.block);
+        let ast::Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
+            panic!("expected parameter ident pattern");
+        };
+        let ast::Stmt::Local(local) = &item.block.stmts[0] else {
+            panic!("expected local statement");
+        };
+        let ast::Pat::Ident(y_pat) = &local.pat else {
+            panic!("expected local ident pattern");
+        };
 
-    let db = collect([entry], entry.file_path);
-    let f = direct_binding(
-        &db,
-        db.root_scope(),
-        Namespace::Value,
-        tcx.common.intern("f"),
-    )
-    .expect("function should be collected in the value namespace");
-    let generic_scope = db.def_generic_scope(f).unwrap();
-    let function_scope = db.def_body_scope(f).unwrap();
-    let block_scope = scope(&db, ScopeKind::Block, 0);
+        let db = collect([entry], entry.file_path);
+        let f = direct_binding(
+            &db,
+            db.root_scope(),
+            Namespace::Value,
+            tcx.common.intern("f"),
+        )
+        .expect("function should be collected in the value namespace");
+        let generic_scope = db.def_generic_scope(f).unwrap();
+        let function_scope = db.def_body_scope(f).unwrap();
+        let block_scope = scope(&db, ScopeKind::Block, 0);
 
-    assert_eq!(db.scope_for_ast_node(block_node), Some(block_scope));
-    assert_eq!(
-        direct_type_binding(&db, generic_scope, tcx.common.intern("T")).map(|def| db[def].kind),
-        Some(DefKind::GenericType)
-    );
-    assert_eq!(
-        db.binding(function_scope, Namespace::Value, tcx.common.intern("x"))
-            .and_then(|binding| binding.iter().next())
-            .map(|def| db[def].kind),
-        Some(DefKind::Local)
-    );
-    assert_eq!(
-        db.def_for_ast_node(AstNodeId::from_ref(x_pat))
-            .map(|def| db[def].kind),
-        Some(DefKind::Local)
-    );
-    assert_eq!(
-        db.binding(block_scope, Namespace::Value, tcx.common.intern("y"))
-            .and_then(|binding| binding.iter().next())
-            .map(|def| db[def].kind),
-        Some(DefKind::Local)
-    );
-    assert_eq!(
-        db.def_for_ast_node(AstNodeId::from_ref(y_pat))
-            .map(|def| db[def].kind),
-        Some(DefKind::Local)
-    );
+        assert_eq!(db.scope_for_ast_node(block_node), Some(block_scope));
+        assert_eq!(
+            direct_type_binding(&db, generic_scope, tcx.common.intern("T")).map(|def| db[def].kind),
+            Some(DefKind::GenericType)
+        );
+        assert_eq!(
+            db.binding(function_scope, Namespace::Value, tcx.common.intern("x"))
+                .and_then(|binding| binding.iter().next())
+                .map(|def| db[def].kind),
+            Some(DefKind::Local)
+        );
+        assert_eq!(
+            db.def_for_ast_node(AstNodeId::from_ref(x_pat))
+                .map(|def| db[def].kind),
+            Some(DefKind::Local)
+        );
+        assert_eq!(
+            db.binding(block_scope, Namespace::Value, tcx.common.intern("y"))
+                .and_then(|binding| binding.iter().next())
+                .map(|def| db[def].kind),
+            Some(DefKind::Local)
+        );
+        assert_eq!(
+            db.def_for_ast_node(AstNodeId::from_ref(y_pat))
+                .map(|def| db[def].kind),
+            Some(DefKind::Local)
+        );
+    }
 }

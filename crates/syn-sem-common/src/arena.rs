@@ -118,6 +118,7 @@ mod tests {
 
     #[test]
     fn reserves_ids_then_freezes_dense_values() {
+        // Proves reserved ids can be filled before freezing into dense arena values.
         let mut arena = ArenaBuilder::new(TestId::new, TestId::index);
         let parent = arena.reserve();
         let child = arena.push("child");
@@ -134,6 +135,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "arena slot must be filled before finish")]
     fn finish_rejects_unfilled_slots() {
+        // Proves `finish` rejects any reserved slot that was never filled.
         let mut arena: ArenaBuilder<TestId, &str> = ArenaBuilder::new(TestId::new, TestId::index);
         arena.reserve();
 
@@ -143,6 +145,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "arena slot must be filled at most once")]
     fn fill_rejects_double_fill() {
+        // Proves each reserved slot can be filled only once.
         let mut arena = ArenaBuilder::new(TestId::new, TestId::index);
         let id = arena.reserve();
 

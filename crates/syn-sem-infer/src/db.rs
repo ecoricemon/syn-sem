@@ -543,6 +543,7 @@ mod tests {
 
     #[test]
     fn const_facts_preserve_integer_primitive_state() {
+        // Proves const facts preserve both integer value and primitive type state.
         let mut facts = InferConstFacts::default();
         let expr = hir::ExprId::new(0);
         let def = syn_sem_name::DefId::new(0);
@@ -599,6 +600,7 @@ mod tests {
 
     #[test]
     fn lowers_single_segment_primitives_to_primitive_types() {
+        // Proves single-segment Rust primitive names lower to primitive inference types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, infer) = infer_ty_ids(
@@ -628,6 +630,7 @@ mod tests {
 
     #[test]
     fn keeps_non_primitive_paths_as_paths() {
+        // Proves qualified primitive-looking names remain unresolved path types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: crate::usize }");
@@ -650,6 +653,7 @@ mod tests {
 
     #[test]
     fn keeps_distinct_infer_type_occurrences_separate() {
+        // Proves separate `_` occurrences receive distinct inference type ids.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { first: _, second: _ }");
@@ -671,6 +675,7 @@ mod tests {
 
     #[test]
     fn interning_keeps_unresolved_paths_separate() {
+        // Proves unresolved paths are not structurally interned across source scopes.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (_, mut infer) = infer_ty_ids(&ccx, &scx, "struct S;");
@@ -698,6 +703,7 @@ mod tests {
 
     #[test]
     fn interning_deeply_shares_container_types() {
+        // Proves container types can share when their inner types are deeply shareable.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, mut infer) = infer_ty_ids(&ccx, &scx, "struct S { first: u32, second: u32 }");
@@ -727,6 +733,7 @@ mod tests {
 
     #[test]
     fn classifies_nominal_path_targets() {
+        // Proves resolved nominal paths are classified as nominal inference types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let local = ccx.intern("Local");
@@ -748,6 +755,7 @@ mod tests {
 
     #[test]
     fn classifies_generic_type_parameters_separately_from_nominal_types() {
+        // Proves generic type parameters are classified separately from nominal paths.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
@@ -769,6 +777,7 @@ mod tests {
 
     #[test]
     fn classifies_plain_associated_type_targets_without_solver_obligations() {
+        // Proves plain associated type paths classify as projections without solver obligations.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let item = ccx.intern("Item");
@@ -795,6 +804,7 @@ mod tests {
 
     #[test]
     fn lowers_qualified_associated_type_paths_for_projection_solving() {
+        // Proves qualified associated type paths produce projection solver matches.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
@@ -906,6 +916,7 @@ mod tests {
 
     #[test]
     fn lowers_traitless_qualified_associated_type_paths_as_projection_matches() {
+        // Proves traitless qualified associated type paths use trait bounds for projection matches.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
@@ -1013,6 +1024,7 @@ mod tests {
 
     #[test]
     fn skips_projection_matches_when_candidate_trait_has_no_associated_type_member() {
+        // Proves candidate traits without the requested associated type do not create matches.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
@@ -1076,6 +1088,7 @@ mod tests {
 
     #[test]
     fn lowers_impl_associated_type_assignments_as_solver_input() {
+        // Proves impl associated type assignments become projection solver input facts.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
@@ -1214,6 +1227,7 @@ mod tests {
 
     #[test]
     fn derives_generic_impl_self_binding_and_substitution() {
+        // Proves generic impl-self bindings substitute associated type values.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1274,6 +1288,7 @@ mod tests {
 
     #[test]
     fn derives_impl_self_binding_to_projection_generic() {
+        // Proves projection-side generics can bind to impl-self generics.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, names, infer) = infer_collected_types(
@@ -1315,6 +1330,7 @@ mod tests {
 
     #[test]
     fn classifies_projection_normalization_query_results() {
+        // Proves projection normalization queries report known, ambiguous, and non-projection states.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, mut infer) = infer_collected_types(
@@ -1380,6 +1396,7 @@ mod tests {
 
     #[test]
     fn reports_projection_without_known_normalization() {
+        // Proves unresolved projections report the no-normalization state.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, mut infer) = infer_collected_types(
@@ -1414,6 +1431,7 @@ mod tests {
 
     #[test]
     fn derives_selected_substitution_from_multiple_generic_bindings() {
+        // Proves associated type values select the matching generic binding from multiple args.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1471,6 +1489,7 @@ mod tests {
 
     #[test]
     fn reuses_representative_type_for_repeated_concrete_shape_terms() {
+        // Proves repeated concrete shape terms reuse a representative type during normalization.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1520,6 +1539,7 @@ mod tests {
 
     #[test]
     fn keeps_type_shape_term_bindings_local_to_each_projection_self() {
+        // Proves type-shape bindings stay local to each projection self type.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1568,6 +1588,7 @@ mod tests {
 
     #[test]
     fn rejects_repeated_impl_self_generic_mismatch() {
+        // Proves repeated impl-self generics must match consistently before normalization.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1618,6 +1639,7 @@ mod tests {
 
     #[test]
     fn derives_nested_impl_self_binding_with_logic_unification() {
+        // Proves nested impl-self shapes bind generics through logic unification.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1656,6 +1678,7 @@ mod tests {
 
     #[test]
     fn derives_composite_impl_self_binding_with_logic_unification() {
+        // Proves composite impl-self shapes substitute nested path values.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1694,6 +1717,7 @@ mod tests {
 
     #[test]
     fn derives_container_impl_self_bindings_with_logic_unification() {
+        // Proves reference, tuple, and slice impl-self shapes bind through logic unification.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1744,6 +1768,7 @@ mod tests {
 
     #[test]
     fn matches_literal_const_args_in_impl_self_logic_unification() {
+        // Proves literal const args participate in impl-self matching.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1786,6 +1811,7 @@ mod tests {
 
     #[test]
     fn derives_assoc_type_arg_impl_self_binding_with_logic_unification() {
+        // Proves associated type args inside impl-self shapes bind generic values.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1830,6 +1856,7 @@ mod tests {
 
     #[test]
     fn matches_assoc_const_arg_in_impl_self_logic_unification() {
+        // Proves associated const args constrain impl-self matching.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1875,6 +1902,7 @@ mod tests {
 
     #[test]
     fn derives_nested_generic_value_substitution() {
+        // Proves generic substitutions recurse into associated type value shapes.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1926,6 +1954,7 @@ mod tests {
 
     #[test]
     fn recursively_normalizes_projection_inside_generic_argument() {
+        // Proves recursive normalization rewrites projections inside generic arguments.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, mut infer) = infer_collected_types(
@@ -1966,6 +1995,7 @@ mod tests {
 
     #[test]
     fn recursively_normalizes_projection_inside_type_containers() {
+        // Proves recursive normalization rewrites projections inside type containers.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, mut infer) = infer_collected_types(
@@ -2035,6 +2065,7 @@ mod tests {
 
     #[test]
     fn caches_recursive_normalization_results() {
+        // Proves recursive normalization reuses cached normalized type results.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, mut infer) = infer_collected_types(
@@ -2075,6 +2106,7 @@ mod tests {
 
     #[test]
     fn keeps_generic_substitutions_tied_to_impl_self_match() {
+        // Proves generic substitutions stay tied to their originating impl-self match.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -2200,6 +2232,7 @@ mod tests {
 
     #[test]
     fn preserves_array_length_expression_id() {
+        // Proves array length lowering preserves the source HIR expression id.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: [u8; 3] }");
@@ -2224,6 +2257,7 @@ mod tests {
 
     #[test]
     fn preserves_const_generic_arguments() {
+        // Proves type lowering preserves const generic literal arguments.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, infer) = infer_ty_ids(
@@ -2250,6 +2284,7 @@ mod tests {
 
     #[test]
     fn preserves_associated_const_arguments() {
+        // Proves type lowering preserves associated const arguments on trait bounds.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (_hir, infer) = infer_ty_ids(
@@ -2279,6 +2314,7 @@ mod tests {
 
     #[test]
     fn preserves_associated_type_constraint_bounds() {
+        // Proves type lowering preserves associated type constraint bounds.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (_hir, infer) = infer_ty_ids(
@@ -2309,6 +2345,7 @@ mod tests {
 
     #[test]
     fn preserves_ambiguous_and_unresolved_path_states() {
+        // Proves path lowering preserves ambiguous and unresolved resolution states.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let maybe = ccx.intern("Maybe");

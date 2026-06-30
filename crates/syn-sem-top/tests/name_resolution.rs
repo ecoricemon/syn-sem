@@ -3,74 +3,79 @@ use syn_sem_hir::ItemKind;
 use syn_sem_name::{AstNodeId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
 use syn_sem_top::TopCx;
 
-/// Verifies physical module files are loaded from the filesystem and `use` declarations across
-/// those files resolve to the expected definitions.
-#[test]
-fn resolves_imports_from_physical_module_files() {
-    let tcx = TopCx::default();
+mod files {
+    use super::*;
 
-    let entry_path = fixture("a1.rs");
+    /// Verifies physical module files are loaded from the filesystem and `use` declarations across
+    /// those files resolve to the expected definitions.
+    #[test]
+    fn resolves_imports_from_physical_module_files() {
+        // Proves physical module files load and resolve cross-file imports.
+        let tcx = TopCx::default();
 
-    let semantics = tcx.analyze_file(entry_path).unwrap();
-    assert!(!semantics.hir().files().is_empty());
-    assert!(!semantics.hir().items().is_empty());
+        let entry_path = fixture("a1.rs");
 
-    let db = semantics.names();
-    let root = db.root_scope();
+        let semantics = tcx.analyze_file(entry_path).unwrap();
+        assert!(!semantics.hir().files().is_empty());
+        assert!(!semantics.hir().items().is_empty());
 
-    assert!(db
-        .import_ids()
-        .all(|import| db[import].status == ImportStatus::Resolved));
+        let db = semantics.names();
+        let root = db.root_scope();
 
-    assert_eq!(
-        resolve_kind(&tcx, db, root, Namespace::Type, "b1"),
-        DefKind::Module
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, root, Namespace::Type, "c1"),
-        DefKind::Module
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, root, Namespace::Type, "dx"),
-        DefKind::Module
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, root, Namespace::Type, "e1"),
-        DefKind::Module
-    );
-    assert_eq!(
-        follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromB1"),
-        DefKind::Struct
-    );
-    assert_eq!(
-        follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromC1"),
-        DefKind::Struct
-    );
+        assert!(db
+            .import_ids()
+            .all(|import| db[import].status == ImportStatus::Resolved));
 
-    let b1_scope = get_module_scope(&tcx, db, root, "b1");
-    let dx_scope = get_module_scope(&tcx, db, root, "dx");
-    let e1_scope = get_module_scope(&tcx, db, root, "e1");
+        assert_eq!(
+            resolve_kind(&tcx, db, root, Namespace::Type, "b1"),
+            DefKind::Module
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, root, Namespace::Type, "c1"),
+            DefKind::Module
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, root, Namespace::Type, "dx"),
+            DefKind::Module
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, root, Namespace::Type, "e1"),
+            DefKind::Module
+        );
+        assert_eq!(
+            follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromB1"),
+            DefKind::Struct
+        );
+        assert_eq!(
+            follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromC1"),
+            DefKind::Struct
+        );
 
-    assert_eq!(
-        resolve_kind(&tcx, db, b1_scope, Namespace::Type, "b2"),
-        DefKind::Module
-    );
-    assert_eq!(
-        follow_aliases_kind(&tcx, db, b1_scope, Namespace::Type, "FromB2"),
-        DefKind::Struct
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, dx_scope, Namespace::Type, "d2"),
-        DefKind::Module
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, e1_scope, Namespace::Type, "e2"),
-        DefKind::Module
-    );
-    assert_eq!(
-        resolve_kind(&tcx, db, e1_scope, Namespace::Type, "e3"),
-        DefKind::Module
-    );
+        let b1_scope = get_module_scope(&tcx, db, root, "b1");
+        let dx_scope = get_module_scope(&tcx, db, root, "dx");
+        let e1_scope = get_module_scope(&tcx, db, root, "e1");
+
+        assert_eq!(
+            resolve_kind(&tcx, db, b1_scope, Namespace::Type, "b2"),
+            DefKind::Module
+        );
+        assert_eq!(
+            follow_aliases_kind(&tcx, db, b1_scope, Namespace::Type, "FromB2"),
+            DefKind::Struct
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, dx_scope, Namespace::Type, "d2"),
+            DefKind::Module
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, e1_scope, Namespace::Type, "e2"),
+            DefKind::Module
+        );
+        assert_eq!(
+            resolve_kind(&tcx, db, e1_scope, Namespace::Type, "e3"),
+            DefKind::Module
+        );
+    }
 }
 
 fn fixture(path: &str) -> std::path::PathBuf {
@@ -149,7 +154,7 @@ fn resolve_lexical<'cx>(
     }
 }
 
-mod upper_phase_integration {
+mod phases {
     use super::*;
     use syn_sem_hir as hir;
     use syn_sem_infer as infer;
@@ -212,6 +217,7 @@ mod upper_phase_integration {
     // syn-sem-name, without depending on syn-sem-ast directly.
     #[test]
     fn consumes_hir_and_name_facts_together() {
+        // Proves upper phases consume HIR traversal and name facts together.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -341,6 +347,7 @@ mod upper_phase_integration {
 
     #[test]
     fn feeds_evaluated_array_lengths_back_into_inference() {
+        // Proves evaluated array lengths feed back into inference array types.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -387,6 +394,7 @@ mod upper_phase_integration {
 
     #[test]
     fn feeds_evaluated_const_generic_args_into_projection_matching() {
+        // Proves evaluated const generic args participate in projection matching.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -470,6 +478,7 @@ mod upper_phase_integration {
 
     #[test]
     fn feeds_evaluated_const_path_args_into_projection_matching() {
+        // Proves evaluated const path args participate in projection matching.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -572,6 +581,7 @@ mod upper_phase_integration {
 
     #[test]
     fn feeds_evaluated_assoc_const_args_into_projection_matching() {
+        // Proves evaluated associated const args participate in projection matching.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -669,6 +679,7 @@ mod upper_phase_integration {
 
     #[test]
     fn evaluates_typed_integer_const_values() {
+        // Proves typed integer consts evaluate with concrete primitive state.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -693,6 +704,7 @@ mod upper_phase_integration {
 
     #[test]
     fn reports_unsupported_closure_during_evaluation() {
+        // Proves unsupported closure const evaluation reports an error.
         let tcx = TopCx::default();
         let err = tcx
             .analyze_virtual_file(
@@ -711,6 +723,7 @@ mod upper_phase_integration {
 
     #[test]
     fn consumes_projection_normalization_query_from_hir() {
+        // Proves top-level semantics exposes projection normalization by HIR type.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -778,6 +791,7 @@ mod upper_phase_integration {
 
     #[test]
     fn consumes_generic_projection_normalization_query_from_hir() {
+        // Proves top-level normalization handles generic projection values from HIR.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -837,6 +851,7 @@ mod upper_phase_integration {
 
     #[test]
     fn normalizes_projection_with_multiple_generic_bindings() {
+        // Proves top-level normalization selects the right binding among multiple generics.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -895,6 +910,7 @@ mod upper_phase_integration {
 
     #[test]
     fn normalizes_nested_generic_projection_values() {
+        // Proves top-level normalization substitutes nested generic projection values.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -964,6 +980,7 @@ mod upper_phase_integration {
 
     #[test]
     fn consumes_recursive_normalization_query_from_hir() {
+        // Proves top-level semantics recursively normalizes projections inside containers.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(
@@ -1015,6 +1032,7 @@ mod upper_phase_integration {
 
     #[test]
     fn keeps_generic_substitutions_tied_to_impl_self_match() {
+        // Proves top-level substitutions stay tied to their impl-self match context.
         let tcx = TopCx::default();
         let semantics = tcx
             .analyze_virtual_file(

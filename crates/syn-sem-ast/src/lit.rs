@@ -163,32 +163,20 @@ mod tests {
     use crate::test_util::*;
 
     #[test]
-    fn lit_int() {
-        // Proves integer literals preserve their parsed numeric value.
-        let ccx = syn_sem_common::CommonCx::default();
-        let scx = SyntaxCx::new(&ccx);
-        let value = parse::<syn::LitInt, LitInt>(&scx, "1");
-        assert_eq!(value.base10_parse::<i32>().unwrap(), 1);
-    }
-
-    #[test]
-    fn lit_float() {
-        // Proves float literals preserve their parsed numeric value.
-        let ccx = syn_sem_common::CommonCx::default();
-        let scx = SyntaxCx::new(&ccx);
-        let value = parse::<syn::LitFloat, LitFloat>(&scx, "1.");
-        assert_eq!(value.base10_parse::<f32>().unwrap(), 1.);
-    }
-
-    #[test]
-    fn lit_bool() {
-        // Proves boolean literals preserve true and false values.
+    fn literals_preserve_parsed_values() {
+        // Proves literal wrappers preserve parsed integer, float, and bool values.
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
-        let value = parse::<syn::LitBool, LitBool>(&scx, "true");
-        assert!(value.value.value);
-        let value = parse::<syn::LitBool, LitBool>(&scx, "false");
-        assert!(!value.value.value);
+        let int = parse::<syn::LitInt, LitInt>(&scx, "1");
+        assert_eq!(int.base10_parse::<i32>().unwrap(), 1);
+
+        let float = parse::<syn::LitFloat, LitFloat>(&scx, "1.");
+        assert_eq!(float.base10_parse::<f32>().unwrap(), 1.);
+
+        let bool_ = parse::<syn::LitBool, LitBool>(&scx, "true");
+        assert!(bool_.value.value);
+        let bool_ = parse::<syn::LitBool, LitBool>(&scx, "false");
+        assert!(!bool_.value.value);
     }
 }

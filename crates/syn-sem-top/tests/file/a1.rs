@@ -1,3 +1,5 @@
+// Fixture purpose: entry module for physical module-tree loading tests.
+// For example, this file exercises inline, out-of-line, and renamed module paths.
 // Entry file
 // Logical path: ~::a1
 // Physical path: ~/a1

@@ -71,6 +71,7 @@ mod tests {
 
     #[test]
     fn lowers_inline_type_param_bounds_into_predicates() {
+        // Proves inline type parameter bounds become lowered generic predicates.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let generics = parse_struct_generics(&ccx, &scx, "struct S<T: Clone>;");
@@ -90,6 +91,7 @@ mod tests {
 
     #[test]
     fn appends_source_where_clause_predicates_after_inline_bounds() {
+        // Proves lowered predicates keep inline bounds before source where clauses.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let generics = parse_struct_generics(&ccx, &scx, "struct S<T: Clone> where T: Iterator;");
