@@ -26,8 +26,6 @@
 - Do not force struct fields into `DefScopes::path`.
 - Add a dedicated field/member concept if field modeling becomes necessary.
 
-## Primary Public Items
+## Entry Points
 
-- `NameDb`, `DefId`, `ScopeId`, `ImportId`, `Name`.
-- `Def`, `Scope`, `Bindings`, `Namespace`, `Import`, `ResolveResult`.
-- `collect`, `collect::ModulePath`.
+- Start from `NameDb` for name facts and `collect::NameCollector` for AST-aware collection.

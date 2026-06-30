@@ -21,8 +21,6 @@
 - Prefer semantic wrappers over raw `syn` nodes in production APIs.
 - Keep raw `syn` mainly at conversion boundaries.
 
-## Primary Public Items
+## Entry Points
 
-- `SyntaxCx`, `FromSyn`, `InputDesc`.
-- `Source`, `SourceKind`, `Ident`, `Span`.
-- `File`, `Item`, `Expr`, `Type`, `Pat`, `Path`, `Generics`.
+- Start from `SyntaxCx` for source storage and `FromSyn` for AST construction.

@@ -18,6 +18,7 @@
 
 - Start with expression type inference needs.
 - Keep inference inputs explicit and query owning crates for facts.
+- Accept constant facts from orchestration; do not call `syn-sem-eval` directly.
 - Prefer `*_hir_type` query names for HIR-linked inference facts.
 - Preserve Rust type path syntax during lowering; name lookup is not final type resolution.
 - Keep generic substitution, qualified paths, projections, and trait-based associated
@@ -25,8 +26,6 @@
 - Feed logic-backed solving HIR, `syn-sem-name`, and inference facts, not raw syntax.
 - Prefer small vertical slices that reveal HIR requirements.
 
-## Primary Public Items
+## Entry Points
 
-- `InferDb`, `Type`, `TypeId`, `PrimitiveType`.
-- `PathType`, `QSelf`, `PathTypeResolution`, `ProjectionType`.
-- `ProjectionNormalizationResult`.
+- Start from `InferDb::analyze` and query the resulting `InferDb`.

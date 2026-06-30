@@ -15,25 +15,18 @@
 - Lower sugar into HIR facts or obligations, not resolved call trees.
 - Leave trait, method, type, inference, evaluation, monomorphization, and backend
   behavior to later phases.
-- Do not treat current name-resolution ownership or phase ordering as permanent.
 
 ## Model
 
 - Keep source-shaped spine and lowered/infer-friendly facts distinct.
 - Represent declarations, blocks, and expressions explicitly in stable arenas.
-- Put generic predicate integration, body/control-flow lowering, and inference
-  preprocessing in HIR lowering layers.
+- Put generic predicate integration and body/control-flow lowering in HIR
+  lowering layers.
 - Add unsupported pattern variants on demand instead of filling coverage ahead of consumers.
 - Do not make later phases recover source structure from raw AST nodes.
 - Keep ownership and lifetimes tied to the shared top-level context.
 - Do not construct deep context chains here.
 
-## Compatibility
+## Entry Points
 
-- Use `Hir` and `HirBuilder` as the public entry points.
-
-## Primary Public Items
-
-- `Hir`, `HirBuilder`.
-- `Item`, `Signature`, `Block`, `Field`, `Variant`, `AssocItem`, `Type`.
-- `Generics`, `GenericParam`, `TypeParamBound`.
+- Build with `HirBuilder`; consume through `Hir`.

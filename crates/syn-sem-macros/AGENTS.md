@@ -14,6 +14,6 @@
 
 - Prefer explicit compile-time checks over generated runtime behavior for crate invariants.
 
-## Primary Public Items
+## Entry Points
 
-- `CheckDropless`.
+- Use `CheckDropless` and `define_id` for small compile-time helpers.

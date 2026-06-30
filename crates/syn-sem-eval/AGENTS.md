@@ -4,7 +4,7 @@
 
 - Own compile-time constant evaluation for upper semantic phases.
 - Consume HIR, name facts, and inference facts through focused APIs.
-- Expose evaluated constant facts for orchestration by `syn-sem-top`.
+- Expose evaluated constant facts for fixed-point orchestration by `syn-sem-top`.
 
 ## Boundaries
 
@@ -14,10 +14,11 @@
 
 ## Model
 
-- Treat evaluation and inference as phases that may iterate to a fixed point.
+- Treat evaluation as a phase that runs with inference until `syn-sem-top`
+  reaches a fixed point.
 - Return unknown results when required type or value facts are not available yet.
 - Keep value facts explicit and queryable by HIR expression or const argument.
 
-## Primary Public Items
+## Entry Points
 
-- `EvalDb`, `ConstValue`.
+- Start from `EvalDb` for collected constant values.

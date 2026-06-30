@@ -3,7 +3,8 @@
 ## Role
 
 - Own shared infrastructure for extracted `syn-sem` crates: context state,
-  string interning, source identifiers, and abstract source files.
+  string interning, source identifiers, abstract source files, arenas, and
+  AST-node identity helpers.
 
 ## Boundaries
 
@@ -19,8 +20,6 @@
 - Do not expose or store `RawInterned<str>` in crate APIs.
 - Keep interned paths and text tied to their producing `CommonCx` or interner.
 
-## Primary Public Items
+## Entry Points
 
-- `CommonCx`, `StringInterner`, `AbstractFiles`.
-- `InternedStr`, `FilePath`, `SourceText`, `LibraryName`.
-- `Result`, `Error`, `Map`.
+- Start from `CommonCx` for shared context state and interned source data.
