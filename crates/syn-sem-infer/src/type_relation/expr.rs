@@ -69,6 +69,7 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
                 expr: inner,
                 is_mut,
             } => self.derive_reference(expr.id, *inner, *is_mut),
+            hir::ExprKind::Field { base, member } => self.derive_field(expr.id, *base, *member),
             hir::ExprKind::Repeat { expr: elem, len } => self.derive_repeat(expr.id, *elem, *len),
             hir::ExprKind::Tuple { elems } => self.derive_tuple(expr.id, elems),
             hir::ExprKind::Unary { op, expr: inner } => self.derive_unary(expr.id, *op, *inner),
@@ -78,7 +79,6 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             | hir::ExprKind::Cast { .. }
             | hir::ExprKind::Closure { .. }
             | hir::ExprKind::Const { .. }
-            | hir::ExprKind::Field { .. }
             | hir::ExprKind::Index { .. }
             | hir::ExprKind::Lit(_)
             | hir::ExprKind::MethodCall { .. }
@@ -193,6 +193,21 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         self.insert_expr_type_equality(expr, reference)
     }
 
+    fn derive_field(
+        &mut self,
+        expr: hir::ExprId,
+        base: hir::ExprId,
+        member: syn_sem_name::Name<'cx>,
+    ) -> bool {
+        let Some(base_ty) = self.type_relations.type_for_hir_expr(base) else {
+            return false;
+        };
+        let Some(field_ty) = self.field_type_for_base(base_ty, member) else {
+            return false;
+        };
+        self.insert_expr_type_equality(expr, field_ty)
+    }
+
     fn derive_repeat(&mut self, expr: hir::ExprId, elem: hir::ExprId, len: hir::ExprId) -> bool {
         let Some(elem) = self.type_relations.type_for_hir_expr(elem) else {
             return false;
@@ -218,6 +233,10 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         let Some(inner_ty) = self.type_relations.type_for_hir_expr(inner) else {
             return false;
         };
+        if op == hir::UnaryOp::Deref {
+            return self.derive_deref(expr, inner_ty);
+        }
+
         let Some(primitive) = self.primitive(inner_ty) else {
             return false;
         };
@@ -231,6 +250,13 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             }
             hir::UnaryOp::Deref | hir::UnaryOp::Not | hir::UnaryOp::Neg => false,
         }
+    }
+
+    fn derive_deref(&mut self, expr: hir::ExprId, inner_ty: TypeId) -> bool {
+        let Type::Reference { elem, .. } = self.types[inner_ty] else {
+            return false;
+        };
+        self.insert_expr_type_equality(expr, elem)
     }
 
     fn resolved_expr_types(&self, exprs: &[hir::ExprId]) -> Option<Vec<TypeId>> {
@@ -252,6 +278,29 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             Type::Primitive(primitive) => Some(primitive),
             _ => None,
         }
+    }
+
+    fn field_type_for_base(
+        &self,
+        base_ty: TypeId,
+        member: syn_sem_name::Name<'cx>,
+    ) -> Option<TypeId> {
+        let def = self.types.nominal_def(base_ty)?;
+        self.hir.items().iter().find_map(|item| {
+            if item.def != Some(def) {
+                return None;
+            }
+            let hir::ItemKind::Struct { fields, .. } = &item.kind else {
+                return None;
+            };
+            fields.iter().find_map(|field| {
+                let field = &self.hir[*field];
+                if field.name != member {
+                    return None;
+                }
+                self.types.type_for_hir_type(field.ty)
+            })
+        })
     }
 
     fn has_concrete_operator_type(
