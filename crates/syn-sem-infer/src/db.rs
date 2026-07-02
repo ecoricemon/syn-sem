@@ -89,20 +89,15 @@ impl<'cx> InferDb<'cx> {
             const_facts,
         )
         .normalize();
-        db.resolve_type_relations(ccx, hir, const_facts);
+        db.resolve_type_relations(hir, const_facts);
 
         db
     }
 
-    fn resolve_type_relations(
-        &mut self,
-        ccx: &'cx CommonCx,
-        hir: &hir::Hir<'cx>,
-        const_facts: &InferConstFacts,
-    ) {
+    fn resolve_type_relations(&mut self, hir: &hir::Hir<'cx>, const_facts: &InferConstFacts) {
         loop {
             self.type_relations.clear_resolved();
-            TypeRelationResolver::new(&mut self.type_relations, ccx, &self.types).resolve();
+            TypeRelationResolver::new(&mut self.type_relations, &self.types).resolve();
             let changed =
                 ExprTypeDeriver::new(hir, &mut self.type_relations, &mut self.types, const_facts)
                     .derive()

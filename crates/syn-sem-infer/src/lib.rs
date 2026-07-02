@@ -41,7 +41,6 @@ pub(crate) use program_fact::{
 };
 pub(crate) use type_lowering::{TypeLowerer, TypeLowering};
 pub(crate) use type_relation::{
-    ExprTypeDeriver, PatTypeDeriver, TypeEqualityFact, TypeRelationCollector, TypeRelationDb,
-    TypeRelationResolver, TypeSubject,
+    ExprTypeDeriver, PatTypeDeriver, TypeRelationCollector, TypeRelationDb, TypeRelationResolver,
 };
 pub(crate) use type_store::InferTypes;

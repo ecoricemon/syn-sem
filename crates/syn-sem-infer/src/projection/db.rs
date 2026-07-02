@@ -15,22 +15,16 @@ use syn_sem_name::DefId;
 #[derive(Debug, Default)]
 pub(crate) struct ProjectionDb {
     /// Projection type occurrences collected during lowering that still need solver work.
-    /// * Made in the build stage.
     pub(crate) obligations: Vec<ProjectionObligation>,
     /// Candidate projections matched against concrete associated type members on a trait.
-    /// * Made in the normalization stage.
     pub(crate) projection_matches: Vec<ProjectionMatch>,
     /// Impl self type matches used for projection normalization.
-    /// * Made in the normalization stage.
     pub(crate) impl_self_matches: Vec<ImplSelfMatch>,
     /// Type argument bindings discovered from impl self type matches.
-    /// * Made in the normalization stage.
     pub(crate) impl_self_generic_bindings: Vec<ImplSelfGenericBinding>,
     /// Type substitutions used for projection normalization.
-    /// * Made in the normalization stage.
     pub(crate) type_substitutions: Vec<ProjectionTypeSubstitution>,
     /// Matched projections rewritten to the value type assigned by an applicable impl.
-    /// * Made in the normalization stage.
     pub(crate) normalizations: Vec<ProjectionNormalization>,
 }
 

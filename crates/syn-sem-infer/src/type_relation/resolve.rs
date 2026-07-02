@@ -1,13 +1,8 @@
-//! Logic-backed type relation resolution.
+//! Graph-backed type relation resolution.
 
-use super::term as relation_term;
 use super::{ResolvedTypeFact, TypeRelationDb, TypeSubject};
-use crate::{
-    logic::{self, symbol::var},
-    InferTypes, PrimitiveType, Type, TypeId,
-};
-use logic_eval::Database;
-use syn_sem_common::{CommonCx, Set, VecUniqueExt};
+use crate::{InferTypes, PrimitiveType, Type, TypeId};
+use syn_sem_common::{Map, VecUniqueExt};
 
 /// Resolves the type of each inference subject through collected equality relations.
 ///
@@ -18,19 +13,13 @@ use syn_sem_common::{CommonCx, Set, VecUniqueExt};
 /// chooses one canonical type for each subject, and stores the resolved lookup facts.
 pub(crate) struct TypeRelationResolver<'a, 'cx> {
     type_relations: &'a mut TypeRelationDb,
-    ccx: &'cx CommonCx,
     types: &'a InferTypes<'cx>,
 }
 
 impl<'a, 'cx> TypeRelationResolver<'a, 'cx> {
-    pub(crate) fn new(
-        type_relations: &'a mut TypeRelationDb,
-        ccx: &'cx CommonCx,
-        types: &'a InferTypes<'cx>,
-    ) -> Self {
+    pub(crate) fn new(type_relations: &'a mut TypeRelationDb, types: &'a InferTypes<'cx>) -> Self {
         Self {
             type_relations,
-            ccx,
             types,
         }
     }
@@ -67,27 +56,23 @@ impl<'a, 'cx> TypeRelationResolver<'a, 'cx> {
         self.type_relations.extend_resolved(resolved);
     }
 
-    fn resolve_type_facts(&mut self) -> Vec<ResolvedTypeFact> {
-        let mut logic = TypeRelationLogic::new(self.ccx, self.type_relations, self.types);
-        logic.load_type_relation_facts();
-
-        let mut seen_subjects = Set::default();
-        self.type_relations
-            .equalities
+    fn resolve_type_facts(&self) -> Vec<ResolvedTypeFact> {
+        let graph = TypeRelationGraph::from_equalities(&self.type_relations.equalities);
+        let component_types = graph.component_types(self.types);
+        graph
+            .subjects()
             .iter()
-            .flat_map(|equal_fact| [equal_fact.left, equal_fact.right])
             .filter_map(|subject| {
-                if !seen_subjects.insert(subject) {
-                    return None;
-                }
-                let candidates = logic.resolved_types(subject);
-                self.canonical_type(&candidates)
-                    .map(|ty| ResolvedTypeFact { subject, ty })
+                let candidates = component_types.get(&graph.root(subject))?;
+                self.unified_type(candidates).map(|ty| ResolvedTypeFact {
+                    subject: *subject,
+                    ty,
+                })
             })
             .collect()
     }
 
-    fn canonical_type(&self, candidates: &[TypeId]) -> Option<TypeId> {
+    fn unified_type(&self, candidates: &[TypeId]) -> Option<TypeId> {
         let mut selected = None;
         for candidate in candidates {
             selected = Some(match selected {
@@ -122,65 +107,91 @@ impl<'a, 'cx> TypeRelationResolver<'a, 'cx> {
     }
 }
 
-/// Performs type relation logic operations:
-///
-/// * Loads equality rules
-/// * Loads type relation equality facts
-/// * Loads known inference type candidates
-/// * Queries type candidates reachable for an inference subject
-struct TypeRelationLogic<'a, 'cx> {
-    db: Database<logic::LogicAtom<'cx>>,
-    ccx: &'cx CommonCx,
-    type_relations: &'a TypeRelationDb,
-    types: &'a InferTypes<'cx>,
+struct TypeRelationGraph {
+    subjects: Vec<TypeSubject>,
+    indexes: Map<TypeSubject, usize>,
+    parents: Vec<usize>,
 }
 
-impl<'a, 'cx> TypeRelationLogic<'a, 'cx> {
-    fn new(
-        ccx: &'cx CommonCx,
-        type_relations: &'a TypeRelationDb,
-        types: &'a InferTypes<'cx>,
-    ) -> Self {
-        Self {
-            db: Database::default(),
-            ccx,
-            type_relations,
-            types,
+impl TypeRelationGraph {
+    fn from_equalities(equalities: &[super::TypeEqualityFact]) -> Self {
+        let mut graph = Self {
+            subjects: Vec::new(),
+            indexes: Map::default(),
+            parents: Vec::new(),
+        };
+        for fact in equalities {
+            graph.union(fact.left, fact.right);
         }
+        for index in 0..graph.parents.len() {
+            graph.compress(index);
+        }
+        graph
     }
 
-    fn load_type_relation_facts(&mut self) {
-        for clause in relation_term::type_relation_rules(self.ccx) {
-            self.db.insert_clause(clause);
-        }
-        for fact in &self.type_relations.equalities {
-            self.db
-                .insert_clause(relation_term::type_equality_clause(self.ccx, *fact));
-        }
-        for (ty, _) in self
-            .types
-            .iter()
-            .filter(|(_, ty)| !matches!(ty, Type::Infer))
-        {
-            self.db
-                .insert_clause(relation_term::type_candidate_clause(self.ccx, ty));
-        }
+    fn subjects(&self) -> &[TypeSubject] {
+        &self.subjects
     }
 
-    fn resolved_types(&mut self, subject: TypeSubject) -> Vec<TypeId> {
-        let mut query = self
-            .db
-            .query(relation_term::resolved_type_query(self.ccx, subject));
-        let mut types = Vec::new();
-        while let Some(answer) = query.prove_next() {
-            let Some(ty) = answer
-                .get(var::TYPE)
-                .and_then(|term| logic::type_id_from_term(&term))
-            else {
+    fn component_types(&self, types: &InferTypes<'_>) -> Map<usize, Vec<TypeId>> {
+        let mut component_types = Map::default();
+        for subject in &self.subjects {
+            let TypeSubject::Type(ty) = subject else {
                 continue;
             };
-            types.push_unique(ty);
+            // Match the old logic resolver: fresh inference placeholders are equality edges, not
+            // concrete candidates that can determine a component's resolved type.
+            if matches!(types[*ty], Type::Infer) {
+                continue;
+            }
+            component_types
+                .entry(self.root(subject))
+                .or_insert_with(Vec::new)
+                .push_unique(*ty);
         }
-        types
+        component_types
+    }
+
+    fn union(&mut self, left: TypeSubject, right: TypeSubject) {
+        let left = self.intern(left);
+        let right = self.intern(right);
+        let left_root = self.find(left);
+        let right_root = self.find(right);
+        if left_root != right_root {
+            self.parents[right_root] = left_root;
+        }
+    }
+
+    fn compress(&mut self, index: usize) -> usize {
+        let parent = self.parents[index];
+        if parent == index {
+            return index;
+        }
+        let root = self.compress(parent);
+        self.parents[index] = root;
+        root
+    }
+
+    fn find(&self, index: usize) -> usize {
+        let mut root = index;
+        while self.parents[root] != root {
+            root = self.parents[root];
+        }
+        root
+    }
+
+    fn intern(&mut self, subject: TypeSubject) -> usize {
+        if let Some(index) = self.indexes.get(&subject) {
+            return *index;
+        }
+        let index = self.subjects.len();
+        self.subjects.push(subject);
+        self.indexes.insert(subject, index);
+        self.parents.push(index);
+        index
+    }
+
+    fn root(&self, subject: &TypeSubject) -> usize {
+        self.find(self.indexes[subject])
     }
 }

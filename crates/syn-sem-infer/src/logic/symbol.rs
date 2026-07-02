@@ -43,11 +43,9 @@ pub(crate) mod pred {
     pub(crate) const PROJECTION_MATCH: &str = "#projection_match";
     pub(crate) const PROJECTION_NORMALIZES_TO: &str = "#projection_normalizes_to";
     pub(crate) const PROJECTION_OBLIGATION: &str = "#projection_obligation";
-    pub(crate) const RESOLVED_TYPE: &str = "#resolved_type";
     pub(crate) const SAME_TYPE: &str = "#same_type";
     pub(crate) const TRAIT_BOUND: &str = "#trait_bound";
     pub(crate) const TYPE_BINDING: &str = "#type_binding";
-    pub(crate) const TYPE_CANDIDATE: &str = "#type_candidate";
     pub(crate) const TYPE_EQUAL: &str = "#type_equal";
     pub(crate) const TYPE_SHAPE: &str = "#type_shape";
     pub(crate) const TYPE_SUBSTITUTION: &str = "#type_substitution";

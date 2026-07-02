@@ -10,7 +10,6 @@ mod db;
 mod expr;
 mod pat;
 mod resolve;
-mod term;
 
 #[cfg(test)]
 mod tests;

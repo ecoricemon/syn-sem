@@ -1,7 +1,7 @@
 //! Shared atom and identifier encoding helpers for `logic-eval` terms.
 
 use super::symbol;
-use crate::{TypeId, TypeSubject};
+use crate::TypeId;
 use logic_eval::{Clause, Term};
 use syn_sem_common::{intern_prefixed_number, CommonCx, InternedStr};
 use syn_sem_name::DefId;
@@ -54,15 +54,6 @@ pub(crate) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
 pub(crate) fn expr_id<'cx>(ccx: &'cx CommonCx, id: syn_sem_hir::ExprId) -> LogicTerm<'cx> {
     let functor = intern_prefixed_number(ccx, symbol::id::EXPR, id.index());
     atom(functor)
-}
-
-/// Encodes an inference subject as a logic atom.
-pub(crate) fn type_subject<'cx>(ccx: &'cx CommonCx, subject: TypeSubject) -> LogicTerm<'cx> {
-    match subject {
-        TypeSubject::Def(def) => def_id(ccx, def),
-        TypeSubject::Expr(expr) => expr_id(ccx, expr),
-        TypeSubject::Type(ty) => type_id(ccx, ty),
-    }
 }
 
 /// Creates a zero-argument logic atom.

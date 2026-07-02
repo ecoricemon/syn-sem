@@ -52,11 +52,11 @@ mod relations {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize) -> usize {
-            let y = x;
-            y
-        }
-        "#,
+            fn f(x: usize) -> usize {
+                let y = x;
+                y
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -98,10 +98,10 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize) {
-            let r = &x;
-        }
-        "#,
+            fn f(x: usize) {
+                let r = &x;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -139,6 +139,50 @@ mod expressions {
     }
 
     #[test]
+    fn derives_struct_field_expression_types_from_resolved_base() {
+        // Proves field access derives the declared field type from the resolved base struct.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            struct Point {
+                x: usize,
+                y: bool,
+            }
+
+            fn f(point: Point) {
+                let x = point.x;
+                let y = point.y;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(x_local), hir::lower::Stmt::Local(y_local)] =
+            hir.lowered_blocks()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let x_init = x_local.init.expect("x local should have initializer");
+        let y_init = y_local.init.expect("y local should have initializer");
+        let hir::ExprKind::Field { base: x_base, .. } = hir[x_init].kind else {
+            panic!("expected x field initializer");
+        };
+        let hir::ExprKind::Field { base: y_base, .. } = hir[y_init].kind else {
+            panic!("expected y field initializer");
+        };
+
+        assert!(infer.type_for_hir_expr(x_base).is_some());
+        assert!(infer.type_for_hir_expr(y_base).is_some());
+        assert_usize(&infer, infer.type_for_hir_expr(x_init));
+        assert_usize(&infer, type_for_local(&infer, x_local));
+        assert_primitive(&infer, infer.type_for_hir_expr(y_init), PrimitiveType::Bool);
+        assert_primitive(&infer, type_for_local(&infer, y_local), PrimitiveType::Bool);
+    }
+
+    #[test]
     fn derives_tuple_expression_types_from_resolved_operands() {
         // Proves tuple expressions derive element types from resolved operands.
         let ccx = CommonCx::default();
@@ -147,10 +191,10 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize, y: bool) {
-            let t = (x, y);
-        }
-        "#,
+            fn f(x: usize, y: bool) {
+                let t = (x, y);
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -197,10 +241,10 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize, y: usize) {
-            let a = [x, y];
-        }
-        "#,
+            fn f(x: usize, y: usize) {
+                let a = [x, y];
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -245,10 +289,10 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize, n: usize) {
-            let a = [x; n];
-        }
-        "#,
+            fn f(x: usize, n: usize) {
+                let a = [x; n];
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -290,10 +334,10 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize) {
-            let y = x + 1;
-        }
-        "#,
+            fn f(x: usize) {
+                let y = x + 1;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -325,11 +369,11 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize, flag: bool) {
-            let same = x == 1;
-            let both = flag && true;
-        }
-        "#,
+            fn f(x: usize, flag: bool) {
+                let same = x == 1;
+                let both = flag && true;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -392,12 +436,12 @@ mod expressions {
             &ccx,
             &scx,
             r#"
-        fn f(x: i32, flag: bool, mask: usize) {
-            let negated = -x;
-            let inverted = !flag;
-            let bits = !mask;
-        }
-        "#,
+            fn f(x: i32, flag: bool, mask: usize) {
+                let negated = -x;
+                let inverted = !flag;
+                let bits = !mask;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -428,6 +472,58 @@ mod expressions {
         );
         assert_usize(&infer, infer.type_for_hir_expr(bit_not_init));
     }
+
+    #[test]
+    fn derives_deref_expression_types_from_resolved_references() {
+        // Proves dereference expressions derive the referenced element type.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f(x: usize) {
+                let r = &x;
+                let y = *r;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(ref_local), hir::lower::Stmt::Local(deref_local)] =
+            hir.lowered_blocks()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let ref_init = ref_local
+            .init
+            .expect("reference local should have initializer");
+        let deref_init = deref_local
+            .init
+            .expect("dereference local should have initializer");
+        let hir::ExprKind::Unary {
+            op: hir::UnaryOp::Deref,
+            expr: operand,
+        } = hir[deref_init].kind
+        else {
+            panic!("expected dereference initializer");
+        };
+
+        assert_reference_to_primitive(
+            &infer,
+            infer.type_for_hir_expr(ref_init),
+            PrimitiveType::Usize,
+            false,
+        );
+        assert_reference_to_primitive(
+            &infer,
+            infer.type_for_hir_expr(operand),
+            PrimitiveType::Usize,
+            false,
+        );
+        assert_usize(&infer, infer.type_for_hir_expr(deref_init));
+        assert_usize(&infer, type_for_local(&infer, deref_local));
+    }
 }
 
 mod calls {
@@ -442,29 +538,29 @@ mod calls {
             &ccx,
             &scx,
             r#"
-        fn takes_usize(x: usize) -> usize {
-            x
-        }
+            fn takes_usize(x: usize) -> usize {
+                x
+            }
 
-        fn choose(flag: bool, value: usize) -> usize {
-            value
-        }
+            fn choose(flag: bool, value: usize) -> usize {
+                value
+            }
 
-        fn pair(x: usize, y: bool) -> (usize, bool) {
-            (x, y)
-        }
+            fn pair(x: usize, y: bool) -> (usize, bool) {
+                (x, y)
+            }
 
-        fn identity<T>(value: T) -> T {
-            value
-        }
+            fn identity<T>(value: T) -> T {
+                value
+            }
 
-        fn f(input: usize) {
-            let y = takes_usize(1);
-            let selected = choose(true, 1);
-            let result = pair(1, false);
-            let generic = identity(input);
-        }
-        "#,
+            fn f(input: usize) {
+                let y = takes_usize(1);
+                let selected = choose(true, 1);
+                let result = pair(1, false);
+                let generic = identity(input);
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -533,19 +629,19 @@ mod patterns {
             &ccx,
             &scx,
             r#"
-        struct Point {
-            x: usize,
-            y: bool,
-        }
+            struct Point {
+                x: usize,
+                y: bool,
+            }
 
-        fn f(pair: (usize, bool), point: Point) {
-            let (a, b) = pair;
-            let Point { x, y } = point;
-            let (typed_a, typed_b): (usize, bool) = (1, true);
-        }
+            fn f(pair: (usize, bool), point: Point) {
+                let (a, b) = pair;
+                let Point { x, y } = point;
+                let (typed_a, typed_b): (usize, bool) = (1, true);
+            }
 
-        fn g(Point { x: param_x, y: param_y }: Point) {}
-        "#,
+            fn g(Point { x: param_x, y: param_y }: Point) {}
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -606,20 +702,20 @@ mod returns {
             &ccx,
             &scx,
             r#"
-        fn f(x: usize) -> usize {
-            return x;
-        }
-
-        fn g() -> i32 {
-            return 1;
-        }
-
-        fn h(x: usize) -> usize {
-            {
+            fn f(x: usize) -> usize {
                 return x;
             }
-        }
-        "#,
+
+            fn g() -> i32 {
+                return 1;
+            }
+
+            fn h(x: usize) -> usize {
+                {
+                    return x;
+                }
+            }
+            "#,
         );
 
         let plain = first_return_operand_in_function(&hir, "f");
@@ -644,11 +740,11 @@ mod numerics {
             &ccx,
             &scx,
             r#"
-        fn f() {
-            let a = 1;
-            let b = 1.0;
-        }
-        "#,
+            fn f() {
+                let a = 1;
+                let b = 1.0;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -703,16 +799,16 @@ mod numerics {
             &ccx,
             &scx,
             r#"
-        fn f() -> i32 {
-            let a: i32 = 1;
-            a
-        }
+            fn f() -> i32 {
+                let a: i32 = 1;
+                a
+            }
 
-        fn g() -> f64 {
-            let b: f64 = 1.0;
-            b
-        }
-        "#,
+            fn g() -> f64 {
+                let b: f64 = 1.0;
+                b
+            }
+            "#,
         );
 
         assert_typed_numeric_local(&hir, &infer, "f", PrimitiveType::I32);
@@ -728,11 +824,11 @@ mod numerics {
             &ccx,
             &scx,
             r#"
-        fn f() {
-            let a: i32 = 1;
-            let b = 2;
-        }
-        "#,
+            fn f() {
+                let a: i32 = 1;
+                let b = 2;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
@@ -769,10 +865,10 @@ mod numerics {
             &ccx,
             &scx,
             r#"
-        fn f() {
-            let a: bool = 1;
-        }
-        "#,
+            fn f() {
+                let a: bool = 1;
+            }
+            "#,
         );
 
         let block = function_block(&hir, "f");
