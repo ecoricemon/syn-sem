@@ -7,6 +7,7 @@
 mod arena;
 mod ast_node;
 mod context;
+pub mod known;
 
 pub use arena::*;
 pub use ast_node::*;

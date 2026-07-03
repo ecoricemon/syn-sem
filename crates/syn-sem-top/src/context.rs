@@ -48,7 +48,7 @@ impl<'tcx> TopCx<'tcx> {
 
     fn analyze_entry(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
         let name_inputs = self.syntax.collect_module_tree(entry_path)?;
-        let names = NameCollector::new(name_inputs).collect(entry_path)?;
+        let names = NameCollector::collect(name_inputs, [entry_path])?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
         let hir = HirBuilder::new(&names).build(entry_path, file);
         let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names)?;

@@ -169,8 +169,7 @@ mod tests {
         scx.parse_virtual_file(file_path, source_text)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameCollector::new([ast::SourceInput { file_path, file }])
-            .collect(file_path)
+        let names = NameCollector::collect([ast::SourceInput { file_path, file }], [file_path])
             .expect("name collection should succeed");
         let hir = HirBuilder::new(&names).build(file_path, file);
         (names, hir)

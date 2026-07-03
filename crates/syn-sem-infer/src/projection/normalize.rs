@@ -68,19 +68,31 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     /// ```
     pub(crate) fn normalize(&mut self) {
         let matches = self.match_projection_obligations();
-        self.projections.projection_matches.extend(matches);
+        for match_ in matches {
+            self.projections.projection_matches.push_unique(match_);
+        }
 
         let (impl_self_matches, impl_self_generic_bindings) = self.match_impl_self_types();
-        self.projections.impl_self_matches.extend(impl_self_matches);
-        self.projections
-            .impl_self_generic_bindings
-            .extend(impl_self_generic_bindings);
+        for match_ in impl_self_matches {
+            self.projections.impl_self_matches.push_unique(match_);
+        }
+        for binding in impl_self_generic_bindings {
+            self.projections
+                .impl_self_generic_bindings
+                .push_unique(binding);
+        }
 
         let substitutions = self.build_type_substitutions();
-        self.projections.type_substitutions.extend(substitutions);
+        for substitution in substitutions {
+            self.projections
+                .type_substitutions
+                .push_unique(substitution);
+        }
 
         let normalizations = self.normalize_projection_matches();
-        self.projections.normalizations.extend(normalizations);
+        for normalization in normalizations {
+            self.projections.normalizations.push_unique(normalization);
+        }
     }
 
     fn match_projection_obligations(&self) -> Vec<ProjectionMatch> {
