@@ -466,6 +466,110 @@ mod expressions {
     }
 
     #[test]
+    fn derives_arithmetic_expression_type_for_reference_operands_from_core_ops_output_projection() {
+        // Proves reference arithmetic operands use the matching `core::ops::*::Output` impl facts.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze_with_known(
+            &ccx,
+            &scx,
+            r#"
+            fn f(value: usize, left: &usize, right: &usize) {
+                let add_both_ref = left + right;
+                let add_left_value = value + right;
+                let add_right_value = left + value;
+                let sub_both_ref = left - right;
+                let sub_left_value = value - right;
+                let sub_right_value = left - value;
+                let mul_both_ref = left * right;
+                let mul_left_value = value * right;
+                let mul_right_value = left * value;
+                let div_both_ref = left / right;
+                let div_left_value = value / right;
+                let div_right_value = left / value;
+                let rem_both_ref = left % right;
+                let rem_left_value = value % right;
+                let rem_right_value = left % value;
+            }
+            "#,
+            KnownLibraries {
+                core: true,
+                std: false,
+            },
+        );
+
+        let block = function_block(&hir, "f");
+        let expected_ops = [
+            hir::BinaryOp::Add,
+            hir::BinaryOp::Add,
+            hir::BinaryOp::Add,
+            hir::BinaryOp::Sub,
+            hir::BinaryOp::Sub,
+            hir::BinaryOp::Sub,
+            hir::BinaryOp::Mul,
+            hir::BinaryOp::Mul,
+            hir::BinaryOp::Mul,
+            hir::BinaryOp::Div,
+            hir::BinaryOp::Div,
+            hir::BinaryOp::Div,
+            hir::BinaryOp::Rem,
+            hir::BinaryOp::Rem,
+            hir::BinaryOp::Rem,
+        ];
+        let stmts = hir.lowered_blocks()[block].stmts.as_slice();
+        assert_eq!(stmts.len(), expected_ops.len());
+        for (stmt, expected_op) in stmts.iter().zip(expected_ops) {
+            let hir::lower::Stmt::Local(local) = stmt else {
+                panic!("expected arithmetic local statement");
+            };
+            assert_binary_local_is_usize(&hir, &infer, local, expected_op);
+        }
+    }
+
+    #[test]
+    fn derives_bitwise_expression_type_for_reference_operands_from_core_ops_output_projection() {
+        // Proves reference bitwise operands use the matching `core::ops::*::Output` impl facts.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze_with_known(
+            &ccx,
+            &scx,
+            r#"
+            fn f(value: usize, left: &usize, right: &usize, flag: bool, other_flag: bool) {
+                let xor_both_ref = left ^ right;
+                let and_left_value = value & right;
+                let or_right_value = left | value;
+                let bool_xor = flag ^ other_flag;
+                let bool_and = flag & other_flag;
+                let bool_or = flag | other_flag;
+            }
+            "#,
+            KnownLibraries {
+                core: true,
+                std: false,
+            },
+        );
+
+        let block = function_block(&hir, "f");
+        let expected = [
+            (hir::BinaryOp::BitXor, PrimitiveType::Usize),
+            (hir::BinaryOp::BitAnd, PrimitiveType::Usize),
+            (hir::BinaryOp::BitOr, PrimitiveType::Usize),
+            (hir::BinaryOp::BitXor, PrimitiveType::Bool),
+            (hir::BinaryOp::BitAnd, PrimitiveType::Bool),
+            (hir::BinaryOp::BitOr, PrimitiveType::Bool),
+        ];
+        let stmts = hir.lowered_blocks()[block].stmts.as_slice();
+        assert_eq!(stmts.len(), expected.len());
+        for (stmt, (expected_op, expected_ty)) in stmts.iter().zip(expected) {
+            let hir::lower::Stmt::Local(local) = stmt else {
+                panic!("expected bitwise local statement");
+            };
+            assert_binary_local_primitive(&hir, &infer, local, expected_op, expected_ty);
+        }
+    }
+
+    #[test]
     fn derives_binary_comparison_and_logic_expression_types() {
         // Proves comparison and logical binary expressions resolve to bool results.
         let ccx = CommonCx::default();
@@ -1032,6 +1136,32 @@ fn assert_call_usize(hir: &Hir<'_>, infer: &InferDb<'_>, local: &hir::lower::Loc
     assert_usize(infer, infer.type_for_hir_expr(*arg));
     assert_usize(infer, infer.type_for_hir_expr(init));
     assert_usize(infer, type_for_local(infer, local));
+}
+
+fn assert_binary_local_is_usize(
+    hir: &Hir<'_>,
+    infer: &InferDb<'_>,
+    local: &hir::lower::Local,
+    expected_op: hir::BinaryOp,
+) {
+    assert_binary_local_primitive(hir, infer, local, expected_op, PrimitiveType::Usize);
+}
+
+fn assert_binary_local_primitive(
+    hir: &Hir<'_>,
+    infer: &InferDb<'_>,
+    local: &hir::lower::Local,
+    expected_op: hir::BinaryOp,
+    expected_ty: PrimitiveType,
+) {
+    let init = local.init.expect("binary local should have initializer");
+    let hir::ExprKind::Binary { op, .. } = hir[init].kind else {
+        panic!("expected binary initializer");
+    };
+    assert_eq!(op, expected_op);
+
+    assert_primitive(infer, infer.type_for_hir_expr(init), expected_ty);
+    assert_primitive(infer, type_for_local(infer, local), expected_ty);
 }
 
 fn type_for_local(infer: &InferDb<'_>, local: &hir::lower::Local) -> Option<TypeId> {

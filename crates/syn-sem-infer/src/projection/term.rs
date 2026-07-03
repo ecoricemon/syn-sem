@@ -464,55 +464,41 @@ pub(crate) fn projection_type_equal_clause<'cx>(
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`
 /// * self_ - Type written as the projection self type, such as `T`
 /// * assoc - Definition of the associated type being projected, such as `Trait::Assoc`
-/// * trait_ - Candidate trait type that may provide the associated type
 ///
 /// # Examples
 ///
-/// * Code - can `<T>::Assoc` use `Trait`?
-/// * Input - `projection = ty0`, `self_ = ty1`, `assoc = def2`, `trait_ = ty3`
-/// * Output - `Expr::Term(#projection_candidate(ty0, ty1, def2, ty3))`
-pub(crate) fn projection_candidate_query<'cx>(
+/// * Code - what trait can `<T>::Assoc` use?
+/// * Input - `projection = ty0`, `self_ = ty1`, `assoc = def2`
+/// * Output - `Expr::Term(#projection_candidate(ty0, ty1, def2, $Trait))`
+pub(crate) fn projection_candidate_trait_query<'cx>(
     ccx: &'cx CommonCx,
     projection: TypeId,
     self_: TypeId,
     assoc: DefId,
-    trait_: TypeId,
 ) -> Expr<LogicAtom<'cx>> {
     Expr::Term(projection_candidate(
         ccx,
         type_id(ccx, projection),
         type_id(ccx, self_),
         def_id(ccx, assoc),
-        type_id(ccx, trait_),
+        ccx.atom(var::TRAIT),
     ))
 }
 
-/// * projection - Type occurrence for the whole projection, such as `<Vec as Iterator>::Item`
-/// * self_ - Type written as the projection self type, such as `Vec`
-/// * assoc - Associated type member used for normalization, such as `Iterator::Item`
-/// * trait_ - Trait type that provides the associated type, such as `Iterator`
-/// * value_ty - Type assigned by the matching impl item, such as `u32`
+/// Query for all currently provable projection normalizations.
 ///
 /// # Examples
 ///
-/// * Code - can `<Vec as Iterator>::Item` normalize to `u32`?
-/// * Input - `projection = ty0`, `self_ = ty1`, `assoc = def2`, `trait_ = ty3`, `value_ty = ty4`
-/// * Output - `Expr::Term(#projection_normalizes_to(ty0, ty1, def2, ty3, ty4))`
-pub(crate) fn projection_normalization_query<'cx>(
-    ccx: &'cx CommonCx,
-    projection: TypeId,
-    self_: TypeId,
-    assoc: DefId,
-    trait_: TypeId,
-    value_ty: TypeId,
-) -> Expr<LogicAtom<'cx>> {
+/// * Code - what projection normalizations are known?
+/// * Output - `Expr::Term(#projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Value))`
+pub(crate) fn projection_normalization_query<'cx>(ccx: &'cx CommonCx) -> Expr<LogicAtom<'cx>> {
     Expr::Term(projection_normalizes_to(
         ccx,
-        type_id(ccx, projection),
-        type_id(ccx, self_),
-        def_id(ccx, assoc),
-        type_id(ccx, trait_),
-        type_id(ccx, value_ty),
+        ccx.atom(var::PROJECTION),
+        ccx.atom(var::SELF),
+        ccx.atom(var::ASSOC),
+        ccx.atom(var::TRAIT),
+        ccx.atom(var::VALUE),
     ))
 }
 

@@ -7,10 +7,10 @@ use super::{
 };
 use crate::{
     logic::{
-        self as logic_term, atom, symbol::var, type_id_from_term, visit_left_var, LogicAtom,
-        LogicTerm,
+        self as logic_term, atom, def_id_from_term, symbol::var, type_id_from_term, visit_left_var,
+        LogicAtom, LogicTerm,
     },
-    ImplAssocType, InferConstFacts, InferTypes, TraitBound, TypeId,
+    ImplAssocType, InferConstFacts, InferTypes, ProjectionNormalization, TraitBound, TypeId,
 };
 use logic_eval::Database;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
@@ -270,33 +270,66 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         }
     }
 
-    pub(super) fn proves_candidate(
+    pub(super) fn candidate_traits(
         &mut self,
         projection: TypeId,
         self_: TypeId,
         assoc: DefId,
-        trait_: TypeId,
-    ) -> bool {
-        self.db
-            .query(term::projection_candidate_query(
-                self.ccx, projection, self_, assoc, trait_,
-            ))
-            .is_true()
+    ) -> Vec<TypeId> {
+        let mut traits = Vec::new();
+        let mut qcx = self.db.query(term::projection_candidate_trait_query(
+            self.ccx, projection, self_, assoc,
+        ));
+        while let Some(answer) = qcx.prove_next() {
+            let Some(trait_) = answer
+                .get(var::TRAIT)
+                .and_then(|term| type_id_from_term(&term))
+            else {
+                continue;
+            };
+            traits.push_unique(trait_);
+        }
+        traits
     }
 
-    pub(super) fn proves_normalization(
-        &mut self,
-        projection: TypeId,
-        self_: TypeId,
-        assoc: DefId,
-        trait_: TypeId,
-        value_ty: TypeId,
-    ) -> bool {
-        self.db
-            .query(term::projection_normalization_query(
-                self.ccx, projection, self_, assoc, trait_, value_ty,
-            ))
-            .is_true()
+    pub(super) fn normalizations(&mut self) -> Vec<ProjectionNormalization> {
+        let mut normalizations = Vec::new();
+        let mut qcx = self
+            .db
+            .query(term::projection_normalization_query(self.ccx));
+        while let Some(answer) = qcx.prove_next() {
+            let projection = answer
+                .get(var::PROJECTION)
+                .and_then(|term| type_id_from_term(&term));
+            let self_ = answer
+                .get(var::SELF)
+                .and_then(|term| type_id_from_term(&term));
+            let assoc = answer
+                .get(var::ASSOC)
+                .and_then(|term| def_id_from_term(&term));
+            let trait_ = answer
+                .get(var::TRAIT)
+                .and_then(|term| type_id_from_term(&term));
+            let Some(value_ty) = answer
+                .get(var::VALUE)
+                .and_then(|term| type_id_from_term(&term))
+            else {
+                continue;
+            };
+            let (Some(projection), Some(self_), Some(assoc), Some(trait_)) =
+                (projection, self_, assoc, trait_)
+            else {
+                continue;
+            };
+            normalizations.push_unique(ProjectionNormalization {
+                projection,
+                self_,
+                assoc,
+                trait_,
+                value_ty,
+            });
+        }
+        normalizations
     }
 
     pub(super) fn impl_self_matches_and_generic_bindings(
