@@ -30,7 +30,7 @@ fn collect<'cx>(
     files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
     entry_path: FilePath<'cx>,
 ) -> NameDb<'cx> {
-    NameCollector::new(files).collect(entry_path).unwrap()
+    NameCollector::collect(files, [entry_path]).unwrap()
 }
 
 fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {

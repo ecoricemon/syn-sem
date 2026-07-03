@@ -2,7 +2,7 @@ use super::*;
 use crate::{ArrayLen, InferConstFacts, InferDb, PrimitiveType, Type, TypeId};
 use syn_sem_ast as ast;
 use syn_sem_ast::SyntaxCx;
-use syn_sem_common::CommonCx;
+use syn_sem_common::{known::KnownLibraries, CommonCx, FilePath};
 use syn_sem_hir as hir;
 use syn_sem_hir::{Hir, HirBuilder, ItemKind};
 use syn_sem_name::{collect::NameCollector, DefKind, NameDb};
@@ -12,17 +12,65 @@ fn analyze<'cx>(
     scx: &'cx SyntaxCx<'cx>,
     source_text: &str,
 ) -> (NameDb<'cx>, Hir<'cx>, InferDb<'cx>) {
-    let file_path = ccx.intern("subject_type_infer_test.rs");
+    analyze_with_known(
+        ccx,
+        scx,
+        source_text,
+        KnownLibraries {
+            core: false,
+            std: false,
+        },
+    )
+}
+
+fn analyze_with_known<'cx>(
+    ccx: &'cx CommonCx,
+    scx: &'cx SyntaxCx<'cx>,
+    source_text: &str,
+    known: KnownLibraries,
+) -> (NameDb<'cx>, Hir<'cx>, InferDb<'cx>) {
+    let entry_path = ccx.intern("subject_type_infer_test.rs");
+    let entry = parse_source(ccx, scx, entry_path, source_text);
+    let mut inputs = vec![entry];
+    let mut roots = vec![entry_path];
+    for known in known.sources() {
+        let file_path = ccx
+            .insert_virtual_file(known.path, known.source)
+            .expect("known source should be stored");
+        let source_text = ccx
+            .source_text(file_path)
+            .expect("known source text should be stored");
+        scx.parse_virtual_file(file_path, source_text)
+            .expect("known source should parse");
+        roots.push(file_path);
+        inputs.push(parse_stored_source(scx, file_path));
+    }
+
+    let names =
+        NameCollector::collect(inputs.clone(), roots).expect("name collection should succeed");
+    let hir = HirBuilder::new(&names).build_files(inputs);
+    let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
+    (names, hir, infer)
+}
+
+fn parse_source<'cx>(
+    ccx: &'cx CommonCx,
+    scx: &'cx SyntaxCx<'cx>,
+    file_path: FilePath<'cx>,
+    source_text: &str,
+) -> ast::SourceInput<'cx> {
     let source_text = ccx.intern(source_text);
     scx.parse_virtual_file(file_path, source_text)
         .expect("test input should parse");
+    parse_stored_source(scx, file_path)
+}
+
+fn parse_stored_source<'cx>(
+    scx: &'cx SyntaxCx<'cx>,
+    file_path: FilePath<'cx>,
+) -> ast::SourceInput<'cx> {
     let file = scx.lookup_source(file_path).unwrap().ast();
-    let names = NameCollector::new([ast::SourceInput { file_path, file }])
-        .collect(file_path)
-        .expect("name collection should succeed");
-    let hir = HirBuilder::new(&names).build(file_path, file);
-    let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
-    (names, hir, infer)
+    ast::SourceInput { file_path, file }
 }
 
 fn function_block(hir: &Hir<'_>, name: &str) -> hir::BlockId {
@@ -358,6 +406,63 @@ mod expressions {
         assert_usize(&infer, infer.type_for_hir_expr(right));
         assert_usize(&infer, infer.type_for_hir_expr(init));
         assert_usize(&infer, infer.type_for_def(local_def));
+    }
+
+    #[test]
+    fn derives_add_expression_type_from_core_ops_output_projection() {
+        // Proves `+` uses the `core::ops::Add::Output` projection path when core facts exist.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (names, hir, infer) = analyze_with_known(
+            &ccx,
+            &scx,
+            r#"
+            fn f(x: usize) {
+                let y = x + 1;
+            }
+            "#,
+            KnownLibraries {
+                core: true,
+                std: false,
+            },
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+            panic!("expected local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let hir::ExprKind::Binary {
+            op: hir::BinaryOp::Add,
+            left,
+            right,
+        } = hir[init].kind
+        else {
+            panic!("expected add initializer");
+        };
+        let local_def = local
+            .bindings
+            .first()
+            .copied()
+            .expect("local should introduce one binding");
+
+        assert_usize(&infer, infer.type_for_hir_expr(left));
+        assert_usize(&infer, infer.type_for_hir_expr(right));
+        assert_usize(&infer, infer.type_for_hir_expr(init));
+        assert_usize(&infer, infer.type_for_def(local_def));
+        assert!(
+            infer
+                .projections
+                .normalizations
+                .iter()
+                .any(|normalization| {
+                    names[normalization.assoc]
+                        .name
+                        .is_some_and(|name| name.as_ref() == "Output")
+                        && infer[normalization.value_ty] == Type::Primitive(PrimitiveType::Usize)
+                }),
+            "expected Add::Output projection normalization to produce usize"
+        );
     }
 
     #[test]

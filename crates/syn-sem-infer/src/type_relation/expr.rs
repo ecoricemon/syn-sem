@@ -1,8 +1,14 @@
 //! HIR expression result type fact derivation.
 
 use super::{TypeEqualityFact, TypeRelationDb, TypeSubject};
-use crate::{ArrayLen, InferConstFacts, InferTypes, PrimitiveType, Type, TypeId};
+use crate::{
+    ArrayLen, GenericArg, InferConstFacts, InferTypes, Path, PathSegment, PathType,
+    PathTypeResolution, PrimitiveType, ProjectionDb, ProjectionNormalizationResult,
+    ProjectionObligation, ProjectionType, QSelf, Type, TypeId,
+};
+use syn_sem_common::{CommonCx, VecUniqueExt};
 use syn_sem_hir as hir;
+use syn_sem_name::{DefKind, NameDb, Namespace, ResolveResult};
 
 /// Derives HIR expression result type equalities from resolved operand types.
 ///
@@ -11,7 +17,10 @@ use syn_sem_hir as hir;
 /// operand types, interns any newly constructed result types, and records the result as another
 /// subject equality fact.
 pub(crate) struct ExprTypeDeriver<'a, 'cx> {
+    ccx: &'cx CommonCx,
     hir: &'a hir::Hir<'cx>,
+    names: &'a NameDb<'cx>,
+    projections: &'a mut ProjectionDb,
     type_relations: &'a mut TypeRelationDb,
     types: &'a mut InferTypes<'cx>,
     const_facts: &'a InferConstFacts,
@@ -19,13 +28,19 @@ pub(crate) struct ExprTypeDeriver<'a, 'cx> {
 
 impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
     pub(crate) fn new(
+        ccx: &'cx CommonCx,
         hir: &'a hir::Hir<'cx>,
+        names: &'a NameDb<'cx>,
+        projections: &'a mut ProjectionDb,
         type_relations: &'a mut TypeRelationDb,
         types: &'a mut InferTypes<'cx>,
         const_facts: &'a InferConstFacts,
     ) -> Self {
         Self {
+            ccx,
             hir,
+            names,
+            projections,
             type_relations,
             types,
             const_facts,
@@ -114,11 +129,14 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         right: hir::ExprId,
     ) -> bool {
         match op {
-            hir::BinaryOp::Add
-            | hir::BinaryOp::Sub
-            | hir::BinaryOp::Mul
-            | hir::BinaryOp::Div
-            | hir::BinaryOp::Rem => {
+            hir::BinaryOp::Add => self
+                .derive_add_operator_projection(expr, left, right)
+                .unwrap_or_else(|| {
+                    self.derive_same_type_binary(expr, left, right, |primitive| {
+                        primitive.is_numeric()
+                    })
+                }),
+            hir::BinaryOp::Sub | hir::BinaryOp::Mul | hir::BinaryOp::Div | hir::BinaryOp::Rem => {
                 self.derive_same_type_binary(expr, left, right, |primitive| primitive.is_numeric())
             }
             hir::BinaryOp::BitXor | hir::BinaryOp::BitAnd | hir::BinaryOp::BitOr => self
@@ -183,6 +201,136 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             return false;
         }
         self.insert_expr_equality(left, right)
+    }
+
+    fn derive_add_operator_projection(
+        &mut self,
+        expr: hir::ExprId,
+        left: hir::ExprId,
+        right: hir::ExprId,
+    ) -> Option<bool> {
+        let left_ty = self.type_relations.type_for_hir_expr(left)?;
+        let right_ty = self.type_relations.type_for_hir_expr(right)?;
+        let scope = self.hir[expr].scope?;
+        let add_def = self.resolve_core_ops_trait(scope, "Add")?;
+        let output_def = self.trait_assoc(add_def, "Output")?;
+        let rhs_ty = self.defaulted_add_rhs(left_ty, right_ty);
+        let trait_ty = self.core_ops_trait_type(add_def, "Add", rhs_ty);
+        let projection = self.operator_output_projection(left_ty, trait_ty, output_def);
+
+        let mut changed = self
+            .projections
+            .obligations
+            .push_unique(ProjectionObligation {
+                projection,
+                assoc: output_def,
+                self_: left_ty,
+                trait_: Some(trait_ty),
+            });
+        if rhs_ty != right_ty {
+            changed |= self.insert_expr_type_equality(right, rhs_ty);
+        }
+        if let ProjectionNormalizationResult::Known(value_ty) =
+            self.projections.normalization(projection, true)
+        {
+            changed |= self.insert_expr_type_equality(expr, value_ty);
+        }
+        Some(changed)
+    }
+
+    fn resolve_core_ops_trait(
+        &self,
+        scope: syn_sem_name::ScopeId,
+        trait_name: &str,
+    ) -> Option<syn_sem_name::DefId> {
+        let core = self.ccx.intern("core");
+        let ops = self.ccx.intern("ops");
+        let trait_name = self.ccx.intern(trait_name);
+        let ResolveResult::Found(def) = self
+            .names
+            .resolve_type_path(scope, [core, ops, trait_name].into_iter())
+        else {
+            return None;
+        };
+        (self.names[def].kind == DefKind::Trait).then_some(def)
+    }
+
+    fn trait_assoc(
+        &self,
+        trait_def: syn_sem_name::DefId,
+        assoc_name: &str,
+    ) -> Option<syn_sem_name::DefId> {
+        let assoc_name = self.ccx.intern(assoc_name);
+        let ResolveResult::Found(def) = self.names.member(trait_def, Namespace::Type, assoc_name)
+        else {
+            return None;
+        };
+        (self.names[def].kind == DefKind::AssocType).then_some(def)
+    }
+
+    fn defaulted_add_rhs(&self, left_ty: TypeId, right_ty: TypeId) -> TypeId {
+        let Some(right_primitive) = self.primitive(right_ty) else {
+            return right_ty;
+        };
+        if !matches!(
+            right_primitive,
+            PrimitiveType::AbstractInt | PrimitiveType::AbstractFloat
+        ) {
+            return right_ty;
+        }
+        let Some(left_primitive) = self.primitive(left_ty) else {
+            return right_ty;
+        };
+        if right_primitive.is_abstract_of(left_primitive) {
+            left_ty
+        } else {
+            right_ty
+        }
+    }
+
+    fn core_ops_trait_type(
+        &mut self,
+        trait_def: syn_sem_name::DefId,
+        trait_name: &str,
+        rhs_ty: TypeId,
+    ) -> TypeId {
+        let trait_name = self.ccx.intern(trait_name);
+        self.types.intern_type(Type::Path(PathType {
+            qself: None,
+            path: Path {
+                segments: vec![PathSegment {
+                    name: trait_name,
+                    args: vec![GenericArg::Type(rhs_ty)],
+                }],
+            },
+            resolution: PathTypeResolution::Nominal(trait_def),
+        }))
+    }
+
+    fn operator_output_projection(
+        &mut self,
+        self_: TypeId,
+        trait_: TypeId,
+        assoc: syn_sem_name::DefId,
+    ) -> TypeId {
+        let output = self.ccx.intern("Output");
+        self.types.intern_type(Type::Path(PathType {
+            qself: Some(QSelf {
+                self_,
+                trait_: Some(trait_),
+            }),
+            path: Path {
+                segments: vec![PathSegment {
+                    name: output,
+                    args: Vec::new(),
+                }],
+            },
+            resolution: PathTypeResolution::Projection(ProjectionType {
+                assoc,
+                self_: Some(self_),
+                trait_: Some(trait_),
+            }),
+        }))
     }
 
     fn derive_reference(&mut self, expr: hir::ExprId, inner: hir::ExprId, is_mut: bool) -> bool {

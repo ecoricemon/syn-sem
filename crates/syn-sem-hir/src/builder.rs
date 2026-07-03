@@ -218,18 +218,31 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     }
 
     /// Builds HIR for one entry file.
-    pub fn build(mut self, file_path: FilePath<'cx>, file: &'cx ast::File<'cx>) -> Hir<'cx> {
-        let id = self.hir.reserve_file();
+    pub fn build(self, file_path: FilePath<'cx>, file: &'cx ast::File<'cx>) -> Hir<'cx> {
+        self.build_files([ast::SourceInput { file_path, file }])
+    }
+
+    /// Builds HIR for multiple root files.
+    ///
+    /// Each root is attached to the crate root scope. This lets callers include well-known
+    /// library files alongside the entry file when those files are not reached through `mod`.
+    pub fn build_files(
+        mut self,
+        files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
+    ) -> Hir<'cx> {
         let root = Some(self.names.root_scope());
-        let items = self.collect_items(file.items, root);
-        self.hir.fill_file(
-            id,
-            File {
+        for file in files {
+            let id = self.hir.reserve_file();
+            let items = self.collect_items(file.file.items, root);
+            self.hir.fill_file(
                 id,
-                file_path,
-                items,
-            },
-        );
+                File {
+                    id,
+                    file_path: file.file_path,
+                    items,
+                },
+            );
+        }
         Hir::from_arena(self.hir.finish())
     }
 
@@ -1217,9 +1230,8 @@ mod tests {
         let source_text = ccx.intern(source_text);
         scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameCollector::new([ast::SourceInput { file_path, file }])
-            .collect(file_path)
-            .unwrap();
+        let names =
+            NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let hir = HirBuilder::new(&names).build(file_path, file);
         (file, names, hir)
     }

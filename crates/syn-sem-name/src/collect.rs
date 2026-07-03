@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use syn_sem_ast as ast;
-use syn_sem_common::{FilePath, MaybeResult, Result};
+use syn_sem_common::{FilePath, MaybeResult, Result, Set};
 
 /// Collects name-resolution facts from prepared AST inputs.
 pub struct NameCollector<'cx> {
@@ -20,36 +20,55 @@ pub struct NameCollector<'cx> {
 }
 
 impl<'cx> NameCollector<'cx> {
-    /// Creates a collector from already parsed source inputs.
-    pub fn new(files: impl IntoIterator<Item = ast::SourceInput<'cx>>) -> Self {
-        Self {
+    /// Collects names from prepared AST inputs starting at one or more root files.
+    ///
+    /// Each root is collected into the crate root scope. This is useful for caller-provided
+    /// well-known library sources that are not reachable through the entry file's module tree.
+    pub fn collect(
+        files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
+        roots: impl IntoIterator<Item = FilePath<'cx>>,
+    ) -> Result<NameDb<'cx>> {
+        let this = Self {
             files: files
                 .into_iter()
                 .map(|input| (PathBuf::from(input.file_path.as_ref()), input))
                 .collect(),
             db: NameDb::default(),
-        }
+        };
+        this.collect_inner(roots)
     }
 
-    /// Collects names from prepared AST inputs starting at `entry_path`.
-    pub fn collect(mut self, entry_path: FilePath<'cx>) -> Result<NameDb<'cx>> {
-        let file = self
-            .files
-            .get(Path::new(entry_path.as_ref()))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("name collection input is missing entry file: {entry_path}"),
-                )
-            })?
-            .file;
+    fn collect_inner(
+        mut self,
+        roots: impl IntoIterator<Item = FilePath<'cx>>,
+    ) -> Result<NameDb<'cx>> {
         let root = self.db.root_scope();
-        let path = ast::ModulePath::from_entry_file(PathBuf::from(entry_path.as_ref()));
-        for item in file.items {
-            self.collect_item_from_module_tree(root, item, &path)?;
+        let mut seen = Set::default();
+        for root_path in roots {
+            if !seen.insert(PathBuf::from(root_path.as_ref())) {
+                continue;
+            }
+            let input = self.file(root_path)?;
+            let path = ast::ModulePath::from_entry_file(PathBuf::from(root_path.as_ref()));
+            for item in input.file.items {
+                self.collect_item_from_module_tree(root, item, &path)?;
+            }
         }
         self.db.resolve_imports();
         Ok(self.db)
+    }
+
+    fn file(&self, file_path: FilePath<'cx>) -> Result<ast::SourceInput<'cx>> {
+        self.files
+            .get(Path::new(file_path.as_ref()))
+            .copied()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("name collection input is missing root file: {file_path}"),
+                )
+                .into()
+            })
     }
 
     fn child_file(

@@ -89,19 +89,45 @@ impl<'cx> InferDb<'cx> {
             const_facts,
         )
         .normalize();
-        db.resolve_type_relations(hir, const_facts);
+        db.resolve_type_relations(ccx, hir, names, const_facts);
 
         db
     }
 
-    fn resolve_type_relations(&mut self, hir: &hir::Hir<'cx>, const_facts: &InferConstFacts) {
+    fn resolve_type_relations(
+        &mut self,
+        ccx: &'cx CommonCx,
+        hir: &hir::Hir<'cx>,
+        names: &NameDb<'cx>,
+        const_facts: &InferConstFacts,
+    ) {
         loop {
             self.type_relations.clear_resolved();
             TypeRelationResolver::new(&mut self.type_relations, &self.types).resolve();
-            let changed =
-                ExprTypeDeriver::new(hir, &mut self.type_relations, &mut self.types, const_facts)
-                    .derive()
-                    | PatTypeDeriver::new(hir, &mut self.type_relations, &self.types).derive();
+            let expr_changed = ExprTypeDeriver::new(
+                ccx,
+                hir,
+                names,
+                &mut self.projections,
+                &mut self.type_relations,
+                &mut self.types,
+                const_facts,
+            )
+            .derive();
+            if expr_changed {
+                ProjectionNormalizer::new(
+                    &mut self.projections,
+                    &mut self.types,
+                    ccx,
+                    &self.trait_bounds,
+                    &self.impl_assoc_types,
+                    names,
+                    const_facts,
+                )
+                .normalize();
+            }
+            let changed = expr_changed
+                | PatTypeDeriver::new(hir, &mut self.type_relations, &self.types).derive();
             if !changed {
                 break;
             }
@@ -528,9 +554,8 @@ mod tests {
         let source_text = ccx.intern(source_text);
         scx.parse_virtual_file(file_path, source_text).unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameCollector::new([ast::SourceInput { file_path, file }])
-            .collect(file_path)
-            .unwrap();
+        let names =
+            NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, names, infer)
