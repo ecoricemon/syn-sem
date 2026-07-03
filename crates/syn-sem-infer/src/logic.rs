@@ -9,8 +9,8 @@ pub(crate) mod symbol;
 mod visit;
 
 pub(crate) use atom::{
-    atom, def_id, expr_id, type_id, type_id_from_term, CreateTerm, LogicAtom, LogicClause,
-    LogicTerm,
+    atom, def_id, def_id_from_term, expr_id, type_id, type_id_from_term, CreateTerm, LogicAtom,
+    LogicClause, LogicTerm,
 };
 pub(crate) use equality::{same_type, same_type_rules, type_equal_clause, SameTypeRules};
 pub(crate) use visit::visit_left_var;

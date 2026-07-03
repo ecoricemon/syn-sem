@@ -67,6 +67,11 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     /// normalization:        <Vec<u32> as Iterator>::Item -> u32
     /// ```
     pub(crate) fn normalize(&mut self) {
+        if self.projections.obligations.is_empty() && self.projections.projection_matches.is_empty()
+        {
+            return;
+        }
+
         let matches = self.match_projection_obligations();
         for match_ in matches {
             self.projections.projection_matches.push_unique(match_);
@@ -96,16 +101,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     }
 
     fn match_projection_obligations(&self) -> Vec<ProjectionMatch> {
-        let mut logic = ProjectionLogic::new(
-            self.ccx,
-            self.projections,
-            self.types,
-            self.trait_bounds,
-            self.impl_assoc_types,
-            self.const_facts,
-        );
-        logic.load_projection_candidates();
-
+        let mut logic = None;
         let mut matches = Vec::new();
         for obligation in &self.projections.obligations {
             let self_ = obligation.self_;
@@ -120,21 +116,25 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
                 }
                 continue;
             }
-            for bound in self.trait_bounds {
-                if !logic.proves_candidate(
-                    obligation.projection,
-                    self_,
-                    obligation.assoc,
-                    bound.trait_,
-                ) {
-                    continue;
-                }
-                if let Some(assoc) = self.trait_member_assoc(bound.trait_, obligation.assoc) {
+            let logic = logic.get_or_insert_with(|| {
+                let mut logic = ProjectionLogic::new(
+                    self.ccx,
+                    self.projections,
+                    self.types,
+                    self.trait_bounds,
+                    self.impl_assoc_types,
+                    self.const_facts,
+                );
+                logic.load_projection_candidates();
+                logic
+            });
+            for trait_ in logic.candidate_traits(obligation.projection, self_, obligation.assoc) {
+                if let Some(assoc) = self.trait_member_assoc(trait_, obligation.assoc) {
                     matches.push(ProjectionMatch {
                         projection: obligation.projection,
                         self_,
                         assoc,
-                        trait_: bound.trait_,
+                        trait_,
                     });
                 }
             }
@@ -143,6 +143,11 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     }
 
     fn match_impl_self_types(&self) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
+        let direct_matches = self.match_direct_impl_self_types();
+        if self.all_projection_matches_have_impl_self_match(&direct_matches) {
+            return (direct_matches, Vec::new());
+        }
+
         let mut logic = ProjectionLogic::new(
             self.ccx,
             self.projections,
@@ -153,7 +158,47 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         );
         logic.load_impl_self_matches();
 
-        logic.impl_self_matches_and_generic_bindings()
+        let (mut impl_self_matches, impl_self_generic_bindings) =
+            logic.impl_self_matches_and_generic_bindings();
+        for match_ in direct_matches {
+            impl_self_matches.push_unique(match_);
+        }
+        (impl_self_matches, impl_self_generic_bindings)
+    }
+
+    fn match_direct_impl_self_types(&self) -> Vec<ImplSelfMatch> {
+        let mut matches = Vec::new();
+        for projection_match in &self.projections.projection_matches {
+            for impl_assoc_type in self.impl_assoc_types {
+                if projection_match.assoc != impl_assoc_type.assoc
+                    || !self.same_type(projection_match.trait_, impl_assoc_type.trait_)
+                    || !self.same_type(projection_match.self_, impl_assoc_type.impl_self)
+                {
+                    continue;
+                }
+                matches.push_unique(ImplSelfMatch {
+                    projection_self: projection_match.self_,
+                    impl_self: impl_assoc_type.impl_self,
+                });
+            }
+        }
+        matches
+    }
+
+    fn all_projection_matches_have_impl_self_match(&self, matches: &[ImplSelfMatch]) -> bool {
+        self.projections
+            .projection_matches
+            .iter()
+            .all(|projection_match| {
+                self.impl_assoc_types.iter().any(|impl_assoc_type| {
+                    projection_match.assoc == impl_assoc_type.assoc
+                        && self.same_type(projection_match.trait_, impl_assoc_type.trait_)
+                        && matches.iter().any(|match_| {
+                            match_.projection_self == projection_match.self_
+                                && match_.impl_self == impl_assoc_type.impl_self
+                        })
+                })
+            })
     }
 
     fn build_type_substitutions(&mut self) -> Vec<ProjectionTypeSubstitution> {
@@ -202,6 +247,12 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     }
 
     fn normalize_projection_matches(&self) -> Vec<ProjectionNormalization> {
+        let mut direct_normalizations =
+            self.normalize_projection_matches_without_generic_bindings();
+        if self.all_projection_matches_have_normalization(&direct_normalizations) {
+            return direct_normalizations;
+        }
+
         let mut logic = ProjectionLogic::new(
             self.ccx,
             self.projections,
@@ -212,43 +263,50 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         );
         logic.load_projection_normalizations();
 
+        let mut normalizations = logic.normalizations();
+        for normalization in direct_normalizations.drain(..) {
+            normalizations.push_unique(normalization);
+        }
+
+        normalizations
+    }
+
+    fn normalize_projection_matches_without_generic_bindings(
+        &self,
+    ) -> Vec<ProjectionNormalization> {
         let mut normalizations = Vec::new();
         for projection_match in &self.projections.projection_matches {
             for impl_assoc_type in self.impl_assoc_types {
-                let substituted_values = self
-                    .projections
-                    .type_substitutions
-                    .iter()
-                    .filter(|substitution| {
-                        substitution.projection_self == projection_match.self_
-                            && substitution.impl_self == impl_assoc_type.impl_self
-                            && substitution.value_ty == impl_assoc_type.value_ty
-                    })
-                    .map(|substitution| substitution.substituted);
-                for value_ty in std::iter::once(impl_assoc_type.value_ty).chain(substituted_values)
-                {
-                    if logic.proves_normalization(
-                        projection_match.projection,
-                        projection_match.self_,
-                        projection_match.assoc,
-                        projection_match.trait_,
-                        value_ty,
-                    ) || (value_ty == impl_assoc_type.value_ty
-                        && self.matches_without_generic_bindings(projection_match, impl_assoc_type))
-                    {
-                        let normalization = ProjectionNormalization {
-                            projection: projection_match.projection,
-                            self_: projection_match.self_,
-                            assoc: projection_match.assoc,
-                            trait_: projection_match.trait_,
-                            value_ty,
-                        };
-                        normalizations.push_unique(normalization);
-                    }
+                if !self.matches_without_generic_bindings(projection_match, impl_assoc_type) {
+                    continue;
                 }
+                normalizations.push_unique(ProjectionNormalization {
+                    projection: projection_match.projection,
+                    self_: projection_match.self_,
+                    assoc: projection_match.assoc,
+                    trait_: projection_match.trait_,
+                    value_ty: impl_assoc_type.value_ty,
+                });
             }
         }
         normalizations
+    }
+
+    fn all_projection_matches_have_normalization(
+        &self,
+        normalizations: &[ProjectionNormalization],
+    ) -> bool {
+        self.projections
+            .projection_matches
+            .iter()
+            .all(|projection_match| {
+                normalizations.iter().any(|normalization| {
+                    normalization.projection == projection_match.projection
+                        && normalization.self_ == projection_match.self_
+                        && normalization.assoc == projection_match.assoc
+                        && normalization.trait_ == projection_match.trait_
+                })
+            })
     }
 
     fn matches_without_generic_bindings(
@@ -257,7 +315,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         impl_assoc_type: &ImplAssocType,
     ) -> bool {
         if projection_match.trait_ != impl_assoc_type.trait_
-            && self.types[projection_match.trait_] != self.types[impl_assoc_type.trait_]
+            && !self.same_type(projection_match.trait_, impl_assoc_type.trait_)
         {
             return false;
         }
@@ -276,6 +334,10 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
                 binding.projection_self == projection_match.self_
                     && binding.impl_self == impl_assoc_type.impl_self
             })
+    }
+
+    fn same_type(&self, left: TypeId, right: TypeId) -> bool {
+        self.types.can_share_types(left, right)
     }
 
     /// Returns the associated type member in `trait_` whose name matches

@@ -129,19 +129,23 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         right: hir::ExprId,
     ) -> bool {
         match op {
-            hir::BinaryOp::Add => self
-                .derive_add_operator_projection(expr, left, right)
+            hir::BinaryOp::Add
+            | hir::BinaryOp::Sub
+            | hir::BinaryOp::Mul
+            | hir::BinaryOp::Div
+            | hir::BinaryOp::Rem => self
+                .derive_binary_output_operator_projection(expr, op, left, right)
                 .unwrap_or_else(|| {
                     self.derive_same_type_binary(expr, left, right, |primitive| {
                         primitive.is_numeric()
                     })
                 }),
-            hir::BinaryOp::Sub | hir::BinaryOp::Mul | hir::BinaryOp::Div | hir::BinaryOp::Rem => {
-                self.derive_same_type_binary(expr, left, right, |primitive| primitive.is_numeric())
-            }
             hir::BinaryOp::BitXor | hir::BinaryOp::BitAnd | hir::BinaryOp::BitOr => self
-                .derive_same_type_binary(expr, left, right, |primitive| {
-                    primitive == PrimitiveType::Bool || primitive.is_integer()
+                .derive_binary_output_operator_projection(expr, op, left, right)
+                .unwrap_or_else(|| {
+                    self.derive_same_type_binary(expr, left, right, |primitive| {
+                        primitive == PrimitiveType::Bool || primitive.is_integer()
+                    })
                 }),
             hir::BinaryOp::Shl | hir::BinaryOp::Shr => self.derive_shift_binary(expr, left, right),
             hir::BinaryOp::And | hir::BinaryOp::Or => {
@@ -203,19 +207,21 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         self.insert_expr_equality(left, right)
     }
 
-    fn derive_add_operator_projection(
+    fn derive_binary_output_operator_projection(
         &mut self,
         expr: hir::ExprId,
+        op: hir::BinaryOp,
         left: hir::ExprId,
         right: hir::ExprId,
     ) -> Option<bool> {
         let left_ty = self.type_relations.type_for_hir_expr(left)?;
         let right_ty = self.type_relations.type_for_hir_expr(right)?;
         let scope = self.hir[expr].scope?;
-        let add_def = self.resolve_core_ops_trait(scope, "Add")?;
-        let output_def = self.trait_assoc(add_def, "Output")?;
-        let rhs_ty = self.defaulted_add_rhs(left_ty, right_ty);
-        let trait_ty = self.core_ops_trait_type(add_def, "Add", rhs_ty);
+        let trait_name = Self::binary_output_operator_trait_name(op)?;
+        let trait_def = self.resolve_core_ops_trait(scope, trait_name)?;
+        let output_def = self.trait_assoc(trait_def, "Output")?;
+        let rhs_ty = self.defaulted_operator_rhs(left_ty, right_ty);
+        let trait_ty = self.core_ops_trait_type(trait_def, trait_name, rhs_ty);
         let projection = self.operator_output_projection(left_ty, trait_ty, output_def);
 
         let mut changed = self
@@ -236,6 +242,29 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             changed |= self.insert_expr_type_equality(expr, value_ty);
         }
         Some(changed)
+    }
+
+    fn binary_output_operator_trait_name(op: hir::BinaryOp) -> Option<&'static str> {
+        match op {
+            hir::BinaryOp::Add => Some("Add"),
+            hir::BinaryOp::Sub => Some("Sub"),
+            hir::BinaryOp::Mul => Some("Mul"),
+            hir::BinaryOp::Div => Some("Div"),
+            hir::BinaryOp::Rem => Some("Rem"),
+            hir::BinaryOp::BitXor => Some("BitXor"),
+            hir::BinaryOp::BitAnd => Some("BitAnd"),
+            hir::BinaryOp::BitOr => Some("BitOr"),
+            hir::BinaryOp::And
+            | hir::BinaryOp::Or
+            | hir::BinaryOp::Shl
+            | hir::BinaryOp::Shr
+            | hir::BinaryOp::Eq
+            | hir::BinaryOp::Lt
+            | hir::BinaryOp::Le
+            | hir::BinaryOp::Ne
+            | hir::BinaryOp::Ge
+            | hir::BinaryOp::Gt => None,
+        }
     }
 
     fn resolve_core_ops_trait(
@@ -268,7 +297,7 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         (self.names[def].kind == DefKind::AssocType).then_some(def)
     }
 
-    fn defaulted_add_rhs(&self, left_ty: TypeId, right_ty: TypeId) -> TypeId {
+    fn defaulted_operator_rhs(&self, left_ty: TypeId, right_ty: TypeId) -> TypeId {
         let Some(right_primitive) = self.primitive(right_ty) else {
             return right_ty;
         };

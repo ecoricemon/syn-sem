@@ -104,6 +104,7 @@ impl<'cx> InferDb<'cx> {
         loop {
             self.type_relations.clear_resolved();
             TypeRelationResolver::new(&mut self.type_relations, &self.types).resolve();
+            let obligation_count = self.projections.obligations.len();
             let expr_changed = ExprTypeDeriver::new(
                 ccx,
                 hir,
@@ -114,7 +115,7 @@ impl<'cx> InferDb<'cx> {
                 const_facts,
             )
             .derive();
-            if expr_changed {
+            if self.projections.obligations.len() != obligation_count {
                 ProjectionNormalizer::new(
                     &mut self.projections,
                     &mut self.types,
@@ -1242,6 +1243,64 @@ mod tests {
         assert_eq!(
             infer[normalizations[0].value_ty],
             Type::Primitive(PrimitiveType::U32)
+        );
+    }
+
+    #[test]
+    fn normalizes_user_defined_projection_without_generic_impl_self_bindings() {
+        // Proves direct user-defined trait projections normalize without generic binding work.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (hir, _names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            r#"
+            struct A;
+            struct B;
+
+            trait Combine<Rhs> {
+                type Output;
+            }
+
+            impl Combine<B> for A {
+                type Output = usize;
+            }
+
+            struct Holder {
+                field: <A as Combine<B>>::Output,
+            }
+            "#,
+        );
+
+        let fields = struct_field_hir_types(&hir, "Holder");
+        let [field_ty_id] = fields.as_slice() else {
+            panic!("Holder should have one field type");
+        };
+        let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
+        let [impl_self_match] = infer.projections.impl_self_matches.as_slice() else {
+            panic!("direct impl self should match projection self once");
+        };
+        let [normalization] = infer.projections.normalizations.as_slice() else {
+            panic!("direct impl self projection should normalize once");
+        };
+
+        assert_eq!(impl_self_match.projection_self, normalization.self_);
+        assert!(infer
+            .types
+            .can_share_types(impl_self_match.impl_self, normalization.self_));
+        assert!(infer.projections.impl_self_generic_bindings.is_empty());
+        assert!(infer.projections.type_substitutions.is_empty());
+        assert_eq!(
+            infer.normalized_projection_type(projection),
+            Some(normalization.value_ty)
+        );
+        assert_eq!(
+            infer.projection_normalization(projection),
+            ProjectionNormalizationResult::Known(normalization.value_ty)
+        );
+        assert_eq!(
+            infer[normalization.value_ty],
+            Type::Primitive(PrimitiveType::Usize)
         );
     }
 

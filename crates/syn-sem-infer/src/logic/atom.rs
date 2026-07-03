@@ -43,6 +43,16 @@ pub(crate) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
     atom(functor)
 }
 
+/// Decodes a name definition id from a logic term.
+pub(crate) fn def_id_from_term(term: &LogicTerm<'_>) -> Option<DefId> {
+    let functor = term.functor.as_ref();
+    let index = functor.strip_prefix(symbol::id::DEF)?.parse().ok()?;
+    if !term.args.is_empty() {
+        return None;
+    }
+    Some(DefId::new(index))
+}
+
 /// expr-id atom.
 ///
 /// * id - HIR expression id to encode as a logic atom
