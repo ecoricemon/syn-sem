@@ -59,10 +59,6 @@ impl<'cx> InferTypes<'cx> {
         self.push_type(ty)
     }
 
-    pub(crate) fn can_share_types(&self, left: TypeId, right: TypeId) -> bool {
-        TypeSharing::new(&self.types).can_share_type_ids(left, right, &mut Vec::new())
-    }
-
     pub(crate) fn path_resolution(&self, ty: TypeId) -> Option<&PathTypeResolution> {
         let Type::Path(path) = &self[ty] else {
             return None;

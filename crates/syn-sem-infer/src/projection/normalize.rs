@@ -143,11 +143,6 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     }
 
     fn match_impl_self_types(&self) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
-        let direct_matches = self.match_direct_impl_self_types();
-        if self.all_projection_matches_have_impl_self_match(&direct_matches) {
-            return (direct_matches, Vec::new());
-        }
-
         let mut logic = ProjectionLogic::new(
             self.ccx,
             self.projections,
@@ -158,47 +153,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         );
         logic.load_impl_self_matches();
 
-        let (mut impl_self_matches, impl_self_generic_bindings) =
-            logic.impl_self_matches_and_generic_bindings();
-        for match_ in direct_matches {
-            impl_self_matches.push_unique(match_);
-        }
-        (impl_self_matches, impl_self_generic_bindings)
-    }
-
-    fn match_direct_impl_self_types(&self) -> Vec<ImplSelfMatch> {
-        let mut matches = Vec::new();
-        for projection_match in &self.projections.projection_matches {
-            for impl_assoc_type in self.impl_assoc_types {
-                if projection_match.assoc != impl_assoc_type.assoc
-                    || !self.same_type(projection_match.trait_, impl_assoc_type.trait_)
-                    || !self.same_type(projection_match.self_, impl_assoc_type.impl_self)
-                {
-                    continue;
-                }
-                matches.push_unique(ImplSelfMatch {
-                    projection_self: projection_match.self_,
-                    impl_self: impl_assoc_type.impl_self,
-                });
-            }
-        }
-        matches
-    }
-
-    fn all_projection_matches_have_impl_self_match(&self, matches: &[ImplSelfMatch]) -> bool {
-        self.projections
-            .projection_matches
-            .iter()
-            .all(|projection_match| {
-                self.impl_assoc_types.iter().any(|impl_assoc_type| {
-                    projection_match.assoc == impl_assoc_type.assoc
-                        && self.same_type(projection_match.trait_, impl_assoc_type.trait_)
-                        && matches.iter().any(|match_| {
-                            match_.projection_self == projection_match.self_
-                                && match_.impl_self == impl_assoc_type.impl_self
-                        })
-                })
-            })
+        logic.impl_self_matches_and_generic_bindings()
     }
 
     fn build_type_substitutions(&mut self) -> Vec<ProjectionTypeSubstitution> {
@@ -247,12 +202,6 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     }
 
     fn normalize_projection_matches(&self) -> Vec<ProjectionNormalization> {
-        let mut direct_normalizations =
-            self.normalize_projection_matches_without_generic_bindings();
-        if self.all_projection_matches_have_normalization(&direct_normalizations) {
-            return direct_normalizations;
-        }
-
         let mut logic = ProjectionLogic::new(
             self.ccx,
             self.projections,
@@ -263,81 +212,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         );
         logic.load_projection_normalizations();
 
-        let mut normalizations = logic.normalizations();
-        for normalization in direct_normalizations.drain(..) {
-            normalizations.push_unique(normalization);
-        }
-
-        normalizations
-    }
-
-    fn normalize_projection_matches_without_generic_bindings(
-        &self,
-    ) -> Vec<ProjectionNormalization> {
-        let mut normalizations = Vec::new();
-        for projection_match in &self.projections.projection_matches {
-            for impl_assoc_type in self.impl_assoc_types {
-                if !self.matches_without_generic_bindings(projection_match, impl_assoc_type) {
-                    continue;
-                }
-                normalizations.push_unique(ProjectionNormalization {
-                    projection: projection_match.projection,
-                    self_: projection_match.self_,
-                    assoc: projection_match.assoc,
-                    trait_: projection_match.trait_,
-                    value_ty: impl_assoc_type.value_ty,
-                });
-            }
-        }
-        normalizations
-    }
-
-    fn all_projection_matches_have_normalization(
-        &self,
-        normalizations: &[ProjectionNormalization],
-    ) -> bool {
-        self.projections
-            .projection_matches
-            .iter()
-            .all(|projection_match| {
-                normalizations.iter().any(|normalization| {
-                    normalization.projection == projection_match.projection
-                        && normalization.self_ == projection_match.self_
-                        && normalization.assoc == projection_match.assoc
-                        && normalization.trait_ == projection_match.trait_
-                })
-            })
-    }
-
-    fn matches_without_generic_bindings(
-        &self,
-        projection_match: &ProjectionMatch,
-        impl_assoc_type: &ImplAssocType,
-    ) -> bool {
-        if projection_match.trait_ != impl_assoc_type.trait_
-            && !self.same_type(projection_match.trait_, impl_assoc_type.trait_)
-        {
-            return false;
-        }
-        let matched = self.projections.impl_self_matches.iter().any(|match_| {
-            match_.projection_self == projection_match.self_
-                && match_.impl_self == impl_assoc_type.impl_self
-        });
-        if !matched {
-            return false;
-        }
-        !self
-            .projections
-            .impl_self_generic_bindings
-            .iter()
-            .any(|binding| {
-                binding.projection_self == projection_match.self_
-                    && binding.impl_self == impl_assoc_type.impl_self
-            })
-    }
-
-    fn same_type(&self, left: TypeId, right: TypeId) -> bool {
-        self.types.can_share_types(left, right)
+        logic.normalizations()
     }
 
     /// Returns the associated type member in `trait_` whose name matches

@@ -1248,7 +1248,7 @@ mod tests {
 
     #[test]
     fn normalizes_user_defined_projection_without_generic_impl_self_bindings() {
-        // Proves direct user-defined trait projections normalize without generic binding work.
+        // Proves non-generic user-defined trait projections normalize without binding work.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let (hir, _names, infer) = infer_collected_types(
@@ -1278,16 +1278,13 @@ mod tests {
         };
         let projection = infer.type_for_hir_type(*field_ty_id).unwrap();
         let [impl_self_match] = infer.projections.impl_self_matches.as_slice() else {
-            panic!("direct impl self should match projection self once");
+            panic!("non-generic impl self should match projection self once");
         };
         let [normalization] = infer.projections.normalizations.as_slice() else {
-            panic!("direct impl self projection should normalize once");
+            panic!("non-generic impl self projection should normalize once");
         };
 
         assert_eq!(impl_self_match.projection_self, normalization.self_);
-        assert!(infer
-            .types
-            .can_share_types(impl_self_match.impl_self, normalization.self_));
         assert!(infer.projections.impl_self_generic_bindings.is_empty());
         assert!(infer.projections.type_substitutions.is_empty());
         assert_eq!(

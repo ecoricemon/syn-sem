@@ -15,4 +15,9 @@ syn-sem-name = { workspace = true }
 syn-sem-hir = { workspace = true }
 
 [dev-dependencies]
+criterion = "0.5"
 syn-sem-ast = { workspace = true }
+
+[[bench]]
+name = "infer"
+harness = false

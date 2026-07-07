@@ -151,7 +151,8 @@ pub(crate) fn impl_self_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx
 /// * Rule 0 - `#projection_normalizes_to(P, Self, Assoc, Trait, Value) :-
 ///   #projection_match(P, Self, Assoc, Trait),
 ///   #impl_assoc_type(ImplSelf, ImplTrait, Assoc, Value),
-///   #same_type(Self, ImplSelf), #same_type(Trait, ImplTrait).`
+///   #same_type(Trait, ImplTrait), #impl_self_match(Self, ImplSelf),
+///   #impl_assoc_value_without_bindings(ImplSelf, Value).`
 /// * Rule 1 - `#projection_normalizes_to(P, Self, Assoc, Trait, Substituted) :-
 ///   #projection_match(P, Self, Assoc, Trait),
 ///   #impl_assoc_type(ImplSelf, ImplTrait, Assoc, Value),
@@ -165,7 +166,8 @@ pub(crate) fn impl_self_match_rules<'cx>(ccx: &'cx CommonCx) -> [LogicClause<'cx
 /// * Output clause - `#projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Value) :-
 ///   #projection_match($Projection, $Self, $Assoc, $Trait),
 ///   #impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
-///   #same_type($Self, $ImplSelf), #same_type($Trait, $ImplTrait).`
+///   #same_type($Trait, $ImplTrait), #impl_self_match($Self, $ImplSelf),
+///   #impl_assoc_value_without_bindings($ImplSelf, $Value).`
 /// * Code - `<Vec<u32> as Iterator>::Item` with
 ///   `impl<T> Iterator for Vec<T> { type Item = T; }`
 /// * Output clause - `#projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Substituted) :-
@@ -202,13 +204,18 @@ pub(crate) fn projection_normalization_rules<'cx>(ccx: &'cx CommonCx) -> [LogicC
                 )),
                 Expr::Term(same_type(
                     ccx,
+                    ccx.atom(var::TRAIT),
+                    ccx.atom(var::IMPL_TRAIT),
+                )),
+                Expr::Term(impl_self_match(
+                    ccx,
                     ccx.atom(var::SELF),
                     ccx.atom(var::IMPL_SELF),
                 )),
-                Expr::Term(same_type(
+                Expr::Term(impl_assoc_value_without_bindings(
                     ccx,
-                    ccx.atom(var::TRAIT),
-                    ccx.atom(var::IMPL_TRAIT),
+                    ccx.atom(var::IMPL_SELF),
+                    ccx.atom(var::VALUE),
                 )),
             ])),
         },
@@ -414,6 +421,28 @@ pub(crate) fn type_substitution_clause<'cx>(
             type_id(ccx, substitution.generic),
             type_id(ccx, substitution.arg),
             type_id(ccx, substitution.substituted),
+        ),
+        body: None,
+    }
+}
+
+/// * impl_self - Implementing self type in `impl Trait for Self`
+/// * value_ty - Associated type value that does not depend on impl-self generic bindings
+///
+/// # Examples
+///
+/// * Code - `impl Add<&usize> for &usize { type Output = usize; }`
+/// * Output - `#impl_assoc_value_without_bindings(impl_self, usize).`
+pub(crate) fn impl_assoc_value_without_bindings_clause<'cx>(
+    ccx: &'cx CommonCx,
+    impl_self: TypeId,
+    value_ty: TypeId,
+) -> LogicClause<'cx> {
+    Clause {
+        head: impl_assoc_value_without_bindings(
+            ccx,
+            type_id(ccx, impl_self),
+            type_id(ccx, value_ty),
         ),
         body: None,
     }
@@ -641,6 +670,17 @@ fn impl_assoc_type<'cx>(
     ccx.term(
         pred::IMPL_ASSOC_TYPE,
         vec![impl_self, trait_, assoc, value_ty],
+    )
+}
+
+fn impl_assoc_value_without_bindings<'cx>(
+    ccx: &'cx CommonCx,
+    impl_self: LogicTerm<'cx>,
+    value_ty: LogicTerm<'cx>,
+) -> LogicTerm<'cx> {
+    ccx.term(
+        pred::IMPL_ASSOC_VALUE_WITHOUT_BINDINGS,
+        vec![impl_self, value_ty],
     )
 }
 

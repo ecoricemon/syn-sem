@@ -37,6 +37,7 @@ pub(crate) mod id {
 pub(crate) mod pred {
     pub(crate) const EXPLICIT_PROJECTION_OBLIGATION: &str = "#explicit_projection_obligation";
     pub(crate) const IMPL_ASSOC_TYPE: &str = "#impl_assoc_type";
+    pub(crate) const IMPL_ASSOC_VALUE_WITHOUT_BINDINGS: &str = "#impl_assoc_value_without_bindings";
     pub(crate) const IMPL_SELF_MATCH: &str = "#impl_self_match";
     pub(crate) const IMPL_SELF_MATCH_CANDIDATE: &str = "#impl_self_match_candidate";
     pub(crate) const PROJECTION_CANDIDATE: &str = "#projection_candidate";

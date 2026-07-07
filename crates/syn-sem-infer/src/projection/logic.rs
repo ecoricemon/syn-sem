@@ -10,7 +10,8 @@ use crate::{
         self as logic_term, atom, def_id_from_term, symbol::var, type_id_from_term, visit_left_var,
         LogicAtom, LogicTerm,
     },
-    ImplAssocType, InferConstFacts, InferTypes, ProjectionNormalization, TraitBound, TypeId,
+    GenericArg, ImplAssocType, InferConstFacts, InferTypes, Path, PathType, PathTypeResolution,
+    ProjectionNormalization, TraitBound, Type, TypeId, TypeParamBound,
 };
 use logic_eval::Database;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
@@ -81,7 +82,8 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     /// #projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Value) :-
     ///   #projection_match($Projection, $Self, $Assoc, $Trait),
     ///   #impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
-    ///   #same_type($Self, $ImplSelf), #same_type($Trait, $ImplTrait).
+    ///   #same_type($Trait, $ImplTrait), #impl_self_match($Self, $ImplSelf),
+    ///   #impl_assoc_value_without_bindings($ImplSelf, $Value).
     /// #projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Substituted) :-
     ///   #projection_match($Projection, $Self, $Assoc, $Trait),
     ///   #impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
@@ -95,6 +97,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     /// #projection_match(projection, self, assoc, trait).
     /// #impl_assoc_type(impl_self, impl_trait, assoc, value).
     /// #impl_self_match(self, impl_self).
+    /// #impl_assoc_value_without_bindings(impl_self, value).
     /// #type_binding(self, impl_self, generic, arg).
     /// #type_substitution(self, impl_self, value, generic, arg, substituted).
     /// #type_equal(a, b).
@@ -104,6 +107,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
         self.insert_projection_matches();
         self.insert_impl_assoc_types();
+        self.insert_impl_assoc_values_without_bindings();
         self.insert_impl_self_matches();
         self.insert_type_bindings();
         self.insert_type_substitutions();
@@ -207,6 +211,20 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         for impl_assoc_type in self.impl_assoc_types {
             self.db
                 .insert_clause(term::impl_assoc_type_clause(self.ccx, *impl_assoc_type));
+        }
+    }
+
+    fn insert_impl_assoc_values_without_bindings(&mut self) {
+        for impl_assoc_type in self.impl_assoc_types {
+            if self.type_contains_generic_param(impl_assoc_type.value_ty) {
+                continue;
+            }
+            self.db
+                .insert_clause(term::impl_assoc_value_without_bindings_clause(
+                    self.ccx,
+                    impl_assoc_type.impl_self,
+                    impl_assoc_type.value_ty,
+                ));
         }
     }
 
@@ -413,6 +431,60 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             bindings.push_unique(binding);
         }
         bindings
+    }
+
+    fn type_contains_generic_param(&self, ty: TypeId) -> bool {
+        match &self.types[ty] {
+            Type::Array { elem, .. } | Type::Reference { elem, .. } | Type::Slice { elem } => {
+                self.type_contains_generic_param(*elem)
+            }
+            Type::Infer | Type::Primitive(_) => false,
+            Type::Path(path) => self.path_contains_generic_param(path),
+            Type::Tuple { elems } => elems
+                .iter()
+                .any(|elem| self.type_contains_generic_param(*elem)),
+        }
+    }
+
+    fn path_contains_generic_param(&self, path: &PathType<'cx>) -> bool {
+        if let Some(qself) = path.qself {
+            let trait_contains_generic = match qself.trait_ {
+                Some(trait_) => self.type_contains_generic_param(trait_),
+                None => false,
+            };
+            if self.type_contains_generic_param(qself.self_) || trait_contains_generic {
+                return true;
+            }
+        }
+        matches!(path.resolution, PathTypeResolution::GenericParam(_))
+            || self.path_args_contain_generic_param(&path.path)
+    }
+
+    fn path_args_contain_generic_param(&self, path: &Path<'cx>) -> bool {
+        path.segments.iter().any(|segment| {
+            segment
+                .args
+                .iter()
+                .any(|arg| self.generic_arg_contains_generic_param(arg))
+        })
+    }
+
+    fn generic_arg_contains_generic_param(&self, arg: &GenericArg<'cx>) -> bool {
+        match arg {
+            GenericArg::Type(ty) => self.type_contains_generic_param(*ty),
+            GenericArg::AssocType { ty, .. } => self.type_contains_generic_param(*ty),
+            GenericArg::Constraint { bounds, .. } => bounds
+                .iter()
+                .any(|bound| self.type_param_bound_contains_generic_param(bound)),
+            GenericArg::Const(_) | GenericArg::AssocConst { .. } | GenericArg::Unsupported => false,
+        }
+    }
+
+    fn type_param_bound_contains_generic_param(&self, bound: &TypeParamBound<'cx>) -> bool {
+        match bound {
+            TypeParamBound::Trait(path) => self.path_args_contain_generic_param(path),
+            TypeParamBound::Unsupported => false,
+        }
     }
 
     fn type_id_for_logic_term(
