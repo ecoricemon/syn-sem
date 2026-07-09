@@ -44,7 +44,7 @@ pub enum Type<'cx> {
 }
 
 /// Primitive Rust type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     /// Unsuffixed integer literal type before it is constrained to a concrete integer primitive.
     AbstractInt,
@@ -88,30 +88,6 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::AbstractInt => "abstract_int",
-            Self::AbstractFloat => "abstract_float",
-            Self::Bool => "bool",
-            Self::Char => "char",
-            Self::Str => "str",
-            Self::I8 => "i8",
-            Self::I16 => "i16",
-            Self::I32 => "i32",
-            Self::I64 => "i64",
-            Self::I128 => "i128",
-            Self::Isize => "isize",
-            Self::U8 => "u8",
-            Self::U16 => "u16",
-            Self::U32 => "u32",
-            Self::U64 => "u64",
-            Self::U128 => "u128",
-            Self::Usize => "usize",
-            Self::F32 => "f32",
-            Self::F64 => "f64",
-        }
-    }
-
     pub(crate) fn is_abstract_of(self, concrete: Self) -> bool {
         matches!(
             (self, concrete),

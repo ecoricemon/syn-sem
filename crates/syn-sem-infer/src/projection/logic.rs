@@ -7,8 +7,8 @@ use super::{
 };
 use crate::{
     logic::{
-        self as logic_term, atom, def_id_from_term, symbol::var, type_id_from_term, visit_left_var,
-        LogicAtom, LogicTerm,
+        self as logic_term, atom, def_id_from_term, symbol::Var, type_id_from_term, visit_left_var,
+        Atom, Term,
     },
     GenericArg, ImplAssocType, InferConstFacts, InferTypes, Path, PathType, PathTypeResolution,
     ProjectionNormalization, TraitBound, Type, TypeId, TypeParamBound,
@@ -32,7 +32,7 @@ pub(super) struct ProjectionLogic<'a, 'cx> {
     const_facts: &'a InferConstFacts,
     preserve_generic_shapes: Map<TypeId, TypeShape<'cx>>,
     variable_generic_shapes: Map<TypeId, TypeShape<'cx>>,
-    db: Database<LogicAtom<'cx>>,
+    db: Database<Atom<'cx>>,
 }
 
 impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
@@ -143,31 +143,31 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn insert_same_type_rules(&mut self) {
-        for clause in logic_term::same_type_rules(self.ccx, term::PROJECTION_SAME_TYPE_RULES) {
+        for clause in logic_term::same_type_rules(term::PROJECTION_SAME_TYPE_RULES) {
             self.db.insert_clause(clause);
         }
     }
 
     fn insert_candidate_rules(&mut self) {
-        for clause in term::projection_candidate_rules(self.ccx) {
+        for clause in term::projection_candidate_rules() {
             self.db.insert_clause(clause);
         }
     }
 
     fn insert_normalization_rules(&mut self) {
-        for clause in term::projection_normalization_rules(self.ccx) {
+        for clause in term::projection_normalization_rules() {
             self.db.insert_clause(clause);
         }
     }
 
     fn insert_impl_self_match_candidate_rules(&mut self) {
-        for clause in term::impl_self_match_candidate_rules(self.ccx) {
+        for clause in term::impl_self_match_candidate_rules() {
             self.db.insert_clause(clause);
         }
     }
 
     fn insert_impl_self_match_rules(&mut self) {
-        for clause in term::impl_self_match_rules(self.ccx) {
+        for clause in term::impl_self_match_rules() {
             self.db.insert_clause(clause);
         }
     }
@@ -175,14 +175,13 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn insert_projection_obligations(&mut self) {
         for obligation in &self.projections.obligations {
             self.db
-                .insert_clause(term::projection_obligation_clause(self.ccx, *obligation));
+                .insert_clause(term::projection_obligation_clause(*obligation));
         }
     }
 
     fn insert_trait_bounds(&mut self) {
         for bound in self.trait_bounds {
-            self.db
-                .insert_clause(term::trait_bound_clause(self.ccx, *bound));
+            self.db.insert_clause(term::trait_bound_clause(*bound));
         }
     }
 
@@ -195,7 +194,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
                     continue;
                 }
                 self.db
-                    .insert_clause(term::projection_type_equal_clause(self.ccx, left, right));
+                    .insert_clause(term::projection_type_equal_clause(left, right));
             }
         }
     }
@@ -203,14 +202,14 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn insert_projection_matches(&mut self) {
         for projection_match in &self.projections.projection_matches {
             self.db
-                .insert_clause(term::projection_match_clause(self.ccx, *projection_match));
+                .insert_clause(term::projection_match_clause(*projection_match));
         }
     }
 
     fn insert_impl_assoc_types(&mut self) {
         for impl_assoc_type in self.impl_assoc_types {
             self.db
-                .insert_clause(term::impl_assoc_type_clause(self.ccx, *impl_assoc_type));
+                .insert_clause(term::impl_assoc_type_clause(*impl_assoc_type));
         }
     }
 
@@ -221,7 +220,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             }
             self.db
                 .insert_clause(term::impl_assoc_value_without_bindings_clause(
-                    self.ccx,
                     impl_assoc_type.impl_self,
                     impl_assoc_type.value_ty,
                 ));
@@ -230,22 +228,20 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     fn insert_impl_self_matches(&mut self) {
         for match_ in &self.projections.impl_self_matches {
-            self.db
-                .insert_clause(term::impl_self_match_clause(self.ccx, *match_));
+            self.db.insert_clause(term::impl_self_match_clause(*match_));
         }
     }
 
     fn insert_type_bindings(&mut self) {
         for binding in &self.projections.impl_self_generic_bindings {
-            self.db
-                .insert_clause(term::type_binding_clause(self.ccx, *binding));
+            self.db.insert_clause(term::type_binding_clause(*binding));
         }
     }
 
     fn insert_type_substitutions(&mut self) {
         for substitution in &self.projections.type_substitutions {
             self.db
-                .insert_clause(term::type_substitution_clause(self.ccx, *substitution));
+                .insert_clause(term::type_substitution_clause(*substitution));
         }
     }
 
@@ -262,7 +258,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             let shape_term = shape.term.clone();
             self.preserve_generic_shapes.insert(ty, shape);
             self.db.insert_clause(type_shape_clause(
-                self.ccx,
                 ty,
                 TypeShapeMode::PreserveGenerics,
                 shape_term,
@@ -280,7 +275,6 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             let shape_term = shape.term.clone();
             self.variable_generic_shapes.insert(impl_self, shape);
             self.db.insert_clause(type_shape_clause(
-                self.ccx,
                 impl_self,
                 TypeShapeMode::VariableGenerics,
                 shape_term,
@@ -296,11 +290,11 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ) -> Vec<TypeId> {
         let mut traits = Vec::new();
         let mut qcx = self.db.query(term::projection_candidate_trait_query(
-            self.ccx, projection, self_, assoc,
+            projection, self_, assoc,
         ));
         while let Some(answer) = qcx.prove_next() {
             let Some(trait_) = answer
-                .get(var::TRAIT)
+                .get(&Atom::from(Var::Trait))
                 .and_then(|term| type_id_from_term(&term))
             else {
                 continue;
@@ -312,24 +306,22 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     pub(super) fn normalizations(&mut self) -> Vec<ProjectionNormalization> {
         let mut normalizations = Vec::new();
-        let mut qcx = self
-            .db
-            .query(term::projection_normalization_query(self.ccx));
+        let mut qcx = self.db.query(term::projection_normalization_query());
         while let Some(answer) = qcx.prove_next() {
             let projection = answer
-                .get(var::PROJECTION)
+                .get(&Atom::from(Var::Projection))
                 .and_then(|term| type_id_from_term(&term));
             let self_ = answer
-                .get(var::SELF)
+                .get(&Atom::from(Var::SelfTy))
                 .and_then(|term| type_id_from_term(&term));
             let assoc = answer
-                .get(var::ASSOC)
+                .get(&Atom::from(Var::Assoc))
                 .and_then(|term| def_id_from_term(&term));
             let trait_ = answer
-                .get(var::TRAIT)
+                .get(&Atom::from(Var::Trait))
                 .and_then(|term| type_id_from_term(&term));
             let Some(value_ty) = answer
-                .get(var::VALUE)
+                .get(&Atom::from(Var::Value))
                 .and_then(|term| type_id_from_term(&term))
             else {
                 continue;
@@ -355,15 +347,15 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
         let mut impl_self_matches = Vec::new();
         let mut generic_bindings = Vec::new();
-        let mut qcx = self.db.query(term::impl_self_match_query(self.ccx));
+        let mut qcx = self.db.query(term::impl_self_match_query());
         while let Some(answer) = qcx.prove_next() {
             let projection_self = answer
-                .get(var::SELF)
+                .get(&Atom::from(Var::SelfTy))
                 .and_then(|term| type_id_from_term(&term));
             let impl_self = answer
-                .get(var::IMPL_SELF)
+                .get(&Atom::from(Var::ImplSelf))
                 .and_then(|term| type_id_from_term(&term));
-            let projection_self_shape = answer.get(var::SHAPE);
+            let projection_self_shape = answer.get(&Atom::from(Var::Shape));
             let (Some(projection_self), Some(impl_self), Some(projection_self_shape)) =
                 (projection_self, impl_self, projection_self_shape)
             else {
@@ -389,7 +381,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     fn impl_self_generic_bindings(
         &self,
         match_: ImplSelfMatch,
-        projection_self_shape: &LogicTerm<'cx>,
+        projection_self_shape: &Term<'cx>,
     ) -> Vec<ImplSelfGenericBinding> {
         let Some(preserve_generic_shape) =
             self.preserve_generic_shapes.get(&match_.projection_self)
@@ -488,8 +480,8 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     }
 
     fn type_id_for_logic_term(
-        term: &LogicTerm<'cx>,
-        term_types: &Map<LogicTerm<'cx>, TypeId>,
+        term: &Term<'cx>,
+        term_types: &Map<Term<'cx>, TypeId>,
     ) -> Option<TypeId> {
         type_id_from_term(term).or_else(|| term_types.get(term).copied())
     }

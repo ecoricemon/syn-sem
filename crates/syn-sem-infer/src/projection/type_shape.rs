@@ -2,13 +2,13 @@
 
 use super::type_shape_term::{self as term, TypeShapeMode};
 use crate::{
-    logic::LogicTerm, ArrayLen, ConstArg, GenericArg, InferConstFacts, InferConstValue, InferTypes,
-    Lit, PathType, PathTypeResolution, Type, TypeId,
+    logic::Term, ArrayLen, ConstArg, GenericArg, InferConstFacts, InferConstValue, InferTypes, Lit,
+    PathType, PathTypeResolution, Type, TypeId,
 };
 use syn_sem_common::{CommonCx, Map};
 
 pub(crate) struct TypeShape<'cx> {
-    pub(crate) term: LogicTerm<'cx>,
+    pub(crate) term: Term<'cx>,
     /// Type ids recoverable from subterms emitted while building `shape`.
     ///
     /// Logic answers can bind shape variables to structural terms such as `#primitive(u32)` or
@@ -20,7 +20,7 @@ pub(crate) struct TypeShape<'cx> {
     /// encoding different root types, and a root-level map would lose which shape produced that
     /// term. Within one shape, duplicate terms are equivalent for shape matching, so choosing one
     /// representative type id is enough to materialize the matched type component.
-    pub(crate) term_types: Map<LogicTerm<'cx>, TypeId>,
+    pub(crate) term_types: Map<Term<'cx>, TypeId>,
 }
 
 pub(crate) struct TypeShapeEncoder<'a, 'cx> {
@@ -78,11 +78,11 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         &self,
         ty: TypeId,
         mode: TypeShapeMode,
-        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
-    ) -> Option<LogicTerm<'cx>> {
+        term_types: &mut Map<Term<'cx>, TypeId>,
+    ) -> Option<Term<'cx>> {
         if mode == TypeShapeMode::VariableGenerics {
             if let Some(def) = self.types.generic_def(ty) {
-                let term = term::shape_generic_var(self.ccx, def);
+                let term = term::shape_generic_var(def);
                 term_types.entry(term.clone()).or_insert(ty);
                 return Some(term);
             }
@@ -90,27 +90,25 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
 
         let term = match &self.types[ty] {
             Type::Array { elem, len } => Some(term::shape_array(
-                self.ccx,
                 self.type_term(*elem, mode, term_types)?,
-                self.array_len_term(*len),
+                Self::array_len_term(*len),
             )),
-            Type::Infer => Some(term::shape_infer(self.ccx, ty)),
-            Type::Primitive(primitive) => Some(term::shape_primitive(self.ccx, *primitive)),
+            Type::Infer => Some(term::shape_infer(ty)),
+            Type::Primitive(primitive) => Some(term::shape_primitive(*primitive)),
             Type::Path(path) => self.path_term(path, mode, term_types),
             Type::Reference { elem, is_mut } => {
                 let elem = self.type_term(*elem, mode, term_types)?;
-                Some(term::shape_reference(self.ccx, elem, *is_mut))
+                Some(term::shape_reference(elem, *is_mut))
             }
-            Type::Slice { elem } => Some(term::shape_slice(
-                self.ccx,
-                self.type_term(*elem, mode, term_types)?,
-            )),
+            Type::Slice { elem } => {
+                Some(term::shape_slice(self.type_term(*elem, mode, term_types)?))
+            }
             Type::Tuple { elems } => {
                 let elems = elems
                     .iter()
                     .map(|elem| self.type_term(*elem, mode, term_types))
                     .collect::<Option<Vec<_>>>()?;
-                Some(term::shape_tuple(self.ccx, elems))
+                Some(term::shape_tuple(elems))
             }
         }?;
 
@@ -124,11 +122,11 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         &self,
         path: &PathType<'cx>,
         mode: TypeShapeMode,
-        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
-    ) -> Option<LogicTerm<'cx>> {
+        term_types: &mut Map<Term<'cx>, TypeId>,
+    ) -> Option<Term<'cx>> {
         let def = match &path.resolution {
             PathTypeResolution::GenericParam(def) if mode == TypeShapeMode::PreserveGenerics => {
-                return Some(term::shape_generic_param(self.ccx, *def));
+                return Some(term::shape_generic_param(*def));
             }
             PathTypeResolution::Nominal(def) => *def,
             PathTypeResolution::GenericParam(_)
@@ -143,15 +141,15 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
             .flat_map(|segment| &segment.args)
             .map(|arg| self.generic_arg_term(arg, mode, term_types))
             .collect::<Option<Vec<_>>>()?;
-        Some(term::shape_path(self.ccx, def, args))
+        Some(term::shape_path(def, args))
     }
 
     fn generic_arg_term(
         &self,
         arg: &GenericArg<'cx>,
         mode: TypeShapeMode,
-        term_types: &mut Map<LogicTerm<'cx>, TypeId>,
-    ) -> Option<LogicTerm<'cx>> {
+        term_types: &mut Map<Term<'cx>, TypeId>,
+    ) -> Option<Term<'cx>> {
         match arg {
             GenericArg::Type(ty) => self.type_term(*ty, mode, term_types),
             GenericArg::Const(arg) => self.const_arg_term(arg),
@@ -169,13 +167,13 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         }
     }
 
-    fn const_arg_term(&self, arg: &ConstArg<'cx>) -> Option<LogicTerm<'cx>> {
+    fn const_arg_term(&self, arg: &ConstArg<'cx>) -> Option<Term<'cx>> {
         match arg {
             ConstArg::Lit(Lit::Int(value)) => Some(term::shape_const_int(self.ccx, value.as_ref())),
             ConstArg::Lit(Lit::Float(value)) => {
                 Some(term::shape_const_float(self.ccx, value.as_ref()))
             }
-            ConstArg::Lit(Lit::Bool(value)) => Some(term::shape_const_bool(self.ccx, *value)),
+            ConstArg::Lit(Lit::Bool(value)) => Some(term::shape_const_bool(*value)),
             ConstArg::Expr(expr) => self
                 .const_facts
                 .const_expr_value(*expr)
@@ -188,19 +186,19 @@ impl<'a, 'cx> TypeShapeEncoder<'a, 'cx> {
         }
     }
 
-    fn const_value_term(&self, value: InferConstValue) -> LogicTerm<'cx> {
+    fn const_value_term(&self, value: InferConstValue) -> Term<'cx> {
         match value {
             InferConstValue::Int(value) => {
                 term::shape_const_int(self.ccx, &value.value.to_string())
             }
-            InferConstValue::Bool(value) => term::shape_const_bool(self.ccx, value),
+            InferConstValue::Bool(value) => term::shape_const_bool(value),
         }
     }
 
-    fn array_len_term(&self, len: ArrayLen) -> LogicTerm<'cx> {
+    fn array_len_term(len: ArrayLen) -> Term<'cx> {
         match len {
-            ArrayLen::Expr(expr) => term::shape_len_expr(self.ccx, expr),
-            ArrayLen::ConstUsize(value) => term::shape_len_const_usize(self.ccx, value),
+            ArrayLen::Expr(expr) => term::shape_len_expr(expr),
+            ArrayLen::ConstUsize(value) => term::shape_len_const_usize(value),
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Shared helpers for logic term handling.
 
-use super::{LogicAtom, LogicTerm};
+use super::{Atom, Term};
 
 /// Visits each left-side variable and the corresponding right-side term when the two terms are
 /// shape-compatible.
@@ -8,12 +8,12 @@ use super::{LogicAtom, LogicTerm};
 /// Returns `true` after visiting compatible terms, or `false` without calling `visit` when their
 /// shapes are incompatible.
 pub(crate) fn visit_left_var<'cx, 'right, F>(
-    left: &LogicTerm<'cx>,
-    right: &'right LogicTerm<'cx>,
+    left: &Term<'cx>,
+    right: &'right Term<'cx>,
     visit: &mut F,
 ) -> bool
 where
-    F: FnMut(LogicAtom<'cx>, &'right LogicTerm<'cx>),
+    F: FnMut(Atom<'cx>, &'right Term<'cx>),
 {
     if !left.is_shape_compatible_with(right) {
         return false;
@@ -23,11 +23,11 @@ where
 }
 
 fn visit_left_var_unchecked<'cx, 'right, F>(
-    left: &LogicTerm<'cx>,
-    right: &'right LogicTerm<'cx>,
+    left: &Term<'cx>,
+    right: &'right Term<'cx>,
     visit: &mut F,
 ) where
-    F: FnMut(LogicAtom<'cx>, &'right LogicTerm<'cx>),
+    F: FnMut(Atom<'cx>, &'right Term<'cx>),
 {
     if left.is_variable() {
         visit(left.functor, right);

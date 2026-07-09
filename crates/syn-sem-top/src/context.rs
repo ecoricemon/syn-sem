@@ -63,7 +63,7 @@ impl<'tcx> TopCx<'tcx> {
         let mut const_facts = InferConstFacts::default();
         for _ in 0..MAX_ANALYSIS_PHASE_ITERATIONS {
             let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-            let eval = EvalDb::analyze(&self.common, hir, names, &infer)?;
+            let eval = EvalDb::analyze(hir, names, &infer)?;
             let next_const_facts = self.infer_const_facts(hir, &eval);
             if next_const_facts == const_facts {
                 return Ok((infer, eval));
@@ -72,7 +72,7 @@ impl<'tcx> TopCx<'tcx> {
         }
 
         let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-        let eval = EvalDb::analyze(&self.common, hir, names, &infer)?;
+        let eval = EvalDb::analyze(hir, names, &infer)?;
         Ok((infer, eval))
     }
 

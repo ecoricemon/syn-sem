@@ -1,33 +1,101 @@
 //! Shared atom and identifier encoding helpers for `logic-eval` terms.
 
-use super::symbol;
-use crate::TypeId;
-use logic_eval::{Clause, Term};
-use syn_sem_common::{intern_prefixed_number, CommonCx, InternedStr};
+use super::symbol::{Ctor, Rel, Var};
+use crate::{PrimitiveType, TypeId};
+use syn_sem_common::InternedStr;
+use syn_sem_hir as hir;
 use syn_sem_name::DefId;
 
-// In examples below, `tyN` encodes `TypeId::new(N)`, `defN` encodes `DefId::new(N)`,
-// and `exprN` encodes `syn_sem_hir::ExprId::new(N)`.
+pub(crate) type Term<'cx> = logic_eval::Term<Atom<'cx>>;
+pub(crate) type Expr<'cx> = logic_eval::Expr<Atom<'cx>>;
+pub(crate) type Clause<'cx> = logic_eval::Clause<Atom<'cx>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Atom<'cx> {
+    Var(Var),
+    Rel(Rel),
+    Ctor(Ctor),
+    Ty(TypeId),
+    Def(DefId),
+    Expr(hir::ExprId),
+    Prim(PrimitiveType),
+    Text(InternedStr<'cx>),
+    Int(InternedStr<'cx>),
+    Float(InternedStr<'cx>),
+    Bool(bool),
+    Usize(usize),
+}
+
+impl logic_eval::Atom for Atom<'_> {
+    fn is_variable(&self) -> bool {
+        matches!(self, Self::Var(_))
+    }
+}
+
+impl From<Var> for Atom<'_> {
+    fn from(value: Var) -> Self {
+        Self::Var(value)
+    }
+}
+
+impl From<Rel> for Atom<'_> {
+    fn from(value: Rel) -> Self {
+        Self::Rel(value)
+    }
+}
+
+impl From<Ctor> for Atom<'_> {
+    fn from(value: Ctor) -> Self {
+        Self::Ctor(value)
+    }
+}
+
+impl From<TypeId> for Atom<'_> {
+    fn from(value: TypeId) -> Self {
+        Self::Ty(value)
+    }
+}
+
+impl From<DefId> for Atom<'_> {
+    fn from(value: DefId) -> Self {
+        Self::Def(value)
+    }
+}
+
+impl From<hir::ExprId> for Atom<'_> {
+    fn from(value: hir::ExprId) -> Self {
+        Self::Expr(value)
+    }
+}
+
+impl From<PrimitiveType> for Atom<'_> {
+    fn from(value: PrimitiveType) -> Self {
+        Self::Prim(value)
+    }
+}
+
+impl<'cx> From<InternedStr<'cx>> for Atom<'cx> {
+    fn from(value: InternedStr<'cx>) -> Self {
+        Self::Text(value)
+    }
+}
 
 /// * ty - Inference type id to encode as a logic atom
 ///
 /// # Examples
 ///
 /// * Input - `ty = TypeId::new(0)`
-/// * Output - `ty0`
-pub(crate) fn type_id<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicTerm<'cx> {
-    let functor = intern_prefixed_number(ccx, symbol::id::TYPE, ty.index());
-    atom(functor)
+/// * Output - `Atom::Ty(TypeId::new(0))`
+pub(crate) fn type_id(ty: TypeId) -> Term<'static> {
+    atom(ty)
 }
 
 /// Decodes an inference type id from a logic term.
-pub(crate) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId> {
-    let functor = term.functor.as_ref();
-    let index = functor.strip_prefix(symbol::id::TYPE)?.parse().ok()?;
-    if !term.args.is_empty() {
-        return None;
+pub(crate) fn type_id_from_term(term: &Term<'_>) -> Option<TypeId> {
+    match (term.functor, term.args.as_slice()) {
+        (Atom::Ty(ty), []) => Some(ty),
+        _ => None,
     }
-    Some(TypeId::new(index))
 }
 
 /// def-id atom.
@@ -37,20 +105,17 @@ pub(crate) fn type_id_from_term(term: &LogicTerm<'_>) -> Option<TypeId> {
 /// # Examples
 ///
 /// * Input - `id = DefId::new(2)`
-/// * Output - `def2`
-pub(crate) fn def_id<'cx>(ccx: &'cx CommonCx, id: DefId) -> LogicTerm<'cx> {
-    let functor = intern_prefixed_number(ccx, symbol::id::DEF, id.index());
-    atom(functor)
+/// * Output - `Atom::Def(DefId::new(2))`
+pub(crate) fn def_id<'cx>(id: DefId) -> Term<'cx> {
+    atom(id)
 }
 
 /// Decodes a name definition id from a logic term.
-pub(crate) fn def_id_from_term(term: &LogicTerm<'_>) -> Option<DefId> {
-    let functor = term.functor.as_ref();
-    let index = functor.strip_prefix(symbol::id::DEF)?.parse().ok()?;
-    if !term.args.is_empty() {
-        return None;
+pub(crate) fn def_id_from_term(term: &Term<'_>) -> Option<DefId> {
+    match (term.functor, term.args.as_slice()) {
+        (Atom::Def(def), []) => Some(def),
+        _ => None,
     }
-    Some(DefId::new(index))
 }
 
 /// expr-id atom.
@@ -60,37 +125,45 @@ pub(crate) fn def_id_from_term(term: &LogicTerm<'_>) -> Option<DefId> {
 /// # Examples
 ///
 /// * Input - `id = ExprId::new(1)`
-/// * Output - `expr1`
-pub(crate) fn expr_id<'cx>(ccx: &'cx CommonCx, id: syn_sem_hir::ExprId) -> LogicTerm<'cx> {
-    let functor = intern_prefixed_number(ccx, symbol::id::EXPR, id.index());
-    atom(functor)
+/// * Output - `Atom::Expr(ExprId::new(1))`
+pub(crate) fn expr_id(id: hir::ExprId) -> Term<'static> {
+    atom(id)
 }
 
 /// Creates a zero-argument logic atom.
-pub(crate) fn atom<'cx>(functor: LogicAtom<'cx>) -> LogicTerm<'cx> {
+pub(crate) fn atom<'cx>(functor: impl Into<Atom<'cx>>) -> Term<'cx> {
     term(functor, Vec::new())
 }
 
 /// Creates a logic term with a functor and arguments.
-pub(crate) fn term<'cx>(functor: LogicAtom<'cx>, args: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
-    Term { functor, args }
-}
-
-pub(crate) trait CreateTerm<Func> {
-    fn atom(&self, functor: Func) -> LogicTerm<'_>;
-    fn term<'a>(&'a self, functor: Func, args: Vec<LogicTerm<'a>>) -> LogicTerm<'a>;
-}
-
-impl CreateTerm<&str> for CommonCx {
-    fn atom(&self, functor: &str) -> LogicTerm<'_> {
-        atom(self.intern(functor))
-    }
-
-    fn term<'a>(&'a self, functor: &str, args: Vec<LogicTerm<'a>>) -> LogicTerm<'a> {
-        term(self.intern(functor), args)
+pub(crate) fn term<'cx>(functor: impl Into<Atom<'cx>>, args: Vec<Term<'cx>>) -> Term<'cx> {
+    Term {
+        functor: functor.into(),
+        args,
     }
 }
 
-pub(crate) type LogicAtom<'cx> = InternedStr<'cx>;
-pub(crate) type LogicTerm<'cx> = Term<LogicAtom<'cx>>;
-pub(crate) type LogicClause<'cx> = Clause<LogicAtom<'cx>>;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use logic_eval::Atom as _;
+
+    #[test]
+    fn classifies_typed_variables_without_name_prefixes() {
+        assert!(Atom::Var(Var::Trait).is_variable());
+        assert!(Atom::Var(Var::GenericParam(DefId::new(0))).is_variable());
+        assert!(!Atom::Ty(TypeId::new(0)).is_variable());
+        assert!(!Atom::Rel(Rel::SameType).is_variable());
+    }
+
+    #[test]
+    fn decodes_ids_from_typed_atoms() {
+        let ty = TypeId::new(3);
+        let def = DefId::new(5);
+
+        assert_eq!(type_id_from_term(&atom(ty)), Some(ty));
+        assert_eq!(def_id_from_term(&atom(def)), Some(def));
+        assert_eq!(type_id_from_term(&atom(def)), None);
+        assert_eq!(def_id_from_term(&atom(ty)), None);
+    }
+}

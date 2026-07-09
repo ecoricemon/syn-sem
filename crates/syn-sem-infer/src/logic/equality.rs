@@ -1,10 +1,9 @@
 //! Shared equality rules and predicates for inference logic.
 
-use super::atom::{CreateTerm, LogicClause, LogicTerm};
-use logic_eval::{Clause, Expr};
-use syn_sem_common::CommonCx;
-
-use super::symbol::{pred, var};
+use super::{
+    atom::{atom, term, Clause, Expr, Term},
+    symbol::{Rel, Var},
+};
 
 /// Configures which closure rules are added over `type_equal` facts.
 ///
@@ -27,75 +26,46 @@ pub(crate) struct SameTypeRules {
 /// * `#same_type($Left, $Right) :- #type_equal($Left, $Right).`
 /// * `#same_type($Type, $Type).`
 /// * `#same_type($Left, $Right) :- #type_equal($Right, $Left).`
-pub(crate) fn same_type_rules<'cx>(
-    ccx: &'cx CommonCx,
-    rules: SameTypeRules,
-) -> Vec<LogicClause<'cx>> {
-    let mut clauses = vec![Clause {
-        head: same_type(ccx, ccx.atom(var::LEFT), ccx.atom(var::RIGHT)),
-        body: Some(Expr::Term(type_equal(
-            ccx,
-            ccx.atom(var::LEFT),
-            ccx.atom(var::RIGHT),
-        ))),
-    }];
+pub(crate) fn same_type_rules(rules: SameTypeRules) -> Vec<Clause<'static>> {
+    let mut clauses = vec![Clause::rule(
+        same_type(atom(Var::Left), atom(Var::Right)),
+        Expr::Term(type_equal(atom(Var::Left), atom(Var::Right))),
+    )];
 
     if rules.reflexive {
-        clauses.push(Clause {
-            head: same_type(ccx, ccx.atom(var::TYPE), ccx.atom(var::TYPE)),
-            body: None,
-        });
+        clauses.push(Clause::fact(same_type(atom(Var::Type), atom(Var::Type))));
     }
 
     if rules.reverse {
-        clauses.push(Clause {
-            head: same_type(ccx, ccx.atom(var::LEFT), ccx.atom(var::RIGHT)),
-            body: Some(Expr::Term(type_equal(
-                ccx,
-                ccx.atom(var::RIGHT),
-                ccx.atom(var::LEFT),
-            ))),
-        });
+        clauses.push(Clause::rule(
+            same_type(atom(Var::Left), atom(Var::Right)),
+            Expr::Term(type_equal(atom(Var::Right), atom(Var::Left))),
+        ));
     }
 
     if rules.transitive {
-        clauses.push(Clause {
-            head: same_type(ccx, ccx.atom(var::LEFT), ccx.atom(var::TYPE)),
+        clauses.push(Clause::rule(
+            same_type(atom(Var::Left), atom(Var::Type)),
             // Keep the recursive terms in this order for `logic-eval`'s query-time tabling.
-            body: Some(Expr::And(vec![
-                Expr::Term(same_type(ccx, ccx.atom(var::ARG), ccx.atom(var::TYPE))),
-                Expr::Term(same_type(ccx, ccx.atom(var::LEFT), ccx.atom(var::ARG))),
-            ])),
-        });
+            Expr::And(vec![
+                Expr::Term(same_type(atom(Var::Arg), atom(Var::Type))),
+                Expr::Term(same_type(atom(Var::Left), atom(Var::Arg))),
+            ]),
+        ));
     }
 
     clauses
 }
 
 /// Creates a direct equality fact between two logic terms.
-pub(crate) fn type_equal_clause<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicClause<'cx> {
-    Clause {
-        head: type_equal(ccx, left, right),
-        body: None,
-    }
+pub(crate) fn type_equal_clause<'cx>(left: Term<'cx>, right: Term<'cx>) -> Clause<'cx> {
+    Clause::fact(type_equal(left, right))
 }
 
-pub(crate) fn same_type<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(pred::SAME_TYPE, vec![left, right])
+pub(crate) fn same_type<'cx>(left: Term<'cx>, right: Term<'cx>) -> Term<'cx> {
+    term(Rel::SameType, vec![left, right])
 }
 
-fn type_equal<'cx>(
-    ccx: &'cx CommonCx,
-    left: LogicTerm<'cx>,
-    right: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(pred::TYPE_EQUAL, vec![left, right])
+fn type_equal<'cx>(left: Term<'cx>, right: Term<'cx>) -> Term<'cx> {
+    term(Rel::TypeEqual, vec![left, right])
 }

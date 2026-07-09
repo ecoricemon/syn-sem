@@ -1,72 +1,81 @@
-//! Centralized logic symbol names used by solver terms.
+//! Centralized logic symbols used by solver terms.
 
-/// Function symbols used to build structured data terms inside predicate arguments.
-pub(crate) mod func {
-    pub(crate) const ARG: &str = "#arg";
-    pub(crate) const ARRAY: &str = "#array";
-    pub(crate) const ASSOC_CONST_ARG: &str = "#assoc_const_arg";
-    pub(crate) const ASSOC_TYPE_ARG: &str = "#assoc_type_arg";
-    pub(crate) const CONST_BOOL: &str = "#const_bool";
-    pub(crate) const CONST_FLOAT: &str = "#const_float";
-    pub(crate) const CONST_INT: &str = "#const_int";
-    pub(crate) const CONST_USIZE: &str = "#const_usize";
-    pub(crate) const DEF: &str = "#def";
-    pub(crate) const GENERIC_PARAM: &str = "#generic_param";
-    pub(crate) const INFER: &str = "#infer";
-    pub(crate) const LEN_CONST: &str = "#len_const";
-    pub(crate) const LEN_EXPR: &str = "#len_expr";
-    pub(crate) const MUT: &str = "#mut";
-    pub(crate) const NAME: &str = "#name";
-    pub(crate) const PATH: &str = "#path";
-    pub(crate) const PRIMITIVE: &str = "#primitive";
-    pub(crate) const PRESERVE_GENERICS: &str = "#preserve_generics";
-    pub(crate) const REF: &str = "#ref";
-    pub(crate) const SLICE: &str = "#slice";
-    pub(crate) const TUPLE: &str = "#tuple";
-    pub(crate) const VARIABLE_GENERICS: &str = "#variable_generics";
+use syn_sem_name::DefId;
+
+/// Relation symbols used as the top-level predicate of facts, rules, and queries.
+///
+/// A `Rel` names rows in the logic database, such as `TypeShape` or `ProjectionMatch`. Structured
+/// values inside relation arguments use [`Ctor`] instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Rel {
+    ExplicitProjectionObligation,
+    ImplAssocType,
+    ImplAssocValueWithoutBindings,
+    ImplSelfMatch,
+    ImplSelfMatchCandidate,
+    ProjectionCandidate,
+    ProjectionMatch,
+    ProjectionNormalizesTo,
+    ProjectionObligation,
+    SameType,
+    TraitBound,
+    TypeBinding,
+    TypeEqual,
+    TypeShape,
+    TypeSubstitution,
 }
 
-/// Atom prefixes used to encode repo ids as zero-argument logic terms.
-pub(crate) mod id {
-    pub(crate) const DEF: &str = "def";
-    pub(crate) const EXPR: &str = "expr";
-    pub(crate) const TYPE: &str = "ty";
+/// Constructor symbols used to build structured terms inside relation arguments.
+///
+/// A `Ctor` is not a database relation by itself. It is the lower-level functor for data terms such
+/// as type shapes, const values, modes, and argument lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Ctor {
+    Arg,
+    Array,
+    AssocConstArg,
+    AssocTypeArg,
+    ConstBool,
+    ConstFloat,
+    ConstInt,
+    ConstUsize,
+    Def,
+    GenericParam,
+    Infer,
+    LenConst,
+    LenExpr,
+    Mut,
+    Name,
+    Path,
+    Primitive,
+    PreserveGenerics,
+    Ref,
+    Slice,
+    Tuple,
+    VariableGenerics,
 }
 
-/// Predicate symbols used as logic database relations and queries.
-pub(crate) mod pred {
-    pub(crate) const EXPLICIT_PROJECTION_OBLIGATION: &str = "#explicit_projection_obligation";
-    pub(crate) const IMPL_ASSOC_TYPE: &str = "#impl_assoc_type";
-    pub(crate) const IMPL_ASSOC_VALUE_WITHOUT_BINDINGS: &str = "#impl_assoc_value_without_bindings";
-    pub(crate) const IMPL_SELF_MATCH: &str = "#impl_self_match";
-    pub(crate) const IMPL_SELF_MATCH_CANDIDATE: &str = "#impl_self_match_candidate";
-    pub(crate) const PROJECTION_CANDIDATE: &str = "#projection_candidate";
-    pub(crate) const PROJECTION_MATCH: &str = "#projection_match";
-    pub(crate) const PROJECTION_NORMALIZES_TO: &str = "#projection_normalizes_to";
-    pub(crate) const PROJECTION_OBLIGATION: &str = "#projection_obligation";
-    pub(crate) const SAME_TYPE: &str = "#same_type";
-    pub(crate) const TRAIT_BOUND: &str = "#trait_bound";
-    pub(crate) const TYPE_BINDING: &str = "#type_binding";
-    pub(crate) const TYPE_EQUAL: &str = "#type_equal";
-    pub(crate) const TYPE_SHAPE: &str = "#type_shape";
-    pub(crate) const TYPE_SUBSTITUTION: &str = "#type_substitution";
-}
-
-/// Variable symbols used in logic rules and open queries.
-pub(crate) mod var {
-    pub(crate) const ARG: &str = "$Arg";
-    pub(crate) const ASSOC: &str = "$Assoc";
-    pub(crate) const GENERIC: &str = "$Generic";
-    pub(crate) const IMPL_SELF: &str = "$ImplSelf";
-    pub(crate) const IMPL_TRAIT: &str = "$ImplTrait";
-    pub(crate) const LEFT: &str = "$Left";
-    pub(crate) const PROJECTION: &str = "$Projection";
-    pub(crate) const RIGHT: &str = "$Right";
-    pub(crate) const SELF: &str = "$Self";
-    pub(crate) const SUBJECT: &str = "$Subject";
-    pub(crate) const SUBSTITUTED: &str = "$Substituted";
-    pub(crate) const TRAIT: &str = "$Trait";
-    pub(crate) const TYPE: &str = "$Type";
-    pub(crate) const VALUE: &str = "$Value";
-    pub(crate) const SHAPE: &str = "$Shape";
+/// Logic variables used by rules and open queries.
+///
+/// `Var` atoms are the only symbols treated as unification variables by `logic-eval`.
+/// `GenericParam` represents impl-self generic parameters that must behave as variables while
+/// matching structural type shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Var {
+    Arg,
+    Assoc,
+    GenericParam(DefId),
+    Generic,
+    ImplSelf,
+    ImplTrait,
+    Left,
+    Projection,
+    Right,
+    SelfTy,
+    Subject,
+    Substituted,
+    Trait,
+    Type,
+    Value,
+    Shape,
 }

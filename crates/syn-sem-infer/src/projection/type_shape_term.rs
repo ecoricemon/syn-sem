@@ -3,14 +3,14 @@
 use crate::{
     logic::{
         atom, def_id, expr_id,
-        symbol::{func, pred},
-        type_id, CreateTerm, LogicClause, LogicTerm,
+        symbol::{Ctor, Rel, Var},
+        term, type_id, Atom, Clause, Term,
     },
     PrimitiveType, TypeId,
 };
-use logic_eval::Clause;
-use syn_sem_common::{intern_prefixed_number, CommonCx};
+use syn_sem_common::CommonCx;
 use syn_sem_name::DefId;
+use syn_sem_hir as hir;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeShapeMode {
@@ -26,15 +26,11 @@ pub(crate) enum TypeShapeMode {
 ///
 /// * Output - `#type_shape(ty0, #variable_generics, #path(#def(def1), #arg($G2))).`
 pub(crate) fn type_shape_clause<'cx>(
-    ccx: &'cx CommonCx,
     ty: TypeId,
     mode: TypeShapeMode,
-    shape: LogicTerm<'cx>,
-) -> LogicClause<'cx> {
-    Clause {
-        head: type_shape(ccx, type_id(ccx, ty), type_shape_mode(ccx, mode), shape),
-        body: None,
-    }
+    shape: Term<'cx>,
+) -> Clause<'cx> {
+    Clause::fact(type_shape(type_id(ty), type_shape_mode(mode), shape))
 }
 
 /// * ty - Type id being described
@@ -44,128 +40,105 @@ pub(crate) fn type_shape_clause<'cx>(
 /// # Examples
 ///
 /// * Output - `#type_shape(ty0, #preserve_generics, #primitive(u32))`
-pub(crate) fn type_shape<'cx>(
-    ccx: &'cx CommonCx,
-    ty: LogicTerm<'cx>,
-    mode: LogicTerm<'cx>,
-    shape: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(pred::TYPE_SHAPE, vec![ty, mode, shape])
+pub(crate) fn type_shape<'cx>(ty: Term<'cx>, mode: Term<'cx>, shape: Term<'cx>) -> Term<'cx> {
+    term(Rel::TypeShape, vec![ty, mode, shape])
 }
 
-pub(crate) fn type_shape_mode<'cx>(ccx: &'cx CommonCx, mode: TypeShapeMode) -> LogicTerm<'cx> {
+pub(crate) fn type_shape_mode(mode: TypeShapeMode) -> Term<'static> {
     let functor = match mode {
-        TypeShapeMode::PreserveGenerics => func::PRESERVE_GENERICS,
-        TypeShapeMode::VariableGenerics => func::VARIABLE_GENERICS,
+        TypeShapeMode::PreserveGenerics => Ctor::PreserveGenerics,
+        TypeShapeMode::VariableGenerics => Ctor::VariableGenerics,
     };
-    ccx.atom(functor)
+    atom(functor)
 }
 
-pub(crate) fn shape_array<'cx>(
-    ccx: &'cx CommonCx,
-    elem: LogicTerm<'cx>,
-    len: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(func::ARRAY, vec![elem, len])
+pub(crate) fn shape_array<'cx>(elem: Term<'cx>, len: Term<'cx>) -> Term<'cx> {
+    term(Ctor::Array, vec![elem, len])
 }
 
-pub(crate) fn shape_infer<'cx>(ccx: &'cx CommonCx, ty: TypeId) -> LogicTerm<'cx> {
-    ccx.term(func::INFER, vec![type_id(ccx, ty)])
+pub(crate) fn shape_infer(ty: TypeId) -> Term<'static> {
+    term(Ctor::Infer, vec![type_id(ty)])
 }
 
-pub(crate) fn shape_primitive<'cx>(ccx: &'cx CommonCx, primitive: PrimitiveType) -> LogicTerm<'cx> {
-    ccx.term(func::PRIMITIVE, vec![ccx.atom(primitive.name())])
+pub(crate) fn shape_primitive(primitive: PrimitiveType) -> Term<'static> {
+    term(Ctor::Primitive, vec![atom(primitive)])
 }
 
-pub(crate) fn shape_path<'cx>(
-    ccx: &'cx CommonCx,
-    def: DefId,
-    args: Vec<LogicTerm<'cx>>,
-) -> LogicTerm<'cx> {
-    ccx.term(func::PATH, vec![shape_def(ccx, def), shape_arg(ccx, args)])
+pub(crate) fn shape_path<'cx>(def: DefId, args: Vec<Term<'cx>>) -> Term<'cx> {
+    term(Ctor::Path, vec![shape_def(def), shape_arg(args)])
 }
 
-pub(crate) fn shape_generic_param<'cx>(ccx: &'cx CommonCx, def: DefId) -> LogicTerm<'cx> {
-    ccx.term(func::GENERIC_PARAM, vec![shape_def(ccx, def)])
+pub(crate) fn shape_generic_param(def: DefId) -> Term<'static> {
+    term(Ctor::GenericParam, vec![shape_def(def)])
 }
 
-pub(crate) fn shape_reference<'cx>(
-    ccx: &'cx CommonCx,
-    elem: LogicTerm<'cx>,
-    is_mut: bool,
-) -> LogicTerm<'cx> {
+pub(crate) fn shape_reference<'cx>(elem: Term<'cx>, is_mut: bool) -> Term<'cx> {
     if is_mut {
-        ccx.term(func::REF, vec![ccx.term(func::MUT, vec![elem])])
+        term(Ctor::Ref, vec![term(Ctor::Mut, vec![elem])])
     } else {
-        ccx.term(func::REF, vec![elem])
+        term(Ctor::Ref, vec![elem])
     }
 }
 
-pub(crate) fn shape_slice<'cx>(ccx: &'cx CommonCx, elem: LogicTerm<'cx>) -> LogicTerm<'cx> {
-    ccx.term(func::SLICE, vec![elem])
+pub(crate) fn shape_slice<'cx>(elem: Term<'cx>) -> Term<'cx> {
+    term(Ctor::Slice, vec![elem])
 }
 
-pub(crate) fn shape_tuple<'cx>(ccx: &'cx CommonCx, elems: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
-    ccx.term(func::TUPLE, elems)
+pub(crate) fn shape_tuple<'cx>(elems: Vec<Term<'cx>>) -> Term<'cx> {
+    term(Ctor::Tuple, elems)
 }
 
 pub(crate) fn shape_assoc_type_arg<'cx>(
     ccx: &'cx CommonCx,
     name: &str,
-    ty: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(func::ASSOC_TYPE_ARG, vec![shape_name(ccx, name), ty])
+    ty: Term<'cx>,
+) -> Term<'cx> {
+    term(Ctor::AssocTypeArg, vec![shape_name(ccx, name), ty])
 }
 
 pub(crate) fn shape_assoc_const_arg<'cx>(
     ccx: &'cx CommonCx,
     name: &str,
-    value: LogicTerm<'cx>,
-) -> LogicTerm<'cx> {
-    ccx.term(func::ASSOC_CONST_ARG, vec![shape_name(ccx, name), value])
+    value: Term<'cx>,
+) -> Term<'cx> {
+    term(Ctor::AssocConstArg, vec![shape_name(ccx, name), value])
 }
 
-pub(crate) fn shape_const_int<'cx>(ccx: &'cx CommonCx, value: &str) -> LogicTerm<'cx> {
-    ccx.term(func::CONST_INT, vec![ccx.atom(value)])
+pub(crate) fn shape_const_int<'cx>(ccx: &'cx CommonCx, value: &str) -> Term<'cx> {
+    term(Ctor::ConstInt, vec![atom(Atom::Int(ccx.intern(value)))])
 }
 
-pub(crate) fn shape_const_float<'cx>(ccx: &'cx CommonCx, value: &str) -> LogicTerm<'cx> {
-    ccx.term(func::CONST_FLOAT, vec![ccx.atom(value)])
+pub(crate) fn shape_const_float<'cx>(ccx: &'cx CommonCx, value: &str) -> Term<'cx> {
+    term(Ctor::ConstFloat, vec![atom(Atom::Float(ccx.intern(value)))])
 }
 
-pub(crate) fn shape_const_bool<'cx>(ccx: &'cx CommonCx, value: bool) -> LogicTerm<'cx> {
-    ccx.term(
-        func::CONST_BOOL,
-        vec![ccx.atom(if value { "true" } else { "false" })],
+pub(crate) fn shape_const_bool(value: bool) -> Term<'static> {
+    term(Ctor::ConstBool, vec![atom(Atom::Bool(value))])
+}
+
+pub(crate) fn shape_len_expr(expr: hir::ExprId) -> Term<'static> {
+    term(Ctor::LenExpr, vec![expr_id(expr)])
+}
+
+pub(crate) fn shape_len_const_usize(value: usize) -> Term<'static> {
+    term(
+        Ctor::LenConst,
+        vec![term(Ctor::ConstUsize, vec![atom(Atom::Usize(value))])],
     )
 }
 
-pub(crate) fn shape_len_expr<'cx>(ccx: &'cx CommonCx, expr: syn_sem_hir::ExprId) -> LogicTerm<'cx> {
-    ccx.term(func::LEN_EXPR, vec![expr_id(ccx, expr)])
+pub(crate) fn shape_name<'cx>(ccx: &'cx CommonCx, name: &str) -> Term<'cx> {
+    term(Ctor::Name, vec![atom(Atom::Text(ccx.intern(name)))])
 }
 
-pub(crate) fn shape_len_const_usize<'cx>(ccx: &'cx CommonCx, value: usize) -> LogicTerm<'cx> {
-    ccx.term(
-        func::LEN_CONST,
-        vec![ccx.term(
-            func::CONST_USIZE,
-            vec![atom(intern_prefixed_number(ccx, "usize", value))],
-        )],
-    )
+pub(crate) fn shape_generic_var(def: DefId) -> Term<'static> {
+    atom(Var::GenericParam(def))
 }
 
-pub(crate) fn shape_name<'cx>(ccx: &'cx CommonCx, name: &str) -> LogicTerm<'cx> {
-    ccx.term(func::NAME, vec![ccx.atom(name)])
+fn shape_def(def: DefId) -> Term<'static> {
+    term(Ctor::Def, vec![def_id(def)])
 }
 
-pub(crate) fn shape_generic_var<'cx>(ccx: &'cx CommonCx, def: DefId) -> LogicTerm<'cx> {
-    atom(intern_prefixed_number(ccx, "$G", def.index()))
-}
-
-fn shape_def<'cx>(ccx: &'cx CommonCx, def: DefId) -> LogicTerm<'cx> {
-    ccx.term(func::DEF, vec![def_id(ccx, def)])
-}
-
-fn shape_arg<'cx>(ccx: &'cx CommonCx, args: Vec<LogicTerm<'cx>>) -> LogicTerm<'cx> {
-    ccx.term(func::ARG, args)
+fn shape_arg<'cx>(args: Vec<Term<'cx>>) -> Term<'cx> {
+    term(Ctor::Arg, args)
 }

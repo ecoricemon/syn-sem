@@ -1,5 +1,5 @@
 use crate::{ConstInt, ConstValue};
-use syn_sem_common::{CommonCx, Map, MaybeResult, Result};
+use syn_sem_common::{Map, MaybeResult, Result};
 use syn_sem_hir as hir;
 use syn_sem_infer::{InferDb, PrimitiveType, Type};
 use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult};
@@ -20,7 +20,6 @@ impl EvalDb {
     /// extend this entry point with path evaluation, typed arithmetic, const blocks, and
     /// fixed-point refinement.
     pub fn analyze<'cx>(
-        _ccx: &'cx CommonCx,
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
