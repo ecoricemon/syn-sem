@@ -9,8 +9,8 @@ use crate::{
     PrimitiveType, TypeId,
 };
 use syn_sem_common::CommonCx;
-use syn_sem_name::DefId;
 use syn_sem_hir as hir;
+use syn_sem_name::DefId;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeShapeMode {
