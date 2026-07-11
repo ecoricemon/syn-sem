@@ -19,5 +19,6 @@ pub(crate) use db::{
     ImplSelfGenericBinding, ImplSelfMatch, ProjectionDb, ProjectionMatch, ProjectionNormalization,
     ProjectionObligation, ProjectionTypeSubstitution,
 };
+pub(crate) use logic::ProjectionLogic;
 pub(crate) use normalize::ProjectionNormalizer;
 pub(crate) use type_shape::{TypeShape, TypeShapeEncoder};

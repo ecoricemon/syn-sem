@@ -1,13 +1,13 @@
 //! Impl associated-type collection for inference.
 
-use crate::{InferTypes, TypeId, TypeLowerer};
+use crate::{InferTypes, TypeId};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefId, NameDb, Namespace, ResolveResult};
 
 pub(crate) struct ImplAssocTypeCollector<'a, 'cx> {
     hir: &'a hir::Hir<'cx>,
     names: &'a NameDb<'cx>,
-    ty_lowerer: TypeLowerer<'a, 'cx>,
+    types: &'a InferTypes<'cx>,
     impl_assoc_types: Vec<ImplAssocType>,
 }
 
@@ -15,12 +15,12 @@ impl<'a, 'cx> ImplAssocTypeCollector<'a, 'cx> {
     pub(crate) fn collect(
         hir: &'a hir::Hir<'cx>,
         names: &'a NameDb<'cx>,
-        types: &'a mut InferTypes<'cx>,
+        types: &'a InferTypes<'cx>,
     ) -> Vec<ImplAssocType> {
         Self {
             hir,
             names,
-            ty_lowerer: TypeLowerer::new(hir, names, types),
+            types,
             impl_assoc_types: Vec::new(),
         }
         .collect_inner()
@@ -40,11 +40,15 @@ impl<'a, 'cx> ImplAssocTypeCollector<'a, 'cx> {
             let Some(trait_) = trait_ else {
                 continue;
             };
-            let impl_self = self.ty_lowerer.lower_hir_type(*self_);
+            let impl_self = self
+                .types
+                .type_for_hir_type(*self_)
+                .expect("impl self type should be lowered before fact collection");
             let trait_ty_id = self
-                .ty_lowerer
-                .lower_plain_path_as_type(trait_, item.parent_scope);
-            let Some(trait_def) = self.ty_lowerer.trait_def_for_type(trait_ty_id) else {
+                .types
+                .type_for_hir_type(*trait_)
+                .expect("impl trait type should be lowered before fact collection");
+            let Some(trait_def) = self.types.nominal_def(trait_ty_id) else {
                 continue;
             };
             for assoc_item in items.iter().map(|id| &self.hir[*id]) {
@@ -57,7 +61,10 @@ impl<'a, 'cx> ImplAssocTypeCollector<'a, 'cx> {
                 else {
                     continue;
                 };
-                let value_ty = self.ty_lowerer.lower_hir_type(ty);
+                let value_ty = self
+                    .types
+                    .type_for_hir_type(ty)
+                    .expect("impl associated type value should be lowered before fact collection");
                 self.impl_assoc_types.push(ImplAssocType {
                     impl_self,
                     trait_: trait_ty_id,

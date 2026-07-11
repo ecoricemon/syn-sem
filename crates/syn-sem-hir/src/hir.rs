@@ -294,8 +294,8 @@ pub enum ItemKind<'cx> {
     Impl {
         /// Source generics.
         generics: Generics<'cx>,
-        /// Implemented trait path, if this is a trait impl.
-        trait_: Option<Vec<PathSegment<'cx>>>,
+        /// Implemented trait type, if this is a trait impl.
+        trait_: Option<TypeId>,
         /// Implementing self type.
         self_: TypeId,
         /// Represented associated items.
@@ -1162,6 +1162,8 @@ pub enum TypeSource {
     },
     /// Impl self type, for example `T` in `impl T {}`.
     ImplSelf,
+    /// Impl trait type, for example `Trait<T>` in `impl Trait<T> for S {}`.
+    ImplTrait,
     /// Struct field type, for example `T` in `struct S { field: T }`.
     StructField,
     /// Enum variant field type, for example `T` in `enum E { V(T) }`.

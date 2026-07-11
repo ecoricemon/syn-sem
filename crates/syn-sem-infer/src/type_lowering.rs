@@ -20,6 +20,15 @@ impl TypeLowering {
         types: &mut InferTypes<'cx>,
     ) {
         let mut ty_lowerer = TypeLowerer::new(hir, names, types);
+        // Impl-trait types are structurally interned. Lower them while the arena is still small;
+        // their nested type occurrences are lowered recursively before the remaining pass.
+        for ty in hir
+            .types()
+            .iter()
+            .filter(|ty| ty.source == hir::TypeSource::ImplTrait)
+        {
+            ty_lowerer.lower_hir_type(ty.id);
+        }
         for ty in hir.types() {
             ty_lowerer.lower_hir_type(ty.id);
         }
@@ -46,9 +55,14 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
             return ty;
         }
 
-        // HIR types always lower to fresh infer types.
         let ty = self.lower_type(hir_ty_id, &self.hir[hir_ty_id].kind);
-        let ty_id = self.types.insert_fresh_type(ty);
+        // Source type occurrences stay distinct, while the synthetic impl-trait occurrence keeps
+        // the structural sharing previously provided by `lower_plain_path_as_type`.
+        let ty_id = if self.hir[hir_ty_id].source == hir::TypeSource::ImplTrait {
+            self.types.intern_type(ty)
+        } else {
+            self.types.insert_fresh_type(ty)
+        };
         self.types.bind_hir_type(hir_ty_id, ty_id);
         ty_id
     }

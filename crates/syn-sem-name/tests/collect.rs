@@ -1,4 +1,4 @@
-use syn_sem_ast as ast;
+use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
     collect::NameCollector, AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name,
@@ -18,7 +18,8 @@ impl TestCx {
     ) -> ast::SourceInput<'cx> {
         let file_path = self.common.intern(file_path);
         let source_text = self.common.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         ast::SourceInput {
             file_path,
             file: scx.lookup_source(file_path).unwrap().ast(),

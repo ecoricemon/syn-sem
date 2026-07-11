@@ -9,7 +9,7 @@ use syn_sem_hir as hir;
 use syn_sem_name::DefId;
 
 /// Type shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type<'cx> {
     /// Fixed-length array type.
     Array {
@@ -145,7 +145,7 @@ impl PrimitiveType {
 }
 
 /// Path type used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PathType<'cx> {
     /// Qualified self type, when the source used qualified path syntax.
     pub qself: Option<QSelf>,
@@ -156,7 +156,7 @@ pub struct PathType<'cx> {
 }
 
 /// Qualified self type for an inference path type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QSelf {
     /// Self type written inside `<...>`.
     pub self_: TypeId,
@@ -169,7 +169,7 @@ pub struct QSelf {
 /// This records the best current classification without pretending that name lookup is full Rust
 /// type resolution. Solver-backed generic substitution, qualified paths, and projection
 /// normalization can refine this later.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PathTypeResolution {
     /// Path names a nominal type definition.
     Nominal(DefId),
@@ -184,7 +184,7 @@ pub enum PathTypeResolution {
 }
 
 /// Associated type projection known to path type resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProjectionType {
     /// Associated type definition selected for the projection.
     pub assoc: DefId,
@@ -198,14 +198,14 @@ pub struct ProjectionType {
 ///
 /// Qualified self metadata belongs to [`PathType`]; this payload only stores the source-order
 /// segments shared by qualified and unqualified type paths.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Path<'cx> {
     /// Path segments in source order.
     pub segments: Vec<PathSegment<'cx>>,
 }
 
 /// One type path segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PathSegment<'cx> {
     /// Segment name.
     pub name: syn_sem_name::Name<'cx>,
@@ -214,7 +214,7 @@ pub struct PathSegment<'cx> {
 }
 
 /// Generic argument shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GenericArg<'cx> {
     /// Type argument.
     Type(TypeId),
@@ -246,7 +246,7 @@ pub enum GenericArg<'cx> {
 }
 
 /// Array length expression shape used by inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayLen {
     /// Length is still a HIR expression.
     Expr(hir::ExprId),
@@ -263,7 +263,7 @@ impl ArrayLen {
 }
 
 /// Const argument shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstArg<'cx> {
     /// Literal const argument.
     Lit(Lit<'cx>),
@@ -279,7 +279,7 @@ pub enum ConstArg<'cx> {
 }
 
 /// Literal shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Lit<'cx> {
     /// Integer literal stored as normalized base-10 digits.
     Int(syn_sem_common::InternedStr<'cx>),
@@ -300,7 +300,7 @@ impl<'cx> Lit<'cx> {
 }
 
 /// Type parameter bound shape used by inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
     Trait(Path<'cx>),

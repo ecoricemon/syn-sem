@@ -5,7 +5,7 @@ use crate::{
     logic::{
         atom, def_id, same_type,
         symbol::{Rel, Var},
-        term, type_equal_clause, type_id, Clause, Expr, SameTypeRules, Term,
+        term, type_id, Clause, Expr, Term,
     },
     ImplAssocType, ImplSelfGenericBinding, ImplSelfMatch, ProjectionMatch, ProjectionObligation,
     ProjectionTypeSubstitution, TraitBound, TypeId,
@@ -13,14 +13,6 @@ use crate::{
 use syn_sem_name::DefId;
 
 // In examples below, `tyN` encodes `TypeId::new(N)` and `defN` encodes `DefId::new(N)`.
-
-/// Projection needs reflexive and reverse type-shape equality, and does not need transitive
-/// closure.
-pub(crate) const PROJECTION_SAME_TYPE_RULES: SameTypeRules = SameTypeRules {
-    reflexive: true,
-    reverse: true,
-    transitive: false,
-};
 
 /// * For `<T as Trait>::Assoc`,
 /// * Output clause 0 - `#projection_candidate($Projection, $Self, $Assoc, $Trait) :-
@@ -377,18 +369,6 @@ pub(crate) fn projection_match_clause(match_: ProjectionMatch) -> Clause<'static
         def_id(match_.assoc),
         type_id(match_.trait_),
     ))
-}
-
-/// * left - One lowered inference type id
-/// * right - Another lowered inference type id with the same stored [`crate::Type`] shape
-///
-/// # Examples
-///
-/// * Code - two lowered ids store the same type shape
-/// * Input - `left = ty0`, `right = ty1`
-/// * Output - `#type_equal(ty0, ty1).`
-pub(crate) fn projection_type_equal_clause(left: TypeId, right: TypeId) -> Clause<'static> {
-    type_equal_clause(type_id(left), type_id(right))
 }
 
 /// * projection - Type occurrence for the whole projection, such as `<T>::Assoc`

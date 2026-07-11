@@ -1,7 +1,7 @@
 //! Shared atom and identifier encoding helpers for `logic-eval` terms.
 
 use super::symbol::{Ctor, Rel, Var};
-use crate::{PrimitiveType, TypeId};
+use crate::{PrimitiveType, TypeClassId, TypeId};
 use syn_sem_common::InternedStr;
 use syn_sem_hir as hir;
 use syn_sem_name::DefId;
@@ -16,6 +16,7 @@ pub(crate) enum Atom<'cx> {
     Rel(Rel),
     Ctor(Ctor),
     Ty(TypeId),
+    TyClass(TypeClassId),
     Def(DefId),
     Expr(hir::ExprId),
     Prim(PrimitiveType),
@@ -56,6 +57,12 @@ impl From<TypeId> for Atom<'_> {
     }
 }
 
+impl From<TypeClassId> for Atom<'_> {
+    fn from(value: TypeClassId) -> Self {
+        Self::TyClass(value)
+    }
+}
+
 impl From<DefId> for Atom<'_> {
     fn from(value: DefId) -> Self {
         Self::Def(value)
@@ -90,6 +97,11 @@ pub(crate) fn type_id(ty: TypeId) -> Term<'static> {
     atom(ty)
 }
 
+/// Encodes a structural inference-type class as a logic atom.
+pub(crate) fn type_class_id(class: TypeClassId) -> Term<'static> {
+    atom(class)
+}
+
 /// Decodes an inference type id from a logic term.
 pub(crate) fn type_id_from_term(term: &Term<'_>) -> Option<TypeId> {
     match (term.functor, term.args.as_slice()) {
@@ -106,7 +118,7 @@ pub(crate) fn type_id_from_term(term: &Term<'_>) -> Option<TypeId> {
 ///
 /// * Input - `id = DefId::new(2)`
 /// * Output - `Atom::Def(DefId::new(2))`
-pub(crate) fn def_id<'cx>(id: DefId) -> Term<'cx> {
+pub(crate) fn def_id(id: DefId) -> Term<'static> {
     atom(id)
 }
 

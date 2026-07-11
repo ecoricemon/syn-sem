@@ -51,71 +51,7 @@ pub const STD: KnownLibrary = KnownLibrary {
     source: STD_SOURCE,
 };
 
-/// Lightweight `core` model.
-pub const CORE_SOURCE: &str = r#"
-pub mod core {
-    pub mod ops {
-        pub trait Add<Rhs> { type Output; }
-
-        impl Add<usize> for usize { type Output = usize; }
-        impl Add<&usize> for usize { type Output = usize; }
-        impl Add<usize> for &usize { type Output = usize; }
-        impl Add<&usize> for &usize { type Output = usize; }
-
-        pub trait Sub<Rhs> { type Output; }
-
-        impl Sub<usize> for usize { type Output = usize; }
-        impl Sub<&usize> for usize { type Output = usize; }
-        impl Sub<usize> for &usize { type Output = usize; }
-        impl Sub<&usize> for &usize { type Output = usize; }
-
-        pub trait Mul<Rhs> { type Output; }
-
-        impl Mul<usize> for usize { type Output = usize; }
-        impl Mul<&usize> for usize { type Output = usize; }
-        impl Mul<usize> for &usize { type Output = usize; }
-        impl Mul<&usize> for &usize { type Output = usize; }
-
-        pub trait Div<Rhs> { type Output; }
-
-        impl Div<usize> for usize { type Output = usize; }
-        impl Div<&usize> for usize { type Output = usize; }
-        impl Div<usize> for &usize { type Output = usize; }
-        impl Div<&usize> for &usize { type Output = usize; }
-
-        pub trait Rem<Rhs> { type Output; }
-
-        impl Rem<usize> for usize { type Output = usize; }
-        impl Rem<&usize> for usize { type Output = usize; }
-        impl Rem<usize> for &usize { type Output = usize; }
-        impl Rem<&usize> for &usize { type Output = usize; }
-
-        pub trait BitXor<Rhs> { type Output; }
-
-        impl BitXor<usize> for usize { type Output = usize; }
-        impl BitXor<&usize> for usize { type Output = usize; }
-        impl BitXor<usize> for &usize { type Output = usize; }
-        impl BitXor<&usize> for &usize { type Output = usize; }
-        impl BitXor<bool> for bool { type Output = bool; }
-
-        pub trait BitAnd<Rhs> { type Output; }
-
-        impl BitAnd<usize> for usize { type Output = usize; }
-        impl BitAnd<&usize> for usize { type Output = usize; }
-        impl BitAnd<usize> for &usize { type Output = usize; }
-        impl BitAnd<&usize> for &usize { type Output = usize; }
-        impl BitAnd<bool> for bool { type Output = bool; }
-
-        pub trait BitOr<Rhs> { type Output; }
-
-        impl BitOr<usize> for usize { type Output = usize; }
-        impl BitOr<&usize> for usize { type Output = usize; }
-        impl BitOr<usize> for &usize { type Output = usize; }
-        impl BitOr<&usize> for &usize { type Output = usize; }
-        impl BitOr<bool> for bool { type Output = bool; }
-    }
-}
-"#;
+pub const CORE_SOURCE: &str = include_str!("known/core.rs");
 
 /// Lightweight `std` model.
 pub const STD_SOURCE: &str = r#"

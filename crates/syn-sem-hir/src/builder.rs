@@ -336,7 +336,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 let trait_ = item
                     .trait_
                     .as_ref()
-                    .map(|path| self.collect_type_path(path, type_scope));
+                    .map(|path| self.collect_path_type(path, type_scope, TypeSource::ImplTrait));
                 let items = item
                     .items
                     .iter()
@@ -699,6 +699,30 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                         name,
                         args: Vec::new(),
                     }],
+                }),
+                scope,
+                source,
+            },
+        );
+        ty
+    }
+
+    fn collect_path_type(
+        &mut self,
+        path: &'cx ast::Path<'cx>,
+        scope: Option<ScopeId>,
+        source: TypeSource,
+    ) -> TypeId {
+        let ty = self.hir.reserve_type();
+        let segments = self.collect_type_path(path, scope);
+        self.hir.fill_type(
+            ty,
+            Type {
+                id: ty,
+                ty: None,
+                kind: TypeKind::Path(Path {
+                    qself: None,
+                    segments,
                 }),
                 scope,
                 source,
@@ -1201,7 +1225,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
 mod tests {
     use super::*;
     use crate::{Hir, HirBuilder};
-    use syn_sem_ast::SyntaxCx;
+    use syn_sem_ast::{SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
     use syn_sem_name::{
         collect::NameCollector, AstNodeId, DefKind, ImportKind, NameDb, Origin,
@@ -1215,7 +1239,8 @@ mod tests {
     ) -> Hir<'cx> {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         HirBuilder::new(&names).build(file_path, file)
@@ -1228,7 +1253,8 @@ mod tests {
     ) -> (&'cx ast::File<'cx>, NameDb<'cx>, Hir<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names =
             NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
@@ -1809,10 +1835,14 @@ mod tests {
         let ItemKind::Impl { trait_, .. } = &impl_item.kind else {
             panic!("expected impl item");
         };
-        let trait_ = trait_.as_ref().expect("expected trait path");
-        assert_eq!(trait_.len(), 1);
-        assert_eq!(trait_[0].name.as_ref(), "Tr");
-        assert!(trait_[0].args.is_empty());
+        let trait_ = trait_.expect("expected trait type");
+        let TypeKind::Path(path) = &model[trait_].kind else {
+            panic!("expected trait path type");
+        };
+        assert_eq!(path.segments.len(), 1);
+        assert_eq!(path.segments[0].name.as_ref(), "Tr");
+        assert!(path.segments[0].args.is_empty());
+        assert_eq!(model[trait_].source, TypeSource::ImplTrait);
 
         let public_field = model
             .fields()
@@ -1863,9 +1893,12 @@ mod tests {
         else {
             panic!("expected trait impl item");
         };
-        assert_eq!(trait_.len(), 1);
-        assert_eq!(trait_[0].name.as_ref(), "Generic");
-        let [GenericArg::Type(arg)] = trait_[0].args.as_slice() else {
+        let TypeKind::Path(path) = &model[*trait_].kind else {
+            panic!("expected generic trait path type");
+        };
+        assert_eq!(path.segments.len(), 1);
+        assert_eq!(path.segments[0].name.as_ref(), "Generic");
+        let [GenericArg::Type(arg)] = path.segments[0].args.as_slice() else {
             panic!("expected generic trait argument");
         };
         let TypeKind::Path(path) = &model[*arg].kind else {
@@ -1979,6 +2012,7 @@ mod tests {
         assert!(sources.contains(&TypeSource::SignatureParam { index: 0 }));
         assert!(sources.contains(&TypeSource::SignatureParam { index: 1 }));
         assert!(sources.contains(&TypeSource::ImplSelf));
+        assert!(sources.contains(&TypeSource::ImplTrait));
         assert!(sources.contains(&TypeSource::StructField));
         assert!(sources.contains(&TypeSource::VariantField));
         assert!(sources.contains(&TypeSource::TypeAlias));
@@ -2381,7 +2415,8 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern("struct S;");
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let mut names = NameDb::default();
@@ -2409,7 +2444,8 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern("struct S;");
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let item = &file.items[0];
@@ -2427,7 +2463,8 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern("struct S; impl S { fn a() {} } impl S { fn b() {} }");
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let first_impl_item = &file.items[1];

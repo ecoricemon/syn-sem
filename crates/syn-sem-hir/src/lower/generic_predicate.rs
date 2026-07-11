@@ -50,7 +50,7 @@ pub(crate) enum PredicateSubject<'cx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use syn_sem_ast::SyntaxCx;
+    use syn_sem_ast::{SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
 
     fn parse_struct_generics<'cx>(
@@ -60,7 +60,7 @@ mod tests {
     ) -> &'cx ast::Generics<'cx> {
         let file_path = ccx.intern("lower_test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text)
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
         let Some(ast::Item::Struct(item)) = file.items.first() else {

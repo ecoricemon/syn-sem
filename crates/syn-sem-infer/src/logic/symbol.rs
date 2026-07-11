@@ -20,7 +20,7 @@ pub(crate) enum Rel {
     SameType,
     TraitBound,
     TypeBinding,
-    TypeEqual,
+    TypeClass,
     TypeShape,
     TypeSubstitution,
 }
@@ -64,6 +64,7 @@ pub(crate) enum Ctor {
 pub(crate) enum Var {
     Arg,
     Assoc,
+    Class,
     GenericParam(DefId),
     Generic,
     ImplSelf,

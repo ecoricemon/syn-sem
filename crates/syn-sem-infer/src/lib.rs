@@ -36,6 +36,7 @@ pub use id::*;
 pub use projection::*;
 pub use types::*;
 
+pub(crate) use logic::LogicSession;
 pub(crate) use program_fact::{
     ImplAssocType, ImplAssocTypeCollector, TraitBound, TraitBoundCollector,
 };
