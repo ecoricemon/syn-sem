@@ -1,4 +1,4 @@
-use syn_sem_ast as ast;
+use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, SourceText};
 use syn_sem_name::{
     DefId, DefKind, Name, NameDb, Namespace, Origin, ResolveResult, ScopeId, ScopeKind, Visibility,
@@ -151,7 +151,8 @@ fn collect_ast_names<'cx>(
 
 fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, source_text: SourceText<'cx>) -> ast::File<'cx> {
     let file_path = scx.common.intern("test.rs");
-    scx.parse_virtual_file(file_path, source_text).unwrap();
+    scx.parse_file(file_path, source_text, SourceKind::Virtual)
+        .unwrap();
     let source = scx.get_source(file_path).unwrap();
     source.ast().clone()
 }

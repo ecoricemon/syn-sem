@@ -1,10 +1,9 @@
 //! Logic-backed associated type projection normalization.
 
-use super::logic::ProjectionLogic;
 use crate::{
     GenericArg, ImplAssocType, ImplSelfGenericBinding, ImplSelfMatch, InferConstFacts, InferTypes,
-    PathType, PathTypeResolution, ProjectionDb, ProjectionMatch, ProjectionNormalization,
-    ProjectionTypeSubstitution, TraitBound, Type, TypeId,
+    LogicSession, PathType, PathTypeResolution, ProjectionDb, ProjectionMatch,
+    ProjectionNormalization, ProjectionTypeSubstitution, TraitBound, Type, TypeId,
 };
 use syn_sem_common::{CommonCx, VecUniqueExt};
 use syn_sem_name::{DefId, DefKind, NameDb, Namespace, ResolveResult};
@@ -22,9 +21,11 @@ pub(crate) struct ProjectionNormalizer<'a, 'cx> {
     impl_assoc_types: &'a [ImplAssocType],
     names: &'a NameDb<'cx>,
     const_facts: &'a InferConstFacts,
+    logic_session: &'a mut LogicSession<'cx>,
 }
 
 impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         projections: &'a mut ProjectionDb,
         types: &'a mut InferTypes<'cx>,
@@ -33,6 +34,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         impl_assoc_types: &'a [ImplAssocType],
         names: &'a NameDb<'cx>,
         const_facts: &'a InferConstFacts,
+        logic_session: &'a mut LogicSession<'cx>,
     ) -> Self {
         Self {
             projections,
@@ -42,6 +44,7 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
             impl_assoc_types,
             names,
             const_facts,
+            logic_session,
         }
     }
 
@@ -71,6 +74,22 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         {
             return;
         }
+        let ccx = self.ccx;
+        let types = &*self.types;
+        let trait_bounds = self.trait_bounds;
+        let impl_assoc_types = self.impl_assoc_types;
+        let const_facts = self.const_facts;
+        self.logic_session
+            .with_projection(|logic, projection_logic| {
+                projection_logic.initialize(
+                    logic,
+                    ccx,
+                    types,
+                    trait_bounds,
+                    impl_assoc_types,
+                    const_facts,
+                );
+            });
 
         let matches = self.match_projection_obligations();
         for match_ in matches {
@@ -100,60 +119,72 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         }
     }
 
-    fn match_projection_obligations(&self) -> Vec<ProjectionMatch> {
-        let mut logic = None;
-        let mut matches = Vec::new();
-        for obligation in &self.projections.obligations {
-            let self_ = obligation.self_;
-            if let Some(trait_) = obligation.trait_ {
-                if let Some(assoc) = self.trait_member_assoc(trait_, obligation.assoc) {
-                    matches.push(ProjectionMatch {
-                        projection: obligation.projection,
+    fn match_projection_obligations(&mut self) -> Vec<ProjectionMatch> {
+        let projections = &*self.projections;
+        let types = &*self.types;
+        let names = self.names;
+        self.logic_session
+            .with_projection(|logic, projection_logic| {
+                let mut matches = Vec::new();
+                projection_logic.sync_projection_candidates(logic, projections, types);
+                let checkpoint = projection_logic.begin_projection_candidate_queries(logic);
+                for obligation in &projections.obligations {
+                    let self_ = obligation.self_;
+                    if let Some(trait_) = obligation.trait_ {
+                        if let Some(assoc) =
+                            Self::trait_member_assoc(types, names, trait_, obligation.assoc)
+                        {
+                            matches.push(ProjectionMatch {
+                                projection: obligation.projection,
+                                self_,
+                                assoc,
+                                trait_,
+                            });
+                        }
+                        continue;
+                    }
+                    for trait_ in projection_logic.candidate_traits(
+                        logic,
+                        obligation.projection,
                         self_,
-                        assoc,
-                        trait_,
-                    });
+                        obligation.assoc,
+                    ) {
+                        if let Some(assoc) =
+                            Self::trait_member_assoc(types, names, trait_, obligation.assoc)
+                        {
+                            matches.push(ProjectionMatch {
+                                projection: obligation.projection,
+                                self_,
+                                assoc,
+                                trait_,
+                            });
+                        }
+                    }
                 }
-                continue;
-            }
-            let logic = logic.get_or_insert_with(|| {
-                let mut logic = ProjectionLogic::new(
-                    self.ccx,
-                    self.projections,
-                    self.types,
-                    self.trait_bounds,
-                    self.impl_assoc_types,
-                    self.const_facts,
-                );
-                logic.load_projection_candidates();
-                logic
-            });
-            for trait_ in logic.candidate_traits(obligation.projection, self_, obligation.assoc) {
-                if let Some(assoc) = self.trait_member_assoc(trait_, obligation.assoc) {
-                    matches.push(ProjectionMatch {
-                        projection: obligation.projection,
-                        self_,
-                        assoc,
-                        trait_,
-                    });
-                }
-            }
-        }
-        matches
+                projection_logic.end_query(logic, checkpoint);
+                matches
+            })
     }
 
-    fn match_impl_self_types(&self) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
-        let mut logic = ProjectionLogic::new(
-            self.ccx,
-            self.projections,
-            self.types,
-            self.trait_bounds,
-            self.impl_assoc_types,
-            self.const_facts,
-        );
-        logic.load_impl_self_matches();
-
-        logic.impl_self_matches_and_generic_bindings()
+    fn match_impl_self_types(&mut self) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
+        let ccx = self.ccx;
+        let projections = &*self.projections;
+        let types = &*self.types;
+        let const_facts = self.const_facts;
+        self.logic_session
+            .with_projection(|logic, projection_logic| {
+                projection_logic.sync_impl_self_match_inputs(
+                    logic,
+                    ccx,
+                    projections,
+                    types,
+                    const_facts,
+                );
+                let checkpoint = projection_logic.begin_impl_self_match_query(logic);
+                let result = projection_logic.impl_self_matches_and_generic_bindings(logic);
+                projection_logic.end_query(logic, checkpoint);
+                result
+            })
     }
 
     fn build_type_substitutions(&mut self) -> Vec<ProjectionTypeSubstitution> {
@@ -201,18 +232,25 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
         substitutions
     }
 
-    fn normalize_projection_matches(&self) -> Vec<ProjectionNormalization> {
-        let mut logic = ProjectionLogic::new(
-            self.ccx,
-            self.projections,
-            self.types,
-            self.trait_bounds,
-            self.impl_assoc_types,
-            self.const_facts,
-        );
-        logic.load_projection_normalizations();
-
-        logic.normalizations()
+    fn normalize_projection_matches(&mut self) -> Vec<ProjectionNormalization> {
+        let ccx = self.ccx;
+        let projections = &*self.projections;
+        let types = &*self.types;
+        let const_facts = self.const_facts;
+        self.logic_session
+            .with_projection(|logic, projection_logic| {
+                projection_logic.sync_projection_normalizations(
+                    logic,
+                    ccx,
+                    projections,
+                    types,
+                    const_facts,
+                );
+                let checkpoint = projection_logic.begin_projection_normalization_query(logic);
+                let result = projection_logic.normalizations(logic);
+                projection_logic.end_query(logic, checkpoint);
+                result
+            })
     }
 
     /// Returns the associated type member in `trait_` whose name matches
@@ -221,18 +259,23 @@ impl<'a, 'cx: 'a> ProjectionNormalizer<'a, 'cx> {
     /// `requested_assoc_type` is the definition found by the projection path, and is used only as
     /// the source of the requested name. The returned definition is the concrete associated type
     /// member owned by the candidate trait, so the input and output [`DefId`]s may differ.
-    fn trait_member_assoc(&self, trait_: TypeId, requested_assoc_type: DefId) -> Option<DefId> {
-        let trait_def = self.types.nominal_def(trait_)?;
-        if self.names[trait_def].kind != DefKind::Trait {
+    fn trait_member_assoc(
+        types: &InferTypes<'cx>,
+        names: &NameDb<'cx>,
+        trait_: TypeId,
+        requested_assoc_type: DefId,
+    ) -> Option<DefId> {
+        let trait_def = types.nominal_def(trait_)?;
+        if names[trait_def].kind != DefKind::Trait {
             return None;
         }
-        let assoc_name = self.names[requested_assoc_type].name?;
+        let assoc_name = names[requested_assoc_type].name?;
         let ResolveResult::Found(member_assoc_type) =
-            self.names.member(trait_def, Namespace::Type, assoc_name)
+            names.member(trait_def, Namespace::Type, assoc_name)
         else {
             return None;
         };
-        if self.names[member_assoc_type].kind != DefKind::AssocType {
+        if names[member_assoc_type].kind != DefKind::AssocType {
             return None;
         }
         Some(member_assoc_type)

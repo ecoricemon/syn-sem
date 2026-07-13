@@ -6,11 +6,11 @@
 //! focused query methods for upper semantic phases.
 
 use crate::{
-    ExprTypeDeriver, GenericArg, ImplAssocType, ImplAssocTypeCollector, InferTypes, PatTypeDeriver,
-    Path, PathSegment, PathType, PathTypeResolution, ProjectionCollector, ProjectionDb,
-    ProjectionNormalizationResult, ProjectionNormalizer, ProjectionType, QSelf, TraitBound,
-    TraitBoundCollector, Type, TypeId, TypeLowering, TypeParamBound, TypeRelationCollector,
-    TypeRelationDb, TypeRelationResolver,
+    ExprTypeDeriver, GenericArg, ImplAssocType, ImplAssocTypeCollector, InferTypes, LogicSession,
+    PatTypeDeriver, Path, PathSegment, PathType, PathTypeResolution, ProjectionCollector,
+    ProjectionDb, ProjectionNormalizationResult, ProjectionNormalizer, ProjectionType, QSelf,
+    TraitBound, TraitBoundCollector, Type, TypeId, TypeLowering, TypeParamBound,
+    TypeRelationCollector, TypeRelationDb, TypeRelationResolver,
 };
 use std::convert::TryFrom;
 use std::ops::Index;
@@ -32,7 +32,7 @@ impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
         let mut types = InferTypes::default();
         let trait_bounds = TraitBoundCollector::collect(self.hir, self.names, &mut types);
         TypeLowering::lower_hir_types(self.hir, self.names, &mut types);
-        let impl_assoc_types = ImplAssocTypeCollector::collect(self.hir, self.names, &mut types);
+        let impl_assoc_types = ImplAssocTypeCollector::collect(self.hir, self.names, &types);
         let type_relations = TypeRelationCollector::collect(self.hir, self.names, &mut types);
         let projections = ProjectionCollector::collect(&types);
 
@@ -78,6 +78,7 @@ impl<'cx> InferDb<'cx> {
         const_facts: &InferConstFacts,
     ) -> Self {
         let mut db = InferDbBuilder::new(hir, names).build();
+        let mut logic_session = LogicSession::default();
 
         ProjectionNormalizer::new(
             &mut db.projections,
@@ -87,9 +88,10 @@ impl<'cx> InferDb<'cx> {
             &db.impl_assoc_types,
             names,
             const_facts,
+            &mut logic_session,
         )
         .normalize();
-        db.resolve_type_relations(ccx, hir, names, const_facts);
+        db.resolve_type_relations(ccx, hir, names, const_facts, &mut logic_session);
 
         db
     }
@@ -100,6 +102,7 @@ impl<'cx> InferDb<'cx> {
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         const_facts: &InferConstFacts,
+        logic_session: &mut LogicSession<'cx>,
     ) {
         loop {
             self.type_relations.clear_resolved();
@@ -124,6 +127,7 @@ impl<'cx> InferDb<'cx> {
                     &self.impl_assoc_types,
                     names,
                     const_facts,
+                    logic_session,
                 )
                 .normalize();
             }
@@ -509,7 +513,7 @@ pub struct ConstInt {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use syn_sem_ast::{self as ast, SyntaxCx};
+    use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
     use syn_sem_hir as hir;
     use syn_sem_name::{
@@ -523,7 +527,8 @@ mod tests {
     ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
@@ -539,7 +544,8 @@ mod tests {
     ) -> (hir::Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let hir = hir::HirBuilder::new(names).build(file_path, file);
         let infer = InferDb::analyze(ccx, &hir, names, &InferConstFacts::default());
@@ -553,7 +559,8 @@ mod tests {
     ) -> (hir::Hir<'cx>, NameDb<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names =
             NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
@@ -1115,7 +1122,8 @@ mod tests {
         let file_path = ccx.intern("test.rs");
         let source_text = "struct Vec; trait Iterator { type Item; } impl Iterator for Vec { type Item = u32; } struct Output { field: <Vec as Iterator>::Item }";
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text).unwrap();
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
+            .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
         let iterator = ccx.intern("Iterator");

@@ -10,7 +10,7 @@ syn-sem-hir = { path = "crates/syn-sem-hir" }
 syn-sem-infer = { path = "crates/syn-sem-infer" }
 syn-sem-eval = { path = "crates/syn-sem-eval" }
 syn-sem-macros = { path = "crates/syn-sem-macros" }
-syn-locator = "0.2.0"
+syn-locator = { git = "https://github.com/ecoricemon/syn-locator.git", rev = "f8f192e9d87fc048f7e81064ff062b288b9cddf2" }
 logic-eval = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "b4daaf5617ed86a6722ed4f4e58415e2ad68867d" }
 logic-eval-util = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "b4daaf5617ed86a6722ed4f4e58415e2ad68867d" }
 any-intern = { git = "https://github.com/ecoricemon/logic-eval.git", rev = "b4daaf5617ed86a6722ed4f4e58415e2ad68867d" }

@@ -8,12 +8,12 @@ use super::{
 use crate::{
     logic::{
         self as logic_term, atom, def_id_from_term, symbol::Var, type_id_from_term, visit_left_var,
-        Atom, Term,
+        Atom, InferLogic, LogicSessionToken, Term,
     },
     GenericArg, ImplAssocType, InferConstFacts, InferTypes, Path, PathType, PathTypeResolution,
     ProjectionNormalization, TraitBound, Type, TypeId, TypeParamBound,
 };
-use logic_eval::Database;
+use logic_eval::DatabaseCheckpoint;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
 use syn_sem_name::DefId;
 
@@ -23,38 +23,43 @@ use syn_sem_name::DefId;
 /// * Loads projection and trait clauses needed by the selected rule set
 /// * Loads Rust-side matching and substitution clauses
 /// * Queries trait-candidate and normalization predicates
-pub(super) struct ProjectionLogic<'a, 'cx> {
-    ccx: &'cx CommonCx,
-    projections: &'a ProjectionDb,
-    types: &'a InferTypes<'cx>,
-    trait_bounds: &'a [TraitBound],
-    impl_assoc_types: &'a [ImplAssocType],
-    const_facts: &'a InferConstFacts,
+pub(crate) struct ProjectionLogic<'cx> {
+    initialized: bool,
+    db_cursor: ProjectionDbCursor,
     preserve_generic_shapes: Map<TypeId, TypeShape<'cx>>,
     variable_generic_shapes: Map<TypeId, TypeShape<'cx>>,
-    db: Database<Atom<'cx>>,
 }
 
-impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
-    pub(super) fn new(
-        ccx: &'cx CommonCx,
-        projections: &'a ProjectionDb,
-        types: &'a InferTypes<'cx>,
-        trait_bounds: &'a [TraitBound],
-        impl_assoc_types: &'a [ImplAssocType],
-        const_facts: &'a InferConstFacts,
-    ) -> Self {
+impl<'cx> ProjectionLogic<'cx> {
+    pub(crate) fn new(_: &LogicSessionToken) -> Self {
         Self {
-            ccx,
-            projections,
-            types,
-            trait_bounds,
-            impl_assoc_types,
-            const_facts,
+            initialized: false,
+            db_cursor: ProjectionDbCursor::default(),
             preserve_generic_shapes: Map::default(),
             variable_generic_shapes: Map::default(),
-            db: Database::default(),
         }
+    }
+
+    pub(crate) fn initialize(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        ccx: &'cx CommonCx,
+        types: &InferTypes<'cx>,
+        trait_bounds: &[TraitBound],
+        impl_assoc_types: &[ImplAssocType],
+        const_facts: &InferConstFacts,
+    ) {
+        if self.initialized {
+            return;
+        }
+
+        self.insert_common_rules(logic);
+        self.insert_trait_bounds(logic, trait_bounds);
+        self.insert_impl_assoc_types(logic, impl_assoc_types);
+        self.insert_impl_assoc_values_without_bindings(logic, types, impl_assoc_types);
+        self.insert_variable_generic_shapes(logic, ccx, types, impl_assoc_types, const_facts);
+        logic.sync_type_classes(types);
+        self.initialized = true;
     }
 
     /// #projection_candidate($Projection, $Self, $Assoc, $Trait) :-
@@ -63,20 +68,21 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ///   #projection_obligation($Projection, $Self, $Assoc),
     ///   #trait_bound($Subject, $Trait), #same_type($Self, $Subject).
     /// #same_type($A, $A).
-    /// #same_type($A, $B) :- #type_equal($A, $B).
-    /// #same_type($A, $B) :- #type_equal($B, $A).
+    /// #same_type($A, $B) :- #type_class($A, $Class), #type_class($B, $Class).
     ///
     /// #explicit_projection_obligation(projection, self, assoc, trait).
     /// #projection_obligation(projection, self, assoc).
     /// #trait_bound(subject, trait).
-    /// #type_equal(a, b).
-    pub(super) fn load_projection_candidates(&mut self) {
-        self.insert_candidate_rules();
-        self.insert_same_type_rules();
-
-        self.insert_projection_obligations();
-        self.insert_trait_bounds();
-        self.insert_type_equalities();
+    /// #type_class(a, class).
+    /// #type_class(b, class).
+    pub(super) fn sync_projection_candidates(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        projections: &ProjectionDb,
+        types: &InferTypes<'cx>,
+    ) {
+        self.sync_projection_obligations(logic, projections);
+        logic.sync_type_classes(types);
     }
 
     /// #projection_normalizes_to($Projection, $Self, $Assoc, $Trait, $Value) :-
@@ -91,8 +97,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ///   #type_binding($Self, $ImplSelf, $Generic, $Arg),
     ///   #type_substitution($Self, $ImplSelf, $Value, $Generic, $Arg, $Substituted).
     /// #same_type($A, $A).
-    /// #same_type($A, $B) :- #type_equal($A, $B).
-    /// #same_type($A, $B) :- #type_equal($B, $A).
+    /// #same_type($A, $B) :- #type_class($A, $Class), #type_class($B, $Class).
     ///
     /// #projection_match(projection, self, assoc, trait).
     /// #impl_assoc_type(impl_self, impl_trait, assoc, value).
@@ -100,18 +105,21 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     /// #impl_assoc_value_without_bindings(impl_self, value).
     /// #type_binding(self, impl_self, generic, arg).
     /// #type_substitution(self, impl_self, value, generic, arg, substituted).
-    /// #type_equal(a, b).
-    pub(super) fn load_projection_normalizations(&mut self) {
-        self.insert_normalization_rules();
-        self.insert_same_type_rules();
-
-        self.insert_projection_matches();
-        self.insert_impl_assoc_types();
-        self.insert_impl_assoc_values_without_bindings();
-        self.insert_impl_self_matches();
-        self.insert_type_bindings();
-        self.insert_type_substitutions();
-        self.insert_type_equalities();
+    /// #type_class(a, class).
+    /// #type_class(b, class).
+    pub(super) fn sync_projection_normalizations(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        ccx: &'cx CommonCx,
+        projections: &ProjectionDb,
+        types: &InferTypes<'cx>,
+        const_facts: &InferConstFacts,
+    ) {
+        self.sync_projection_matches(logic, ccx, projections, types, const_facts);
+        self.sync_impl_self_matches(logic, projections);
+        self.sync_type_bindings(logic, projections);
+        self.sync_type_substitutions(logic, projections);
+        logic.sync_type_classes(types);
     }
 
     /// #impl_self_match($Self, $ImplSelf) :-
@@ -123,102 +131,151 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
     ///   #impl_assoc_type($ImplSelf, $ImplTrait, $Assoc, $Value),
     ///   #same_type($Trait, $ImplTrait).
     /// #same_type($A, $A).
-    /// #same_type($A, $B) :- #type_equal($A, $B).
-    /// #same_type($A, $B) :- #type_equal($B, $A).
+    /// #same_type($A, $B) :- #type_class($A, $Class), #type_class($B, $Class).
     ///
     /// #projection_match(projection, self, assoc, trait).
     /// #impl_assoc_type(impl_self, impl_trait, assoc, value).
     /// #type_shape(self, #preserve_generics, shape).
     /// #type_shape(impl_self, #variable_generics, shape).
-    /// #type_equal(a, b).
-    pub(super) fn load_impl_self_matches(&mut self) {
-        self.insert_impl_self_match_rules();
-        self.insert_impl_self_match_candidate_rules();
-        self.insert_same_type_rules();
-
-        self.insert_projection_matches();
-        self.insert_impl_assoc_types();
-        self.insert_type_shapes();
-        self.insert_type_equalities();
+    /// #type_class(a, class).
+    /// #type_class(b, class).
+    pub(super) fn sync_impl_self_match_inputs(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        ccx: &'cx CommonCx,
+        projections: &ProjectionDb,
+        types: &InferTypes<'cx>,
+        const_facts: &InferConstFacts,
+    ) {
+        self.sync_projection_matches(logic, ccx, projections, types, const_facts);
+        logic.sync_type_classes(types);
     }
 
-    fn insert_same_type_rules(&mut self) {
-        for clause in logic_term::same_type_rules(term::PROJECTION_SAME_TYPE_RULES) {
-            self.db.insert_clause(clause);
+    fn insert_common_rules(&mut self, logic: &mut InferLogic<'cx>) {
+        for clause in logic_term::same_type_rules() {
+            logic.db.insert_clause(clause);
         }
     }
 
-    fn insert_candidate_rules(&mut self) {
+    pub(super) fn begin_projection_candidate_queries(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+    ) -> DatabaseCheckpoint {
+        let checkpoint = logic.db.checkpoint();
         for clause in term::projection_candidate_rules() {
-            self.db.insert_clause(clause);
+            logic.db.insert_clause(clause);
         }
+        checkpoint
     }
 
-    fn insert_normalization_rules(&mut self) {
+    pub(super) fn begin_projection_normalization_query(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+    ) -> DatabaseCheckpoint {
+        let checkpoint = logic.db.checkpoint();
         for clause in term::projection_normalization_rules() {
-            self.db.insert_clause(clause);
+            logic.db.insert_clause(clause);
         }
+        checkpoint
     }
 
-    fn insert_impl_self_match_candidate_rules(&mut self) {
+    pub(super) fn begin_impl_self_match_query(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+    ) -> DatabaseCheckpoint {
+        let checkpoint = logic.db.checkpoint();
         for clause in term::impl_self_match_candidate_rules() {
-            self.db.insert_clause(clause);
+            logic.db.insert_clause(clause);
         }
-    }
-
-    fn insert_impl_self_match_rules(&mut self) {
         for clause in term::impl_self_match_rules() {
-            self.db.insert_clause(clause);
+            logic.db.insert_clause(clause);
         }
+        checkpoint
     }
 
-    fn insert_projection_obligations(&mut self) {
-        for obligation in &self.projections.obligations {
-            self.db
+    pub(super) fn end_query(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        checkpoint: DatabaseCheckpoint,
+    ) {
+        logic.db.revert(checkpoint);
+    }
+
+    fn sync_projection_obligations(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        projections: &ProjectionDb,
+    ) {
+        for obligation in &projections.obligations[self.db_cursor.obligations..] {
+            logic
+                .db
                 .insert_clause(term::projection_obligation_clause(*obligation));
         }
+        self.db_cursor.obligations = projections.obligations.len();
     }
 
-    fn insert_trait_bounds(&mut self) {
-        for bound in self.trait_bounds {
-            self.db.insert_clause(term::trait_bound_clause(*bound));
+    fn insert_trait_bounds(&mut self, logic: &mut InferLogic<'cx>, trait_bounds: &[TraitBound]) {
+        for bound in trait_bounds {
+            logic.db.insert_clause(term::trait_bound_clause(*bound));
         }
     }
 
-    fn insert_type_equalities(&mut self) {
-        for left_index in 0..self.types.len() {
-            let left = TypeId::new(left_index);
-            for right in (left_index + 1)..self.types.len() {
-                let right = TypeId::new(right);
-                if self.types[left] != self.types[right] {
-                    continue;
-                }
-                self.db
-                    .insert_clause(term::projection_type_equal_clause(left, right));
-            }
-        }
-    }
-
-    fn insert_projection_matches(&mut self) {
-        for projection_match in &self.projections.projection_matches {
-            self.db
+    fn sync_projection_matches(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        ccx: &'cx CommonCx,
+        projections: &ProjectionDb,
+        types: &InferTypes<'cx>,
+        const_facts: &InferConstFacts,
+    ) {
+        let encoder = TypeShapeEncoder::new(ccx, types, const_facts);
+        for projection_match in &projections.projection_matches[self.db_cursor.projection_matches..]
+        {
+            logic
+                .db
                 .insert_clause(term::projection_match_clause(*projection_match));
+            let ty = projection_match.self_;
+            if self.preserve_generic_shapes.contains_key(&ty) {
+                continue;
+            }
+            let Some(shape) = encoder.encode(ty, TypeShapeMode::PreserveGenerics) else {
+                continue;
+            };
+            let shape_term = shape.term.clone();
+            self.preserve_generic_shapes.insert(ty, shape);
+            logic.db.insert_clause(type_shape_clause(
+                ty,
+                TypeShapeMode::PreserveGenerics,
+                shape_term,
+            ));
         }
+        self.db_cursor.projection_matches = projections.projection_matches.len();
     }
 
-    fn insert_impl_assoc_types(&mut self) {
-        for impl_assoc_type in self.impl_assoc_types {
-            self.db
+    fn insert_impl_assoc_types(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        impl_assoc_types: &[ImplAssocType],
+    ) {
+        for impl_assoc_type in impl_assoc_types {
+            logic
+                .db
                 .insert_clause(term::impl_assoc_type_clause(*impl_assoc_type));
         }
     }
 
-    fn insert_impl_assoc_values_without_bindings(&mut self) {
-        for impl_assoc_type in self.impl_assoc_types {
-            if self.type_contains_generic_param(impl_assoc_type.value_ty) {
+    fn insert_impl_assoc_values_without_bindings(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        types: &InferTypes<'cx>,
+        impl_assoc_types: &[ImplAssocType],
+    ) {
+        for impl_assoc_type in impl_assoc_types {
+            if Self::type_contains_generic_param(types, impl_assoc_type.value_ty) {
                 continue;
             }
-            self.db
+            logic
+                .db
                 .insert_clause(term::impl_assoc_value_without_bindings_clause(
                     impl_assoc_type.impl_self,
                     impl_assoc_type.value_ty,
@@ -226,46 +283,42 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         }
     }
 
-    fn insert_impl_self_matches(&mut self) {
-        for match_ in &self.projections.impl_self_matches {
-            self.db.insert_clause(term::impl_self_match_clause(*match_));
+    fn sync_impl_self_matches(&mut self, logic: &mut InferLogic<'cx>, projections: &ProjectionDb) {
+        for match_ in &projections.impl_self_matches[self.db_cursor.impl_self_matches..] {
+            logic
+                .db
+                .insert_clause(term::impl_self_match_clause(*match_));
         }
+        self.db_cursor.impl_self_matches = projections.impl_self_matches.len();
     }
 
-    fn insert_type_bindings(&mut self) {
-        for binding in &self.projections.impl_self_generic_bindings {
-            self.db.insert_clause(term::type_binding_clause(*binding));
+    fn sync_type_bindings(&mut self, logic: &mut InferLogic<'cx>, projections: &ProjectionDb) {
+        for binding in &projections.impl_self_generic_bindings[self.db_cursor.type_bindings..] {
+            logic.db.insert_clause(term::type_binding_clause(*binding));
         }
+        self.db_cursor.type_bindings = projections.impl_self_generic_bindings.len();
     }
 
-    fn insert_type_substitutions(&mut self) {
-        for substitution in &self.projections.type_substitutions {
-            self.db
+    fn sync_type_substitutions(&mut self, logic: &mut InferLogic<'cx>, projections: &ProjectionDb) {
+        for substitution in &projections.type_substitutions[self.db_cursor.type_substitutions..] {
+            logic
+                .db
                 .insert_clause(term::type_substitution_clause(*substitution));
         }
+        self.db_cursor.type_substitutions = projections.type_substitutions.len();
     }
 
-    fn insert_type_shapes(&mut self) {
-        let encoder = TypeShapeEncoder::new(self.ccx, self.types, self.const_facts);
-        let mut preserve_generic_tys = Vec::new();
-        for projection_match in &self.projections.projection_matches {
-            preserve_generic_tys.push_unique(projection_match.self_);
-        }
-        for ty in preserve_generic_tys {
-            let Some(shape) = encoder.encode(ty, TypeShapeMode::PreserveGenerics) else {
-                continue;
-            };
-            let shape_term = shape.term.clone();
-            self.preserve_generic_shapes.insert(ty, shape);
-            self.db.insert_clause(type_shape_clause(
-                ty,
-                TypeShapeMode::PreserveGenerics,
-                shape_term,
-            ));
-        }
-
+    fn insert_variable_generic_shapes(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+        ccx: &'cx CommonCx,
+        types: &InferTypes<'cx>,
+        impl_assoc_types: &[ImplAssocType],
+        const_facts: &InferConstFacts,
+    ) {
+        let encoder = TypeShapeEncoder::new(ccx, types, const_facts);
         let mut impl_self_tys = Vec::new();
-        for impl_assoc_type in self.impl_assoc_types {
+        for impl_assoc_type in impl_assoc_types {
             impl_self_tys.push_unique(impl_assoc_type.impl_self);
         }
         for impl_self in impl_self_tys {
@@ -274,7 +327,7 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
             };
             let shape_term = shape.term.clone();
             self.variable_generic_shapes.insert(impl_self, shape);
-            self.db.insert_clause(type_shape_clause(
+            logic.db.insert_clause(type_shape_clause(
                 impl_self,
                 TypeShapeMode::VariableGenerics,
                 shape_term,
@@ -284,12 +337,13 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     pub(super) fn candidate_traits(
         &mut self,
+        logic: &mut InferLogic<'cx>,
         projection: TypeId,
         self_: TypeId,
         assoc: DefId,
     ) -> Vec<TypeId> {
         let mut traits = Vec::new();
-        let mut qcx = self.db.query(term::projection_candidate_trait_query(
+        let mut qcx = logic.db.query(term::projection_candidate_trait_query(
             projection, self_, assoc,
         ));
         while let Some(answer) = qcx.prove_next() {
@@ -304,9 +358,12 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         traits
     }
 
-    pub(super) fn normalizations(&mut self) -> Vec<ProjectionNormalization> {
+    pub(super) fn normalizations(
+        &mut self,
+        logic: &mut InferLogic<'cx>,
+    ) -> Vec<ProjectionNormalization> {
         let mut normalizations = Vec::new();
-        let mut qcx = self.db.query(term::projection_normalization_query());
+        let mut qcx = logic.db.query(term::projection_normalization_query());
         while let Some(answer) = qcx.prove_next() {
             let projection = answer
                 .get(&Atom::from(Var::Projection))
@@ -344,10 +401,11 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
 
     pub(super) fn impl_self_matches_and_generic_bindings(
         &mut self,
+        logic: &mut InferLogic<'cx>,
     ) -> (Vec<ImplSelfMatch>, Vec<ImplSelfGenericBinding>) {
         let mut impl_self_matches = Vec::new();
         let mut generic_bindings = Vec::new();
-        let mut qcx = self.db.query(term::impl_self_match_query());
+        let mut qcx = logic.db.query(term::impl_self_match_query());
         while let Some(answer) = qcx.prove_next() {
             let projection_self = answer
                 .get(&Atom::from(Var::SelfTy))
@@ -425,56 +483,59 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         bindings
     }
 
-    fn type_contains_generic_param(&self, ty: TypeId) -> bool {
-        match &self.types[ty] {
+    fn type_contains_generic_param(types: &InferTypes<'cx>, ty: TypeId) -> bool {
+        match &types[ty] {
             Type::Array { elem, .. } | Type::Reference { elem, .. } | Type::Slice { elem } => {
-                self.type_contains_generic_param(*elem)
+                Self::type_contains_generic_param(types, *elem)
             }
             Type::Infer | Type::Primitive(_) => false,
-            Type::Path(path) => self.path_contains_generic_param(path),
+            Type::Path(path) => Self::path_contains_generic_param(types, path),
             Type::Tuple { elems } => elems
                 .iter()
-                .any(|elem| self.type_contains_generic_param(*elem)),
+                .any(|elem| Self::type_contains_generic_param(types, *elem)),
         }
     }
 
-    fn path_contains_generic_param(&self, path: &PathType<'cx>) -> bool {
+    fn path_contains_generic_param(types: &InferTypes<'cx>, path: &PathType<'cx>) -> bool {
         if let Some(qself) = path.qself {
             let trait_contains_generic = match qself.trait_ {
-                Some(trait_) => self.type_contains_generic_param(trait_),
+                Some(trait_) => Self::type_contains_generic_param(types, trait_),
                 None => false,
             };
-            if self.type_contains_generic_param(qself.self_) || trait_contains_generic {
+            if Self::type_contains_generic_param(types, qself.self_) || trait_contains_generic {
                 return true;
             }
         }
         matches!(path.resolution, PathTypeResolution::GenericParam(_))
-            || self.path_args_contain_generic_param(&path.path)
+            || Self::path_args_contain_generic_param(types, &path.path)
     }
 
-    fn path_args_contain_generic_param(&self, path: &Path<'cx>) -> bool {
+    fn path_args_contain_generic_param(types: &InferTypes<'cx>, path: &Path<'cx>) -> bool {
         path.segments.iter().any(|segment| {
             segment
                 .args
                 .iter()
-                .any(|arg| self.generic_arg_contains_generic_param(arg))
+                .any(|arg| Self::generic_arg_contains_generic_param(types, arg))
         })
     }
 
-    fn generic_arg_contains_generic_param(&self, arg: &GenericArg<'cx>) -> bool {
+    fn generic_arg_contains_generic_param(types: &InferTypes<'cx>, arg: &GenericArg<'cx>) -> bool {
         match arg {
-            GenericArg::Type(ty) => self.type_contains_generic_param(*ty),
-            GenericArg::AssocType { ty, .. } => self.type_contains_generic_param(*ty),
+            GenericArg::Type(ty) => Self::type_contains_generic_param(types, *ty),
+            GenericArg::AssocType { ty, .. } => Self::type_contains_generic_param(types, *ty),
             GenericArg::Constraint { bounds, .. } => bounds
                 .iter()
-                .any(|bound| self.type_param_bound_contains_generic_param(bound)),
+                .any(|bound| Self::type_param_bound_contains_generic_param(types, bound)),
             GenericArg::Const(_) | GenericArg::AssocConst { .. } | GenericArg::Unsupported => false,
         }
     }
 
-    fn type_param_bound_contains_generic_param(&self, bound: &TypeParamBound<'cx>) -> bool {
+    fn type_param_bound_contains_generic_param(
+        types: &InferTypes<'cx>,
+        bound: &TypeParamBound<'cx>,
+    ) -> bool {
         match bound {
-            TypeParamBound::Trait(path) => self.path_args_contain_generic_param(path),
+            TypeParamBound::Trait(path) => Self::path_args_contain_generic_param(types, path),
             TypeParamBound::Unsupported => false,
         }
     }
@@ -484,5 +545,34 @@ impl<'a, 'cx> ProjectionLogic<'a, 'cx> {
         term_types: &Map<Term<'cx>, TypeId>,
     ) -> Option<TypeId> {
         type_id_from_term(term).or_else(|| term_types.get(term).copied())
+    }
+}
+
+/// Tracks the prefixes of append-only projection facts synchronized into logic.
+#[derive(Default)]
+struct ProjectionDbCursor {
+    obligations: usize,
+    projection_matches: usize,
+    impl_self_matches: usize,
+    type_bindings: usize,
+    type_substitutions: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::LogicSession;
+
+    #[test]
+    fn phase_rules_are_reverted_without_removing_common_rules() {
+        LogicSession::default().with_projection(|logic, projection| {
+            projection.insert_common_rules(logic);
+            let common_clause_count = logic.db.clauses().count();
+
+            let checkpoint = projection.begin_impl_self_match_query(logic);
+            assert!(logic.db.clauses().count() > common_clause_count);
+
+            projection.end_query(logic, checkpoint);
+            assert_eq!(logic.db.clauses().count(), common_clause_count);
+        });
     }
 }

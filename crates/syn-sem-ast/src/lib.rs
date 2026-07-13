@@ -74,7 +74,7 @@ pub(crate) mod test_util {
             InputDesc {
                 file_path,
                 source_text,
-                locator: &locator,
+                locator: Some(&locator),
                 input: syntax.as_ref(),
             },
         );

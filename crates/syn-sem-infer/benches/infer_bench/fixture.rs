@@ -1,6 +1,6 @@
 use criterion::black_box;
 use syn_sem_ast as ast;
-use syn_sem_ast::SyntaxCx;
+use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{known::KnownLibraries, CommonCx, FilePath};
 use syn_sem_hir::HirBuilder;
 use syn_sem_infer::{InferConstFacts, InferDb};
@@ -31,7 +31,7 @@ pub(crate) fn run_analysis(source_text: &str, known: KnownLibraries) {
         let source_text = ccx
             .source_text(file_path)
             .expect("known source text should be stored");
-        scx.parse_virtual_file(file_path, source_text)
+        scx.parse_file(file_path, source_text, SourceKind::Known)
             .expect("known source should parse");
         roots.push(file_path);
         inputs.push(parse_stored_source(&scx, file_path));
@@ -51,7 +51,7 @@ fn parse_source<'cx>(
     source_text: &str,
 ) -> ast::SourceInput<'cx> {
     let source_text = ccx.intern(source_text);
-    scx.parse_virtual_file(file_path, source_text)
+    scx.parse_file(file_path, source_text, SourceKind::Virtual)
         .expect("bench input should parse");
     parse_stored_source(scx, file_path)
 }

@@ -11,50 +11,14 @@ pub struct SourceInput<'cx> {
     pub file: &'cx File<'cx>,
 }
 
-impl<'cx> SyntaxCx<'cx> {
-    /// Reads, parses, and returns the physical module tree rooted at `entry_path`.
-    pub fn read_physical_module_tree(
-        &'cx self,
-        entry_path: impl AsRef<Path>,
-    ) -> Result<Vec<SourceInput<'cx>>> {
-        let entry_path = self.read_physical_file(entry_path.as_ref())?;
-        self.collect_module_tree(entry_path)
-    }
-
-    /// Returns parsed module-tree inputs rooted at `entry_path`.
-    ///
-    /// Any missing out-of-line physical module files are read and parsed while walking the tree.
-    pub fn collect_module_tree(
-        &'cx self,
-        entry_path: FilePath<'cx>,
-    ) -> Result<Vec<SourceInput<'cx>>> {
-        ModuleTreeBuilder::new(self).collect(entry_path)
-    }
-
-    /// Reads and parses a physical source file if it has not already been parsed.
-    pub fn read_physical_file(&'cx self, file_path: impl AsRef<Path>) -> Result<FilePath<'cx>> {
-        let file_path = self.common.read_physical_file(file_path.as_ref())?;
-        if self.has_source(file_path) {
-            return Ok(file_path);
-        }
-
-        let source_text = self
-            .common
-            .source_text(file_path)
-            .ok_or_else(|| format!("source file is not stored: {file_path}"))?;
-        self.parse_physical_file(file_path, source_text)?;
-        Ok(file_path)
-    }
-}
-
-struct ModuleTreeBuilder<'cx> {
+pub(crate) struct ModuleTreeBuilder<'cx> {
     scx: &'cx SyntaxCx<'cx>,
     seen: Set<PathBuf>,
     files: Vec<SourceInput<'cx>>,
 }
 
 impl<'cx> ModuleTreeBuilder<'cx> {
-    fn new(scx: &'cx SyntaxCx<'cx>) -> Self {
+    pub(crate) fn new(scx: &'cx SyntaxCx<'cx>) -> Self {
         Self {
             scx,
             seen: Set::default(),
@@ -62,7 +26,7 @@ impl<'cx> ModuleTreeBuilder<'cx> {
         }
     }
 
-    fn collect(mut self, entry_path: FilePath<'cx>) -> Result<Vec<SourceInput<'cx>>> {
+    pub(crate) fn collect(mut self, entry_path: FilePath<'cx>) -> Result<Vec<SourceInput<'cx>>> {
         let file = self.scx.lookup_source(entry_path)?.ast();
         let path = ModulePath::from_entry_file(PathBuf::from(entry_path.as_ref()));
         self.add_file(entry_path, file);
@@ -212,7 +176,12 @@ impl ModulePath {
 }
 
 fn path_attr(item: &ItemMod<'_>) -> MaybeResult<PathBuf> {
-    let item = syn::parse_str::<syn::ItemMod>(item.span.source_text())
+    let source = item.span.source_text();
+    // Known semantic models intentionally omit locations and cannot declare path attributes.
+    if source.is_empty() {
+        return Ok(None);
+    }
+    let item = syn::parse_str::<syn::ItemMod>(source)
         .map_err(|e| format!("ModulePath::path_attr: failed to parse module item: {e}"))?;
 
     Ok(item.attrs.into_iter().find_map(|attr| {

@@ -154,8 +154,7 @@ fn collect_pat_bindings_into(hir: &Hir<'_>, pat: PatId, bindings: &mut Vec<DefId
 mod tests {
     use super::*;
     use crate::{HirBuilder, ItemKind};
-    use syn_sem_ast as ast;
-    use syn_sem_ast::SyntaxCx;
+    use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
     use syn_sem_name::{collect::NameCollector, DefKind};
 
@@ -166,7 +165,7 @@ mod tests {
     ) -> (syn_sem_name::NameDb<'cx>, crate::Hir<'cx>) {
         let file_path = ccx.intern("body_lower_test.rs");
         let source_text = ccx.intern(source_text);
-        scx.parse_virtual_file(file_path, source_text)
+        scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameCollector::collect([ast::SourceInput { file_path, file }], [file_path])

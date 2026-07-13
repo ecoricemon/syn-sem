@@ -25,8 +25,8 @@ pub struct InputDesc<'cx, 'syn, Input: ?Sized> {
     pub file_path: FilePath<'cx>,
     /// Interned source text that owns `input`.
     pub source_text: SourceText<'cx>,
-    /// Locator populated for the parsed source that owns `input`.
-    pub locator: &'syn Locator,
+    /// Locator populated for the parsed source, when source locations are available.
+    pub locator: Option<&'syn Locator>,
     /// Borrowed syntax node being converted.
     pub input: &'syn Input,
 }
@@ -55,7 +55,10 @@ impl<'cx, 'syn, Input: ?Sized> InputDesc<'cx, 'syn, Input> {
 
     /// Creates a span for `item` in this descriptor's source.
     pub fn span<T: Locate + ?Sized>(self, item: &T) -> Span<'cx> {
-        Span::from_locatable(self.source_text, self.locator, item)
+        self.locator.map_or_else(
+            || Span::new(self.source_text),
+            |locator| Span::from_locatable(self.source_text, locator, item),
+        )
     }
 }
 
@@ -187,7 +190,16 @@ pub struct Span<'cx> {
 }
 
 impl<'cx> Span<'cx> {
-    /// Creates an empty span in `scx`.
+    /// Creates an empty span tied to `source_text`.
+    pub fn new(source_text: SourceText<'cx>) -> Self {
+        Self {
+            source_text,
+            start: 0,
+            end: 0,
+        }
+    }
+
+    /// Creates an empty text and span in `scx`.
     pub fn new_empty(scx: &'cx SyntaxCx<'cx>) -> Self {
         Self {
             source_text: scx.intern(""),

@@ -1,6 +1,6 @@
 use crate::Semantics;
 use std::path::Path;
-use syn_sem_ast::SyntaxCx;
+use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{CommonCx, FilePath, Result};
 use syn_sem_eval::{ConstValue, EvalDb};
 use syn_sem_hir::{Hir, HirBuilder};
@@ -42,7 +42,8 @@ impl<'tcx> TopCx<'tcx> {
             .common
             .source_text(entry_path)
             .ok_or_else(|| format!("source file is not stored: {entry_path}"))?;
-        self.syntax.parse_virtual_file(entry_path, source_text)?;
+        self.syntax
+            .parse_file(entry_path, source_text, SourceKind::Virtual)?;
         self.analyze_entry(entry_path)
     }
 
