@@ -1,9 +1,8 @@
 use crate::{
-    ExprLit, ExprPath, FromSyn, Ident, InputDesc, Path, Span, SyntaxCx, Type, TypePath,
-    TypeReference,
+    AstNode, AstNodeKind, ExprLit, ExprPath, FromSyn, Ident, InputDesc, Path, Span, SyntaxCx, Type,
+    TypePath, TypeReference,
 };
 use num_traits::ToPrimitive;
-use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A Rust pattern supported by the semantic AST.

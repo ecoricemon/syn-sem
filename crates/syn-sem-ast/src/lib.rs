@@ -3,6 +3,7 @@
 //! This crate stores AST nodes in a [`SyntaxCx`] and ties interned source data to the shared
 //! `syn-sem-common` context lifetime.
 
+mod ast_node;
 mod common;
 mod context;
 mod data;
@@ -18,6 +19,7 @@ mod restriction;
 mod stmt;
 mod ty;
 
+pub use ast_node::*;
 pub use common::*;
 pub use context::*;
 pub use data::*;

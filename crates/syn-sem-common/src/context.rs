@@ -1,15 +1,15 @@
 use crate::{FilePath, FrozenMap, InternedStr, MaybeResult, RawSourceText, Result, SourceText};
 use any_intern::DroplessInterner;
 use std::{
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     fs, io,
     path::{Path, PathBuf},
 };
 
 /// Root context for shared `syn-sem` infrastructure.
 ///
-/// `CommonCx` owns the string interner. Values with the `'ccx` lifetime, such as
-/// [`FilePath`] and [`SourceText`], are valid for the lifetime of this context's interner.
+/// `CommonCx` owns the string interner. Values with the `'ccx` lifetime, such as [`FilePath`] and
+/// [`SourceText`], are valid for the lifetime of this context's interner.
 #[derive(Debug, Default)]
 pub struct CommonCx {
     // `files` stores raw handles into `interner`. Keep it declared first so it is dropped before
@@ -164,7 +164,7 @@ impl StringInterner {
     }
 }
 
-impl std::fmt::Debug for StringInterner {
+impl Debug for StringInterner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StringInterner")
             .field("len", &self.len())
@@ -179,7 +179,7 @@ struct AbstractFiles {
     known_libraries: FrozenMap<String, Box<Path>>,
 }
 
-impl fmt::Debug for AbstractFiles {
+impl Debug for AbstractFiles {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AbstractFiles").finish_non_exhaustive()
     }

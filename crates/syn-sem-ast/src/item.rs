@@ -1,9 +1,8 @@
 use crate::{
-    Block, Expr, Field, FromSyn, Generics, Ident, InputDesc, Pat, PatIdent, PatType, Path, Span,
-    SyntaxCx, Type, Variant, Visibility,
+    AstNode, AstNodeKind, Block, Expr, Field, FromSyn, Generics, Ident, InputDesc, Pat, PatIdent,
+    PatType, Path, Span, SyntaxCx, Type, Variant, Visibility,
 };
 use std::iter;
-use syn_sem_common::{AstNode, AstNodeKind};
 use syn_sem_macros::CheckDropless;
 
 /// A top-level or block-level Rust item supported by the semantic AST.

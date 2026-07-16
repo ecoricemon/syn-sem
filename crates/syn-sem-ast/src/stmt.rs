@@ -1,5 +1,4 @@
-use crate::{Expr, FromSyn, InputDesc, Item, Pat, Span, SyntaxCx};
-use syn_sem_common::{AstNode, AstNodeKind};
+use crate::{AstNode, AstNodeKind, Expr, FromSyn, InputDesc, Item, Pat, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
 /// A braced block of statements.

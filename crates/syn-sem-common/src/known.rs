@@ -11,19 +11,19 @@ pub struct KnownLibrary {
     /// Virtual source path for this library.
     pub path: &'static str,
     /// Rust source used for the current lightweight known-library model.
-    pub source: &'static str,
+    pub source_text: &'static str,
 }
 
 /// Selected well-known libraries for a caller-controlled analysis setup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KnownLibraries {
+pub struct KnownLibraryConfig {
     /// Whether to include `core`.
     pub core: bool,
     /// Whether to include `std`.
     pub std: bool,
 }
 
-impl KnownLibraries {
+impl KnownLibraryConfig {
     /// Returns selected library sources in dependency order.
     pub fn sources(self) -> Vec<KnownLibrary> {
         let mut sources = Vec::new();
@@ -41,14 +41,14 @@ impl KnownLibraries {
 pub const CORE: KnownLibrary = KnownLibrary {
     name: "core",
     path: "__syn_sem_known_core.rs",
-    source: CORE_SOURCE,
+    source_text: CORE_SOURCE,
 };
 
 /// Lightweight `std` source for early semantic inference.
 pub const STD: KnownLibrary = KnownLibrary {
     name: "std",
     path: "__syn_sem_known_std.rs",
-    source: STD_SOURCE,
+    source_text: STD_SOURCE,
 };
 
 pub const CORE_SOURCE: &str = include_str!("known/core.rs");
@@ -68,7 +68,7 @@ mod tests {
     fn selects_no_known_libraries() {
         // Proves callers can opt out of loading slow well-known library inputs.
         assert_eq!(
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: false,
                 std: false,
             }
@@ -81,7 +81,7 @@ mod tests {
     fn selects_core_only() {
         // Proves `core` can be loaded without `std`.
         assert_eq!(
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: true,
                 std: false,
             }
@@ -94,7 +94,7 @@ mod tests {
     fn selects_std_after_core() {
         // Proves `std` pulls in `core` first because it re-exports core items.
         assert_eq!(
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: false,
                 std: true,
             }

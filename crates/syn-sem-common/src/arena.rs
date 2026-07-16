@@ -2,9 +2,9 @@ use std::ops::{Index, IndexMut};
 
 /// Builder for dense id-indexed arenas that need parent-first reservation.
 ///
-/// `ArenaBuilder` stores incomplete slots during construction, then freezes into
-/// a dense `Vec<T>` once every reserved id has been filled. This keeps partial
-/// arena state out of finalized query data structures.
+/// `ArenaBuilder` stores incomplete slots during construction, then freezes into a dense `Vec<T>`
+/// once every reserved id has been filled. This keeps partial arena state out of finalized query
+/// data structures.
 #[derive(Debug)]
 pub struct ArenaBuilder<I, T> {
     slots: Vec<Option<T>>,

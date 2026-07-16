@@ -1,5 +1,6 @@
-use crate::{Expr, FromSyn, Ident, InputDesc, Span, SyntaxCx, Type, Visibility};
-use syn_sem_common::{AstNode, AstNodeKind};
+use crate::{
+    AstNode, AstNodeKind, Expr, FromSyn, Ident, InputDesc, Span, SyntaxCx, Type, Visibility,
+};
 use syn_sem_macros::CheckDropless;
 
 /// A struct or union field.

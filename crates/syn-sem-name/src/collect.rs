@@ -7,15 +7,13 @@ use crate::{
     AstNodeId, DefId, DefKind, ImportId, ImportKind, Name, NameDb, Namespace, Origin, ScopeId,
     ScopeKind, Visibility,
 };
-use std::collections::BTreeMap;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{borrow::Borrow, collections::BTreeMap, io, path::PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, MaybeResult, Result, Set};
 
 /// Collects name-resolution facts from prepared AST inputs.
 pub struct NameCollector<'cx> {
-    files: BTreeMap<PathBuf, ast::SourceInput<'cx>>,
+    files: BTreeMap<FilePath<'cx>, ast::SourceInput<'cx>>,
     db: NameDb<'cx>,
 }
 
@@ -31,7 +29,7 @@ impl<'cx> NameCollector<'cx> {
         let this = Self {
             files: files
                 .into_iter()
-                .map(|input| (PathBuf::from(input.file_path.as_ref()), input))
+                .map(|input| (input.file_path, input))
                 .collect(),
             db: NameDb::default(),
         };
@@ -45,10 +43,10 @@ impl<'cx> NameCollector<'cx> {
         let root = self.db.root_scope();
         let mut seen = Set::default();
         for root_path in roots {
-            if !seen.insert(PathBuf::from(root_path.as_ref())) {
+            if !seen.insert(root_path) {
                 continue;
             }
-            let input = self.file(root_path)?;
+            let input = self.file(&root_path)?;
             let path = ast::ModulePath::from_entry_file(PathBuf::from(root_path.as_ref()));
             for item in input.file.items {
                 self.collect_item_from_module_tree(root, item, &path)?;
@@ -58,17 +56,21 @@ impl<'cx> NameCollector<'cx> {
         Ok(self.db)
     }
 
-    fn file(&self, file_path: FilePath<'cx>) -> Result<ast::SourceInput<'cx>> {
-        self.files
-            .get(Path::new(file_path.as_ref()))
-            .copied()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("name collection input is missing root file: {file_path}"),
-                )
-                .into()
-            })
+    fn file<Q>(&self, file_path: &Q) -> Result<ast::SourceInput<'cx>>
+    where
+        FilePath<'cx>: Borrow<Q> + Ord,
+        Q: Ord + AsRef<str> + ?Sized,
+    {
+        self.files.get(file_path).copied().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "name collection input is missing root file: {}",
+                    file_path.as_ref()
+                ),
+            )
+            .into()
+        })
     }
 
     fn child_file(
@@ -79,7 +81,7 @@ impl<'cx> NameCollector<'cx> {
         Ok(path
             .child_file_candidates(module)?
             .into_iter()
-            .find_map(|candidate| self.files.get(&candidate).copied()))
+            .find_map(|candidate| self.files.get(candidate.to_str()?).copied()))
     }
 
     /// Collects one item while walking a crate's module tree.

@@ -1,5 +1,4 @@
-use crate::{FromSyn, InputDesc, Item, Span, SyntaxCx};
-use syn_sem_common::{AstNode, AstNodeKind};
+use crate::{AstNode, AstNodeKind, FromSyn, InputDesc, Item, Span, SyntaxCx};
 use syn_sem_macros::CheckDropless;
 
 /// A parsed Rust source file.

@@ -1,22 +1,22 @@
 use criterion::black_box;
 use syn_sem_ast as ast;
 use syn_sem_ast::{SourceKind, SyntaxCx};
-use syn_sem_common::{known::KnownLibraries, CommonCx, FilePath};
+use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
 use syn_sem_hir::HirBuilder;
 use syn_sem_infer::{InferConstFacts, InferDb};
 use syn_sem_name::collect::NameCollector;
 
-pub(crate) const NO_KNOWN_LIBRARIES: KnownLibraries = KnownLibraries {
+pub(crate) const NO_KNOWN_LIBRARIES: KnownLibraryConfig = KnownLibraryConfig {
     core: false,
     std: false,
 };
 
-pub(crate) const CORE_KNOWN_LIBRARY: KnownLibraries = KnownLibraries {
+pub(crate) const CORE_KNOWN_LIBRARY: KnownLibraryConfig = KnownLibraryConfig {
     core: true,
     std: false,
 };
 
-pub(crate) fn run_analysis(source_text: &str, known: KnownLibraries) {
+pub(crate) fn run_analysis(source_text: &str, known: KnownLibraryConfig) {
     let ccx = CommonCx::default();
     let scx = SyntaxCx::new(&ccx);
     let entry_path = ccx.intern("infer_bench.rs");
@@ -26,7 +26,7 @@ pub(crate) fn run_analysis(source_text: &str, known: KnownLibraries) {
 
     for known in known.sources() {
         let file_path = ccx
-            .insert_virtual_file(known.path, known.source)
+            .insert_virtual_file(known.path, known.source_text)
             .expect("known source should be stored");
         let source_text = ccx
             .source_text(file_path)

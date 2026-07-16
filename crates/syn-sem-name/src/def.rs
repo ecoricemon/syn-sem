@@ -1,9 +1,9 @@
 use crate::{DefId, Name, Namespace, ScopeId};
 use std::marker::PhantomData;
-use syn_sem_common::{AstNode, AstNodeKind};
+use syn_sem_ast::{AstNode, AstNodeKind};
 
 /// Named definition known to the resolver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Def<'cx> {
     /// Definition id.
     pub id: DefId,
@@ -33,7 +33,7 @@ pub struct Def<'cx> {
 }
 
 /// Scopes owned by or directly attached to a definition.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefScopes {
     /// Scope used when path resolution descends through this definition.
     ///

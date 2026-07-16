@@ -2,7 +2,7 @@ use super::*;
 use crate::{ArrayLen, InferConstFacts, InferDb, PrimitiveType, Type, TypeId};
 use syn_sem_ast as ast;
 use syn_sem_ast::{SourceKind, SyntaxCx};
-use syn_sem_common::{known::KnownLibraries, CommonCx, FilePath};
+use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
 use syn_sem_hir as hir;
 use syn_sem_hir::{Hir, HirBuilder, ItemKind};
 use syn_sem_name::{collect::NameCollector, DefKind, NameDb};
@@ -16,7 +16,7 @@ fn analyze<'cx>(
         ccx,
         scx,
         source_text,
-        KnownLibraries {
+        KnownLibraryConfig {
             core: false,
             std: false,
         },
@@ -27,7 +27,7 @@ fn analyze_with_known<'cx>(
     ccx: &'cx CommonCx,
     scx: &'cx SyntaxCx<'cx>,
     source_text: &str,
-    known: KnownLibraries,
+    known: KnownLibraryConfig,
 ) -> (NameDb<'cx>, Hir<'cx>, InferDb<'cx>) {
     let entry_path = ccx.intern("subject_type_infer_test.rs");
     let entry = parse_source(ccx, scx, entry_path, source_text);
@@ -35,7 +35,7 @@ fn analyze_with_known<'cx>(
     let mut roots = vec![entry_path];
     for known in known.sources() {
         let file_path = ccx
-            .insert_virtual_file(known.path, known.source)
+            .insert_virtual_file(known.path, known.source_text)
             .expect("known source should be stored");
         let source_text = ccx
             .source_text(file_path)
@@ -421,7 +421,7 @@ mod expressions {
                 let y = x + 1;
             }
             "#,
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: true,
                 std: false,
             },
@@ -492,7 +492,7 @@ mod expressions {
                 let rem_right_value = left % value;
             }
             "#,
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: true,
                 std: false,
             },
@@ -544,7 +544,7 @@ mod expressions {
                 let bool_or = flag | other_flag;
             }
             "#,
-            KnownLibraries {
+            KnownLibraryConfig {
                 core: true,
                 std: false,
             },
