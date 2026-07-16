@@ -29,7 +29,7 @@ pub struct Def<'cx> {
     pub visibility: Visibility,
 
     /// Source origin associated with this definition.
-    pub origin: Origin,
+    pub origin: Origin<'cx>,
 }
 
 /// Scopes owned by or directly attached to a definition.
@@ -173,12 +173,13 @@ pub enum Visibility {
 
 /// Source origin associated with a definition or import.
 ///
-/// This is the place where future source mapping can attach diagnostics, go-to-definition
-/// information, or incremental invalidation data to `Def` and `Import` entries. For now, the name
-/// database records untracked origins because no stable AST-node identity is wired through the
-/// integration layer yet.
+/// Entries collected from semantic AST nodes retain that identity, while synthetic or externally
+/// constructed entries can remain untracked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Origin {
+pub enum Origin<'cx> {
+    /// Entry created from an AST declaration node.
+    Ast(AstNodeId<'cx>),
+
     /// Source origin is not tracked for this entry.
     Untracked,
 }

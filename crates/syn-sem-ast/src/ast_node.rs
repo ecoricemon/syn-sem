@@ -27,6 +27,10 @@ pub enum AstNodeKind {
     ItemUse,
     /// Identifier binding pattern payload node.
     PatIdent,
+    /// Type generic parameter node.
+    TypeParam,
+    /// Const generic parameter node.
+    ConstParam,
     /// Struct or union field node.
     Field,
     /// Enum variant node.

@@ -131,9 +131,13 @@ impl<'cx> NameCollector<'cx> {
         ast_node: AstNodeId<'cx>,
     ) -> Result<()> {
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let module_def =
-            self.add_named_def(parent_scope, DefKind::Module, item.ident.inner, visibility);
-        self.db.set_def_ast_node(module_def, ast_node);
+        let module_def = self.add_named_def(
+            parent_scope,
+            DefKind::Module,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
         self.db.set_path_scope(module_def, module_scope);
 
@@ -159,9 +163,13 @@ impl<'cx> NameCollector<'cx> {
         ast_node: AstNodeId<'cx>,
     ) {
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let module_def =
-            self.add_named_def(parent_scope, DefKind::Module, item.ident.inner, visibility);
-        self.db.set_def_ast_node(module_def, ast_node);
+        let module_def = self.add_named_def(
+            parent_scope,
+            DefKind::Module,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
         let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
         self.db.set_path_scope(module_def, module_scope);
 
@@ -186,8 +194,13 @@ impl<'cx> NameCollector<'cx> {
     ) {
         // DefKind::Const
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let def = self.add_named_def(parent_scope, DefKind::Const, item.ident.inner, visibility);
-        self.db.set_def_ast_node(def, ast_node);
+        self.add_named_def(
+            parent_scope,
+            DefKind::Const,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
     }
 
     /// For `enum E<T> { V }`, this creates the following definition and scope hierarchy:
@@ -219,9 +232,13 @@ impl<'cx> NameCollector<'cx> {
     ) {
         // DefKind::Enum
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let enum_def =
-            self.add_named_def(parent_scope, DefKind::Enum, item.ident.inner, visibility);
-        self.db.set_def_ast_node(enum_def, ast_node);
+        let enum_def = self.add_named_def(
+            parent_scope,
+            DefKind::Enum,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -234,13 +251,13 @@ impl<'cx> NameCollector<'cx> {
         let path_scope = self.db.add_scope(ScopeKind::Item, Some(path_parent_scope));
         self.db.set_path_scope(enum_def, path_scope);
         for variant in item.variants {
-            let def = self.add_named_def(
+            self.add_named_def(
                 path_scope,
                 DefKind::Variant,
                 variant.ident.inner,
                 visibility,
+                AstNodeId::from_ref(variant),
             );
-            self.db.set_def_ast_node(def, AstNodeId::from_ref(variant));
         }
     }
 
@@ -278,12 +295,16 @@ impl<'cx> NameCollector<'cx> {
     ) {
         // DefKind::Fn
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let fn_def =
-            self.add_named_def(parent_scope, DefKind::Fn, item.sig.ident.inner, visibility);
-        self.db.set_def_ast_node(fn_def, ast_node);
+        let fn_def = self.add_named_def(
+            parent_scope,
+            DefKind::Fn,
+            item.sig.ident.inner,
+            visibility,
+            ast_node,
+        );
 
         // Generic scope
-        let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
+        let generic_scope = self.create_generic_scope(parent_scope, &item.sig.generics);
         if let Some(generic_scope) = generic_scope {
             self.db.set_generic_scope(fn_def, generic_scope);
         }
@@ -318,8 +339,13 @@ impl<'cx> NameCollector<'cx> {
     ) {
         // DefKind::Struct
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let def = self.add_named_def(parent_scope, DefKind::Struct, item.ident.inner, visibility);
-        self.db.set_def_ast_node(def, ast_node);
+        let def = self.add_named_def(
+            parent_scope,
+            DefKind::Struct,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
 
         // Generic scope
         if let Some(generic_scope) = self.create_generic_scope(parent_scope, &item.generics) {
@@ -354,9 +380,13 @@ impl<'cx> NameCollector<'cx> {
     ) {
         // Trait Def
         let visibility = self.visibility_from_ast(parent_scope, &item.vis);
-        let trait_def =
-            self.add_named_def(parent_scope, DefKind::Trait, item.ident.inner, visibility);
-        self.db.set_def_ast_node(trait_def, ast_node);
+        let trait_def = self.add_named_def(
+            parent_scope,
+            DefKind::Trait,
+            item.ident.inner,
+            visibility,
+            ast_node,
+        );
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -402,8 +432,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocConst,
                     item.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
                 {
                     self.db.set_generic_scope(def, generic_scope);
@@ -415,8 +445,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocFn,
                     item.sig.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 let generic_scope = self.create_generic_scope(trait_scope, &item.sig.generics);
                 if let Some(generic_scope) = generic_scope {
                     self.db.set_generic_scope(def, generic_scope);
@@ -434,8 +464,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocType,
                     item.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
                 {
                     self.db.set_generic_scope(def, generic_scope);
@@ -475,9 +505,8 @@ impl<'cx> NameCollector<'cx> {
             DefKind::Impl,
             None,
             Visibility::Private,
-            Origin::Untracked,
+            Origin::Ast(ast_node),
         );
-        self.db.set_def_ast_node(impl_def, ast_node);
 
         // Generic scope
         let generic_scope = self.create_generic_scope(parent_scope, &item.generics);
@@ -520,8 +549,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocConst,
                     item.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
                     self.db.set_generic_scope(def, generic_scope);
                 }
@@ -532,8 +561,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocFn,
                     item.sig.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 let generic_scope = self.create_generic_scope(impl_scope, &item.sig.generics);
                 if let Some(generic_scope) = generic_scope {
                     self.db.set_generic_scope(def, generic_scope);
@@ -549,8 +578,8 @@ impl<'cx> NameCollector<'cx> {
                     DefKind::AssocType,
                     item.ident.inner,
                     Visibility::Private,
+                    ast_node,
                 );
-                self.db.set_def_ast_node(def, ast_node);
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
                     self.db.set_generic_scope(def, generic_scope);
                 }
@@ -586,8 +615,8 @@ impl<'cx> NameCollector<'cx> {
             DefKind::TypeAlias,
             item.ident.inner,
             visibility,
+            ast_node,
         );
-        self.db.set_def_ast_node(def, ast_node);
 
         // Generic scope
         if let Some(generic_scope) = self.create_generic_scope(parent_scope, &item.generics) {
@@ -712,9 +741,13 @@ impl<'cx> NameCollector<'cx> {
     fn collect_pat(&mut self, scope: ScopeId, pat: &'cx ast::Pat<'cx>) {
         match pat {
             ast::Pat::Ident(pat) => {
-                let def =
-                    self.add_named_def(scope, DefKind::Local, pat.ident.inner, Visibility::Private);
-                self.db.set_def_ast_node(def, AstNodeId::from_ref(pat));
+                self.add_named_def(
+                    scope,
+                    DefKind::Local,
+                    pat.ident.inner,
+                    Visibility::Private,
+                    AstNodeId::from_ref(pat),
+                );
             }
             ast::Pat::Reference(pat) => self.collect_pat(scope, pat.pat),
             ast::Pat::Slice(pat) => {
@@ -757,6 +790,7 @@ impl<'cx> NameCollector<'cx> {
                         DefKind::GenericType,
                         param.ident.inner,
                         Visibility::Private,
+                        AstNodeId::from_ref(param),
                     );
                 }
                 ast::GenericParam::Const(param) => {
@@ -765,6 +799,7 @@ impl<'cx> NameCollector<'cx> {
                         DefKind::GenericConst,
                         param.ident.inner,
                         Visibility::Private,
+                        AstNodeId::from_ref(param),
                     );
                 }
                 ast::GenericParam::Unsupported(_) => {}
@@ -796,9 +831,10 @@ impl<'cx> NameCollector<'cx> {
         kind: DefKind,
         name: Name<'cx>,
         visibility: Visibility,
+        ast_node: AstNodeId<'cx>,
     ) -> DefId {
         self.db
-            .add_def(scope, kind, Some(name), visibility, Origin::Untracked)
+            .add_def(scope, kind, Some(name), visibility, Origin::Ast(ast_node))
     }
 
     fn visibility_from_ast(&self, scope: ScopeId, vis: &ast::Visibility<'cx>) -> Visibility {

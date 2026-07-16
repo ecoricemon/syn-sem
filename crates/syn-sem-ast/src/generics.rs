@@ -1,4 +1,4 @@
-use crate::{Expr, FromSyn, Ident, InputDesc, Path, Span, SyntaxCx, Type};
+use crate::{AstNode, AstNodeKind, Expr, FromSyn, Ident, InputDesc, Path, Span, SyntaxCx, Type};
 use syn_sem_macros::CheckDropless;
 
 /// Generic parameters and where-clause information for an item or signature.
@@ -66,6 +66,10 @@ pub struct TypeParam<'cx> {
     pub span: Span<'cx>,
 }
 
+impl AstNode for TypeParam<'_> {
+    const KIND: AstNodeKind = AstNodeKind::TypeParam;
+}
+
 impl<'cx> FromSyn<'cx, syn::TypeParam> for TypeParam<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::TypeParam>) -> Self {
         Self {
@@ -98,6 +102,10 @@ pub struct ConstParam<'cx> {
     pub default: Option<&'cx Expr<'cx>>,
     /// Source span of the parameter.
     pub span: Span<'cx>,
+}
+
+impl AstNode for ConstParam<'_> {
+    const KIND: AstNodeKind = AstNodeKind::ConstParam;
 }
 
 impl<'cx> FromSyn<'cx, syn::ConstParam> for ConstParam<'cx> {

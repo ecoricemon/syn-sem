@@ -2419,19 +2419,18 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
+        let item = &file.items[0];
+        let ast::Item::Struct(_) = item else {
+            panic!("expected struct item");
+        };
         let mut names = NameDb::default();
         let def = names.add_def(
             names.root_scope(),
             DefKind::Struct,
             Some(ccx.intern("S")),
             NameVisibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(item)),
         );
-        let item = &file.items[0];
-        let ast::Item::Struct(_) = item else {
-            panic!("expected struct item");
-        };
-        names.set_def_ast_node(def, AstNodeId::from_ref(item));
 
         let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[0].def, Some(def));
@@ -2491,34 +2490,30 @@ mod tests {
             DefKind::Impl,
             None,
             NameVisibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(first_impl_item)),
         );
-        names.set_def_ast_node(first_impl_def, AstNodeId::from_ref(first_impl_item));
         let second_impl_def = names.add_def(
             root,
             DefKind::Impl,
             None,
             NameVisibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(second_impl_item)),
         );
-        names.set_def_ast_node(second_impl_def, AstNodeId::from_ref(second_impl_item));
 
         let first_fn_def = names.add_def(
             root,
             DefKind::AssocFn,
             Some(first_fn.sig.ident.inner),
             NameVisibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(first_fn_item)),
         );
-        names.set_def_ast_node(first_fn_def, AstNodeId::from_ref(first_fn_item));
         let second_fn_def = names.add_def(
             root,
             DefKind::AssocFn,
             Some(second_fn.sig.ident.inner),
             NameVisibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(second_fn_item)),
         );
-        names.set_def_ast_node(second_fn_def, AstNodeId::from_ref(second_fn_item));
 
         let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[1].def, Some(first_impl_def));

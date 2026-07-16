@@ -147,8 +147,6 @@ impl<'cx> FromSyn<'cx, syn::ItemEnum> for ItemEnum<'cx> {
 pub struct ItemFn<'cx> {
     /// Item visibility.
     pub vis: Visibility<'cx>,
-    /// Generic parameters and where-clause.
-    pub generics: Generics<'cx>,
     /// Function signature.
     pub sig: Signature<'cx>,
     /// Function body.
@@ -165,7 +163,6 @@ impl<'cx> FromSyn<'cx, syn::ItemFn> for ItemFn<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemFn>) -> Self {
         Self {
             vis: Visibility::from_syn(scx, desc.with_input(&desc.input.vis)),
-            generics: Generics::from_syn(scx, desc.with_input(&desc.input.sig.generics)),
             sig: Signature::from_syn(scx, desc.with_input(&desc.input.sig)),
             block: Block::from_syn(scx, desc.with_input(&desc.input.block)),
             span: desc.span(desc.input),
@@ -976,7 +973,6 @@ mod tests {
 
         let item_fn = parse::<T, U>(&scx, "fn f<T>(value: T) -> T { value }");
         assert_eq!(&*item_fn.sig.ident, "f");
-        assert_eq!(item_fn.generics.params.len(), 1);
         assert_eq!(item_fn.sig.generics.params.len(), 1);
         assert!(matches!(
             item_fn.sig.generics.params[0],

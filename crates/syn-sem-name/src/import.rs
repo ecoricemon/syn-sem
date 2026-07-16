@@ -22,7 +22,7 @@ pub struct Import<'cx> {
     pub status: ImportStatus,
 
     /// Source origin associated with this import.
-    pub origin: Origin,
+    pub origin: Origin<'cx>,
 }
 
 /// Kind of import declaration.

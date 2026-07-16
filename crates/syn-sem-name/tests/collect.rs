@@ -492,7 +492,7 @@ mod scopes {
             &scx,
             "src/lib.rs",
             r#"
-        fn f<T>(x: T) {
+        fn f<T, const N: usize>(x: T) {
             let y = x;
         }
         "#,
@@ -500,6 +500,13 @@ mod scopes {
         let ast::Item::Fn(item) = &entry.file.items[0] else {
             panic!("expected function item");
         };
+        let [ast::GenericParam::Type(type_param), ast::GenericParam::Const(const_param)] =
+            item.sig.generics.params
+        else {
+            panic!("expected type and const generic parameters");
+        };
+        let type_param_node = AstNodeId::from_ref(type_param);
+        let const_param_node = AstNodeId::from_ref(const_param);
         let block_node = AstNodeId::from_ref(&item.block);
         let ast::Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
             panic!("expected parameter ident pattern");
@@ -524,10 +531,14 @@ mod scopes {
         let block_scope = scope(&db, ScopeKind::Block, 0);
 
         assert_eq!(db.scope_for_ast_node(block_node), Some(block_scope));
-        assert_eq!(
-            direct_type_binding(&db, generic_scope, tcx.common.intern("T")).map(|def| db[def].kind),
-            Some(DefKind::GenericType)
-        );
+        let type_param_def =
+            direct_type_binding(&db, generic_scope, tcx.common.intern("T")).unwrap();
+        assert_eq!(db[type_param_def].kind, DefKind::GenericType);
+        assert_eq!(db.def_for_ast_node(type_param_node), Some(type_param_def));
+        let const_param_def =
+            direct_value_binding(&db, generic_scope, tcx.common.intern("N")).unwrap();
+        assert_eq!(db[const_param_def].kind, DefKind::GenericConst);
+        assert_eq!(db.def_for_ast_node(const_param_node), Some(const_param_def));
         assert_eq!(
             db.binding(function_scope, Namespace::Value, tcx.common.intern("x"))
                 .and_then(|binding| binding.iter().next())

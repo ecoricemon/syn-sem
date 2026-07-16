@@ -89,15 +89,6 @@ impl<'cx> NameDb<'cx> {
         self.ast_defs.get(&node).copied()
     }
 
-    /// Records that `def` was created from `node`.
-    pub fn set_def_ast_node(&mut self, def: DefId, node: AstNodeId<'cx>) {
-        let old = self.ast_defs.insert(node, def);
-        assert!(
-            old.is_none() || old == Some(def),
-            "one AST node cannot create multiple definitions"
-        );
-    }
-
     /// Returns the scope created from `node`, if one is tracked.
     pub fn scope_for_ast_node(&self, node: AstNodeId<'cx>) -> Option<ScopeId> {
         self.ast_scopes.get(&node).copied()
@@ -178,7 +169,7 @@ impl<'cx> NameDb<'cx> {
         kind: DefKind,
         name: Option<Name<'cx>>,
         visibility: Visibility,
-        origin: Origin,
+        origin: Origin<'cx>,
     ) -> DefId {
         self.add_def_in_namespaces(
             parent_scope,
@@ -198,7 +189,7 @@ impl<'cx> NameDb<'cx> {
         name: Option<Name<'cx>>,
         namespaces: impl Iterator<Item = Namespace>,
         visibility: Visibility,
-        origin: Origin,
+        origin: Origin<'cx>,
     ) -> DefId {
         let id = DefId::new(self.defs.len());
         self.defs.push(Def {
@@ -211,6 +202,14 @@ impl<'cx> NameDb<'cx> {
             visibility,
             origin,
         });
+
+        if let Origin::Ast(node) = origin {
+            let old = self.ast_defs.insert(node, id);
+            assert!(
+                old.is_none(),
+                "one AST node cannot create multiple definitions"
+            );
+        }
 
         if let Some(name) = name {
             for namespace in namespaces {
@@ -228,7 +227,7 @@ impl<'cx> NameDb<'cx> {
         source_path: Vec<Name<'cx>>,
         kind: ImportKind<'cx>,
         visibility: Visibility,
-        origin: Origin,
+        origin: Origin<'cx>,
     ) -> ImportId {
         let id = ImportId::new(self.imports.len());
         self.imports.push(Import {
@@ -404,7 +403,7 @@ impl<'cx> NameDb<'cx> {
         parent_scope: ScopeId,
         name: Option<Name<'cx>>,
         visibility: Visibility,
-        origin: Origin,
+        origin: Origin<'cx>,
         target: DefId,
     ) -> DefId {
         if let Some(def) = self.defs.iter().find(|def| {

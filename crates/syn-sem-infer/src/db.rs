@@ -1129,6 +1129,22 @@ mod tests {
         let iterator = ccx.intern("Iterator");
         let vec = ccx.intern("Vec");
         let item = ccx.intern("Item");
+        let ast::Item::Struct(_) = &file.items[0] else {
+            panic!("expected struct item");
+        };
+        let ast::Item::Trait(trait_item) = &file.items[1] else {
+            panic!("expected trait item");
+        };
+        let ast::TraitItem::Type(_) = &trait_item.items[0] else {
+            panic!("expected trait associated type");
+        };
+        let ast::Item::Impl(impl_item) = &file.items[2] else {
+            panic!("expected impl item");
+        };
+        let ast::ImplItem::Type(_) = &impl_item.items[0] else {
+            panic!("expected impl associated type");
+        };
+
         let mut names = NameDb::default();
         let root = names.root_scope();
         let vec_def = names.add_def(
@@ -1136,14 +1152,14 @@ mod tests {
             DefKind::Struct,
             Some(vec),
             Visibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(&file.items[0])),
         );
         let iterator_def = names.add_def(
             root,
             DefKind::Trait,
             Some(iterator),
             Visibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(&file.items[1])),
         );
         let iterator_scope = names.add_scope(ScopeKind::Trait, Some(root));
         names.set_path_scope(iterator_def, iterator_scope);
@@ -1159,26 +1175,8 @@ mod tests {
             DefKind::AssocType,
             Some(item),
             Visibility::Private,
-            Origin::Untracked,
+            Origin::Ast(AstNodeId::from_ref(&impl_item.items[0])),
         );
-        let ast::Item::Struct(_) = &file.items[0] else {
-            panic!("expected struct item");
-        };
-        names.set_def_ast_node(vec_def, AstNodeId::from_ref(&file.items[0]));
-        let ast::Item::Trait(trait_item) = &file.items[1] else {
-            panic!("expected trait item");
-        };
-        names.set_def_ast_node(iterator_def, AstNodeId::from_ref(&file.items[1]));
-        let ast::TraitItem::Type(_) = &trait_item.items[0] else {
-            panic!("expected trait associated type");
-        };
-        let ast::Item::Impl(impl_item) = &file.items[2] else {
-            panic!("expected impl item");
-        };
-        let ast::ImplItem::Type(_) = &impl_item.items[0] else {
-            panic!("expected impl associated type");
-        };
-        names.set_def_ast_node(impl_item_def, AstNodeId::from_ref(&impl_item.items[0]));
 
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());

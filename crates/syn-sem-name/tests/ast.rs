@@ -62,7 +62,7 @@ impl<'cx> AstNameCollector<'cx> {
         self.add_named(parent_scope, DefKind::Fn, item.sig.ident.inner);
 
         let generic_scope = self.db.add_scope(ScopeKind::Generic, Some(parent_scope));
-        self.collect_generics_into(generic_scope, &item.generics);
+        self.collect_generics_into(generic_scope, &item.sig.generics);
 
         let body_scope = self.db.add_scope(ScopeKind::Function, Some(generic_scope));
 
