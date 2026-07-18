@@ -20,40 +20,40 @@ mod files {
         assert!(!semantics.hir().items().is_empty());
 
         let db = semantics.names();
-        let root = db.root_scope();
+        let crate_scope = db.crate_scope();
 
         assert!(db
             .import_ids()
             .all(|import| db[import].status == ImportStatus::Resolved));
 
         assert_eq!(
-            resolve_kind(&tcx, db, root, Namespace::Type, "b1"),
+            resolve_kind(&tcx, db, crate_scope, Namespace::Type, "b1"),
             DefKind::Module
         );
         assert_eq!(
-            resolve_kind(&tcx, db, root, Namespace::Type, "c1"),
+            resolve_kind(&tcx, db, crate_scope, Namespace::Type, "c1"),
             DefKind::Module
         );
         assert_eq!(
-            resolve_kind(&tcx, db, root, Namespace::Type, "dx"),
+            resolve_kind(&tcx, db, crate_scope, Namespace::Type, "dx"),
             DefKind::Module
         );
         assert_eq!(
-            resolve_kind(&tcx, db, root, Namespace::Type, "e1"),
+            resolve_kind(&tcx, db, crate_scope, Namespace::Type, "e1"),
             DefKind::Module
         );
         assert_eq!(
-            follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromB1"),
+            follow_aliases_kind(&tcx, db, crate_scope, Namespace::Type, "FromB1"),
             DefKind::Struct
         );
         assert_eq!(
-            follow_aliases_kind(&tcx, db, root, Namespace::Type, "FromC1"),
+            follow_aliases_kind(&tcx, db, crate_scope, Namespace::Type, "FromC1"),
             DefKind::Struct
         );
 
-        let b1_scope = get_module_scope(&tcx, db, root, "b1");
-        let dx_scope = get_module_scope(&tcx, db, root, "dx");
-        let e1_scope = get_module_scope(&tcx, db, root, "e1");
+        let b1_scope = get_module_scope(&tcx, db, crate_scope, "b1");
+        let dx_scope = get_module_scope(&tcx, db, crate_scope, "dx");
+        let e1_scope = get_module_scope(&tcx, db, crate_scope, "e1");
 
         assert_eq!(
             resolve_kind(&tcx, db, b1_scope, Namespace::Type, "b2"),

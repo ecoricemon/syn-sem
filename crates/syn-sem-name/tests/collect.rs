@@ -35,7 +35,7 @@ fn collect<'cx>(
 }
 
 fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {
-    let ResolveResult::Found(def) = db.resolve_type_path(db.root_scope(), [name].into_iter())
+    let ResolveResult::Found(def) = db.resolve_type_path(db.crate_scope(), [name].into_iter())
     else {
         panic!("expected root type path {name:?} to resolve");
     };
@@ -44,7 +44,7 @@ fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {
 
 fn path_type<'cx>(db: &NameDb<'cx>, path: impl IntoIterator<Item = Name<'cx>>) -> DefId {
     let path = path.into_iter().collect::<Vec<_>>();
-    let ResolveResult::Found(def) = db.resolve_type_path(db.root_scope(), path.into_iter()) else {
+    let ResolveResult::Found(def) = db.resolve_type_path(db.crate_scope(), path.into_iter()) else {
         panic!("expected type path to resolve");
     };
     def
@@ -203,16 +203,16 @@ mod imports {
         );
 
         let db = collect([entry], entry.file_path);
-        let root = db.root_scope();
+        let crate_scope = db.crate_scope();
         let a = tcx.common.intern("a");
         let b = tcx.common.intern("b");
         let c = tcx.common.intern("c");
         let d = tcx.common.intern("d");
 
         assert_eq!(db.import_count(), 3);
-        let single = import_for(&db, root, &[a, b]);
-        let renamed = import_for(&db, root, &[a, c]);
-        let glob = import_for(&db, root, &[a]);
+        let single = import_for(&db, crate_scope, &[a, b]);
+        let renamed = import_for(&db, crate_scope, &[a, c]);
+        let glob = import_for(&db, crate_scope, &[a]);
         assert_eq!(db[single].kind, ImportKind::Single);
         assert_eq!(db[renamed].kind, ImportKind::Rename(d));
         assert_eq!(db[glob].kind, ImportKind::Glob);
@@ -242,9 +242,11 @@ mod visibility {
             "src/lib.rs",
             r#"
         mod a {
+            pub struct Public;
             pub(crate) struct CrateVisible;
             pub(super) struct SuperVisible;
             pub(in crate::a) struct InA;
+            struct Private;
 
             pub mod child {
                 use super::InA;
@@ -260,10 +262,24 @@ mod visibility {
         );
 
         let db = collect([entry], entry.file_path);
-        let root = db.root_scope();
-        let a_scope = module_scope(&db, root, tcx.common.intern("a"));
+        let crate_scope = db.crate_scope();
+        let a_scope = module_scope(&db, crate_scope, tcx.common.intern("a"));
         let child_scope = module_scope(&db, a_scope, tcx.common.intern("child"));
-        let b_scope = module_scope(&db, root, tcx.common.intern("b"));
+        let b_scope = module_scope(&db, crate_scope, tcx.common.intern("b"));
+
+        let public = direct_type_binding(&db, a_scope, tcx.common.intern("Public")).unwrap();
+        let crate_visible =
+            direct_type_binding(&db, a_scope, tcx.common.intern("CrateVisible")).unwrap();
+        let super_visible =
+            direct_type_binding(&db, a_scope, tcx.common.intern("SuperVisible")).unwrap();
+        let in_a = direct_type_binding(&db, a_scope, tcx.common.intern("InA")).unwrap();
+        let private = direct_type_binding(&db, a_scope, tcx.common.intern("Private")).unwrap();
+
+        assert_eq!(db[public].visibility, db.root_scope());
+        assert_eq!(db[crate_visible].visibility, db.crate_scope());
+        assert_eq!(db[super_visible].visibility, db.crate_scope());
+        assert_eq!(db[in_a].visibility, a_scope);
+        assert_eq!(db[private].visibility, a_scope);
 
         assert_eq!(
             follow_aliases_kind(&db, child_scope, Namespace::Type, tcx.common.intern("InA")),
@@ -423,9 +439,9 @@ mod scopes {
         );
 
         let db = collect([entry], entry.file_path);
-        let root = db.root_scope();
+        let crate_scope = db.crate_scope();
 
-        let s = direct_type_binding(&db, root, tcx.common.intern("S")).unwrap();
+        let s = direct_type_binding(&db, crate_scope, tcx.common.intern("S")).unwrap();
         assert_eq!(db[s].kind, DefKind::Struct);
         assert_eq!(
             db[db.def_generic_scope(s).unwrap()].kind,
@@ -434,7 +450,7 @@ mod scopes {
         assert!(db.def_path_scope(s).is_none());
         assert!(db.def_body_scope(s).is_none());
 
-        let e = direct_type_binding(&db, root, tcx.common.intern("E")).unwrap();
+        let e = direct_type_binding(&db, crate_scope, tcx.common.intern("E")).unwrap();
         assert_eq!(db[e].kind, DefKind::Enum);
         let e_generic = db.def_generic_scope(e).unwrap();
         let e_path = db.def_path_scope(e).unwrap();
@@ -444,7 +460,7 @@ mod scopes {
         let variant = direct_type_binding(&db, e_path, tcx.common.intern("V")).unwrap();
         assert_eq!(db[variant].kind, DefKind::Variant);
 
-        let tr = direct_type_binding(&db, root, tcx.common.intern("Tr")).unwrap();
+        let tr = direct_type_binding(&db, crate_scope, tcx.common.intern("Tr")).unwrap();
         assert_eq!(db[tr].kind, DefKind::Trait);
         let tr_generic = db.def_generic_scope(tr).unwrap();
         let tr_scope = unique_child_scope(&db, tr_generic, ScopeKind::Trait);
@@ -473,7 +489,7 @@ mod scopes {
         assert_eq!(db[make_body].kind, ScopeKind::Function);
         assert_eq!(db[make_body].parent, Some(make_generic));
 
-        let f = direct_value_binding(&db, root, tcx.common.intern("f")).unwrap();
+        let f = direct_value_binding(&db, crate_scope, tcx.common.intern("f")).unwrap();
         assert_eq!(db[f].kind, DefKind::Fn);
         let f_generic = db.def_generic_scope(f).unwrap();
         let f_body = db.def_body_scope(f).unwrap();
@@ -521,7 +537,7 @@ mod scopes {
         let db = collect([entry], entry.file_path);
         let f = direct_binding(
             &db,
-            db.root_scope(),
+            db.crate_scope(),
             Namespace::Value,
             tcx.common.intern("f"),
         )

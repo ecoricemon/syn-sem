@@ -516,9 +516,7 @@ mod tests {
     use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
     use syn_sem_hir as hir;
-    use syn_sem_name::{
-        collect::NameCollector, AstNodeId, DefKind, NameDb, Origin, ScopeKind, Visibility,
-    };
+    use syn_sem_name::{collect::NameCollector, AstNodeId, DefKind, NameDb, Origin, ScopeKind};
 
     fn infer_ty_ids<'cx>(
         ccx: &'cx CommonCx,
@@ -766,11 +764,12 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let local = ccx.intern("Local");
         let mut names = NameDb::default();
+        let crate_scope = names.crate_scope();
         let local_def = names.add_def(
-            names.root_scope(),
+            crate_scope,
             DefKind::Struct,
             Some(local),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Local }", &names);
@@ -788,11 +787,12 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
         let mut names = NameDb::default();
+        let crate_scope = names.crate_scope();
         let t_def = names.add_def(
-            names.root_scope(),
+            crate_scope,
             DefKind::GenericType,
             Some(t),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: T }", &names);
@@ -810,11 +810,12 @@ mod tests {
         let scx = SyntaxCx::new(&ccx);
         let item = ccx.intern("Item");
         let mut names = NameDb::default();
+        let crate_scope = names.crate_scope();
         let item_def = names.add_def(
-            names.root_scope(),
+            crate_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Item }", &names);
@@ -841,28 +842,29 @@ mod tests {
         let trait_name = ccx.intern("Trait");
         let item = ccx.intern("Item");
         let mut names = NameDb::default();
-        let root = names.root_scope();
+        let root_scope = names.root_scope();
+        let crate_scope = names.crate_scope();
         let t_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::GenericType,
             Some(t),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let a_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Module,
             Some(a),
-            Visibility::Public,
+            root_scope,
             Origin::Untracked,
         );
-        let a_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(root));
+        let a_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(crate_scope));
         names.set_path_scope(a_def, a_scope);
         let b_def = names.add_def(
             a_scope,
             DefKind::Module,
             Some(b),
-            Visibility::Public,
+            root_scope,
             Origin::Untracked,
         );
         let b_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(a_scope));
@@ -871,7 +873,7 @@ mod tests {
             b_scope,
             DefKind::Trait,
             Some(trait_name),
-            Visibility::Public,
+            root_scope,
             Origin::Untracked,
         );
         let trait_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(b_scope));
@@ -880,7 +882,7 @@ mod tests {
             trait_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Public,
+            root_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(
@@ -951,35 +953,35 @@ mod tests {
         let iterator = ccx.intern("Iterator");
         let item = ccx.intern("Item");
         let mut names = NameDb::default();
-        let root = names.root_scope();
+        let crate_scope = names.crate_scope();
         let t_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::GenericType,
             Some(t),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let iterator_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Trait,
             Some(iterator),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
-        let iterator_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(root));
+        let iterator_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(crate_scope));
         names.set_path_scope(iterator_def, iterator_scope);
         let iterator_item_def = names.add_def(
             iterator_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let item_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(
@@ -1059,28 +1061,28 @@ mod tests {
         let display = ccx.intern("Display");
         let item = ccx.intern("Item");
         let mut names = NameDb::default();
-        let root = names.root_scope();
+        let crate_scope = names.crate_scope();
         let t_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::GenericType,
             Some(t),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let display_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Trait,
             Some(display),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
-        let display_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(root));
+        let display_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(crate_scope));
         names.set_path_scope(display_def, display_scope);
         names.add_def(
-            root,
+            crate_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(
@@ -1146,35 +1148,35 @@ mod tests {
         };
 
         let mut names = NameDb::default();
-        let root = names.root_scope();
+        let crate_scope = names.crate_scope();
         let vec_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Struct,
             Some(vec),
-            Visibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(&file.items[0])),
         );
         let iterator_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Trait,
             Some(iterator),
-            Visibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(&file.items[1])),
         );
-        let iterator_scope = names.add_scope(ScopeKind::Trait, Some(root));
+        let iterator_scope = names.add_scope(ScopeKind::Trait, Some(crate_scope));
         names.set_path_scope(iterator_def, iterator_scope);
         let trait_assoc_def = names.add_def(
             iterator_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Untracked,
         );
         let impl_item_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::AssocType,
             Some(item),
-            Visibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(&impl_item.items[0])),
         );
 
@@ -2433,17 +2435,17 @@ mod tests {
         let maybe = ccx.intern("Maybe");
         let mut names = NameDb::default();
         let first = names.add_def(
-            names.root_scope(),
+            names.crate_scope(),
             DefKind::Struct,
             Some(maybe),
-            Visibility::Private,
+            names.crate_scope(),
             Origin::Untracked,
         );
         let second = names.add_def(
-            names.root_scope(),
+            names.crate_scope(),
             DefKind::Enum,
             Some(maybe),
-            Visibility::Private,
+            names.crate_scope(),
             Origin::Untracked,
         );
         let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Maybe }", &names);

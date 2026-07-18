@@ -25,8 +25,8 @@ pub struct Def<'cx> {
     /// Import definitions use this to point at their resolved target.
     pub target: Option<DefId>,
 
-    /// Visibility of this definition.
-    pub visibility: Visibility,
+    /// Outermost scope from which this definition is visible.
+    pub visibility: ScopeId,
 
     /// Source origin associated with this definition.
     pub origin: Origin<'cx>,
@@ -156,19 +156,6 @@ impl DefKind {
             Self::Field | Self::Use | Self::Impl => &[],
         }
     }
-}
-
-/// Visibility attached to a named definition or import.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Visibility {
-    /// Visible everywhere.
-    Public,
-
-    /// Visible within the given scope and its descendants.
-    Restricted(ScopeId),
-
-    /// Visible only according to the current module's private visibility rules.
-    Private,
 }
 
 /// Source origin associated with a definition or import.

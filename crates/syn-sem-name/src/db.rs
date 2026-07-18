@@ -1,6 +1,6 @@
 use crate::{
-    AstNodeId, Binding, Def, DefId, DefKind, Import, ImportId, ImportKind, ImportStatus, Map, Name,
-    Namespace, Origin, Scope, ScopeId, ScopeKind, Visibility,
+    AstNodeId, Binding, Def, DefId, DefKind, DefScopes, Import, ImportId, ImportKind, ImportStatus,
+    Map, Name, Namespace, Origin, Scope, ScopeId, ScopeKind,
 };
 use std::ops::{Index, IndexMut};
 
@@ -16,9 +16,14 @@ pub struct NameDb<'cx> {
 }
 
 impl<'cx> NameDb<'cx> {
-    /// Returns the crate-root scope.
+    /// Returns the synthetic visibility root containing every crate visibility domain.
     pub const fn root_scope(&self) -> ScopeId {
         ScopeId::new(0)
+    }
+
+    /// Returns the scope used as the root of the current crate.
+    pub const fn crate_scope(&self) -> ScopeId {
+        ScopeId::new(1)
     }
 
     /// Returns scopes with `kind`.
@@ -168,7 +173,7 @@ impl<'cx> NameDb<'cx> {
         parent_scope: ScopeId,
         kind: DefKind,
         name: Option<Name<'cx>>,
-        visibility: Visibility,
+        visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> DefId {
         self.add_def_in_namespaces(
@@ -188,20 +193,18 @@ impl<'cx> NameDb<'cx> {
         kind: DefKind,
         name: Option<Name<'cx>>,
         namespaces: impl Iterator<Item = Namespace>,
-        visibility: Visibility,
+        visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> DefId {
-        let id = DefId::new(self.defs.len());
-        self.defs.push(Def {
-            id,
+        let id = self.push_def(
             name,
             kind,
             parent_scope,
-            scopes: Default::default(),
-            target: None,
+            DefScopes::default(),
+            None,
             visibility,
             origin,
-        });
+        );
 
         if let Origin::Ast(node) = origin {
             let old = self.ast_defs.insert(node, id);
@@ -226,9 +229,10 @@ impl<'cx> NameDb<'cx> {
         scope: ScopeId,
         source_path: Vec<Name<'cx>>,
         kind: ImportKind<'cx>,
-        visibility: Visibility,
+        visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> ImportId {
+        self.assert_visibility_scope(visibility);
         let id = ImportId::new(self.imports.len());
         self.imports.push(Import {
             id,
@@ -402,7 +406,7 @@ impl<'cx> NameDb<'cx> {
         &mut self,
         parent_scope: ScopeId,
         name: Option<Name<'cx>>,
-        visibility: Visibility,
+        visibility: ScopeId,
         origin: Origin<'cx>,
         target: DefId,
     ) -> DefId {
@@ -417,18 +421,53 @@ impl<'cx> NameDb<'cx> {
             return def.id;
         }
 
+        self.push_def(
+            name,
+            DefKind::Use,
+            parent_scope,
+            DefScopes::default(),
+            Some(target),
+            visibility,
+            origin,
+        )
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn push_def(
+        &mut self,
+        name: Option<Name<'cx>>,
+        kind: DefKind,
+        parent_scope: ScopeId,
+        scopes: DefScopes,
+        target: Option<DefId>,
+        visibility: ScopeId,
+        origin: Origin<'cx>,
+    ) -> DefId {
+        self.assert_visibility_scope(visibility);
+
         let id = DefId::new(self.defs.len());
         self.defs.push(Def {
             id,
             name,
-            kind: DefKind::Use,
+            kind,
             parent_scope,
-            scopes: Default::default(),
-            target: Some(target),
+            scopes,
+            target,
             visibility,
             origin,
         });
         id
+    }
+
+    fn assert_visibility_scope(&self, visibility: ScopeId) {
+        assert!(
+            matches!(
+                self[visibility].kind,
+                ScopeKind::Root | ScopeKind::Crate | ScopeKind::Module
+            ),
+            "visibility must be rooted at the visibility root, a crate, or a module scope"
+        );
     }
 
     fn insert_unique_binding(
@@ -491,6 +530,10 @@ impl<'cx> NameDb<'cx> {
                     1 => ResolveResult::Found(defs.next().unwrap()),
                     _ => ResolveResult::Ambiguous(defs.collect()),
                 };
+            }
+
+            if self[scope].kind == ScopeKind::Crate {
+                return ResolveResult::NotFound;
             }
 
             let Some(parent) = self[scope].parent else {
@@ -667,7 +710,7 @@ impl<'cx> NameDb<'cx> {
 
     /// Resolves an import path from `scope` into visible candidate definitions.
     ///
-    /// For example, resolving `crate::a::C` starts at the root scope, finds module `a`, follows
+    /// For example, resolving `crate::a::C` starts at the crate scope, finds module `a`, follows
     /// `a`'s child scope, then resolves `C` in that child scope. If the terminal name exists in
     /// multiple namespaces with the same target, such as an enum variant, the result contains each
     /// namespace-target pair.
@@ -690,7 +733,7 @@ impl<'cx> NameDb<'cx> {
 
             match segment.as_ref() {
                 "crate" if index == 0 => {
-                    current_scope = self.root_scope();
+                    current_scope = self.crate_scope();
                     current_def = None;
                     index += 1;
                     continue;
@@ -822,21 +865,12 @@ impl<'cx> NameDb<'cx> {
 
     fn is_visible_from(&self, def: DefId, scope: ScopeId) -> bool {
         let def = &self[def];
-        match def.visibility {
-            Visibility::Public => true,
-            Visibility::Restricted(ancestor) => {
-                self.is_descendant_scope(self.nearest_module_scope(scope), ancestor)
-            }
-            Visibility::Private => {
-                let defining_module = self.nearest_module_scope(def.parent_scope);
-                self.is_descendant_scope(self.nearest_module_scope(scope), defining_module)
-            }
-        }
+        self.is_descendant_scope(self.nearest_module_scope(scope), def.visibility)
     }
 
     fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
         loop {
-            if matches!(self[scope].kind, ScopeKind::CrateRoot | ScopeKind::Module) {
+            if matches!(self[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
                 return scope;
             }
             let Some(parent) = self[scope].parent else {
@@ -849,7 +883,7 @@ impl<'cx> NameDb<'cx> {
     fn parent_module_scope(&self, scope: ScopeId) -> Option<ScopeId> {
         let mut scope = self[scope].parent?;
         loop {
-            if matches!(self[scope].kind, ScopeKind::CrateRoot | ScopeKind::Module) {
+            if matches!(self[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
                 return Some(scope);
             }
             scope = self[scope].parent?;
@@ -858,12 +892,13 @@ impl<'cx> NameDb<'cx> {
 }
 
 impl Default for NameDb<'_> {
-    /// Creates a name database with a crate-root scope.
+    /// Creates a name database with synthetic visibility-root and crate scopes.
     fn default() -> Self {
-        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::CrateRoot, None);
+        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::Root, None);
+        let crate_scope = Scope::new(ScopeId::new(1), ScopeKind::Crate, Some(root_scope.id));
 
         Self {
-            scopes: vec![root_scope],
+            scopes: vec![root_scope, crate_scope],
             defs: Vec::new(),
             imports: Vec::new(),
             ast_defs: Map::default(),
@@ -980,7 +1015,8 @@ mod tests {
         //     x
         // }
         //
-        // Lookup from the function body finds the inner `x`; lookup from root finds the outer `x`.
+        // Lookup from the function body finds the inner `x`; lookup from the crate finds the outer
+        // `x`.
         #[test]
         fn lexical_resolution_prefers_inner_scope() {
             // Proves lexical lookup prefers inner scope bindings over outer bindings.
@@ -988,30 +1024,30 @@ mod tests {
             let x = ccx.intern("x");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
-            let body = db.add_scope(ScopeKind::Function, Some(root));
+            let crate_scope = db.crate_scope();
+            let body_scope = db.add_scope(ScopeKind::Function, Some(crate_scope));
 
             let outer = db.add_def(
-                root,
+                crate_scope,
                 DefKind::Local,
                 Some(x),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
             let inner = db.add_def(
-                body,
+                body_scope,
                 DefKind::Local,
                 Some(x),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
             assert_eq!(
-                db.resolve_lexical(body, Namespace::Value, x),
+                db.resolve_lexical(body_scope, Namespace::Value, x),
                 ResolveResult::Found(inner)
             );
             assert_eq!(
-                db.resolve_lexical(root, Namespace::Value, x),
+                db.resolve_lexical(crate_scope, Namespace::Value, x),
                 ResolveResult::Found(outer)
             );
         }
@@ -1030,24 +1066,24 @@ mod tests {
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
-            let generic_scope = db.add_scope(ScopeKind::Generic, Some(root));
-            let body = db.add_scope(ScopeKind::Function, Some(generic_scope));
+            let crate_scope = db.crate_scope();
+            let generic_scope = db.add_scope(ScopeKind::Generic, Some(crate_scope));
+            let body_scope = db.add_scope(ScopeKind::Function, Some(generic_scope));
 
             let type_param = db.add_def(
                 generic_scope,
                 DefKind::GenericType,
                 Some(t),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
             assert_eq!(
-                db.resolve_lexical(body, Namespace::Type, t),
+                db.resolve_lexical(body_scope, Namespace::Type, t),
                 ResolveResult::Found(type_param)
             );
             assert_eq!(
-                db.resolve_type_path(body, [t].into_iter()),
+                db.resolve_type_path(body_scope, [t].into_iter()),
                 ResolveResult::Found(type_param)
             );
         }
@@ -1069,24 +1105,24 @@ mod tests {
             let local = ccx.intern("Local");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
-            let body = db.add_scope(ScopeKind::Function, Some(root));
-            let block = db.add_scope(ScopeKind::Block, Some(body));
+            let crate_scope = db.crate_scope();
+            let body_scope = db.add_scope(ScopeKind::Function, Some(crate_scope));
+            let block_scope = db.add_scope(ScopeKind::Block, Some(body_scope));
 
             let local_struct = db.add_def(
-                block,
+                block_scope,
                 DefKind::Struct,
                 Some(local),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
             assert_eq!(
-                db.resolve_lexical(block, Namespace::Type, local),
+                db.resolve_lexical(block_scope, Namespace::Type, local),
                 ResolveResult::Found(local_struct)
             );
             assert_eq!(
-                db.resolve_type_path(block, [local].into_iter()),
+                db.resolve_type_path(block_scope, [local].into_iter()),
                 ResolveResult::Found(local_struct)
             );
         }
@@ -1111,28 +1147,28 @@ mod tests {
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let crate_scope = db.crate_scope();
             let type_param = db.add_def(
-                root,
+                crate_scope,
                 DefKind::GenericType,
                 Some(t),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
             let local = db.add_def(
-                root,
+                crate_scope,
                 DefKind::Local,
                 Some(t),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
             assert_eq!(
-                db.resolve_lexical(root, Namespace::Type, t),
+                db.resolve_lexical(crate_scope, Namespace::Type, t),
                 ResolveResult::Found(type_param)
             );
             assert_eq!(
-                db.resolve_lexical(root, Namespace::Value, t),
+                db.resolve_lexical(crate_scope, Namespace::Value, t),
                 ResolveResult::Found(local)
             );
         }
@@ -1151,14 +1187,14 @@ mod tests {
             let n = ccx.intern("N");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
-            let generic_scope = db.add_scope(ScopeKind::Generic, Some(root));
+            let crate_scope = db.crate_scope();
+            let generic_scope = db.add_scope(ScopeKind::Generic, Some(crate_scope));
 
             let const_param = db.add_def(
                 generic_scope,
                 DefKind::GenericConst,
                 Some(n),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
@@ -1192,21 +1228,21 @@ mod tests {
             let item = ccx.intern("Item");
 
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let crate_scope = db.crate_scope();
             let iterator_def = db.add_def(
-                root,
+                crate_scope,
                 DefKind::Trait,
                 Some(iterator),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
-            let iterator_scope = db.add_scope(ScopeKind::Trait, Some(root));
+            let iterator_scope = db.add_scope(ScopeKind::Trait, Some(crate_scope));
             db.set_path_scope(iterator_def, iterator_scope);
             let item_def = db.add_def(
                 iterator_scope,
                 DefKind::AssocType,
                 Some(item),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
@@ -1228,11 +1264,12 @@ mod tests {
             let item = ccx.intern("Item");
 
             let mut db = NameDb::default();
+            let crate_scope = db.crate_scope();
             let unit_def = db.add_def(
-                db.root_scope(),
+                crate_scope,
                 DefKind::Struct,
                 Some(unit),
-                Visibility::Private,
+                crate_scope,
                 Origin::Untracked,
             );
 
@@ -1247,7 +1284,7 @@ mod tests {
         db: &mut NameDb<'cx>,
         parent: ScopeId,
         name: Name<'cx>,
-        visibility: Visibility,
+        visibility: ScopeId,
     ) -> (DefId, ScopeId) {
         let def = db.add_def(
             parent,
@@ -1295,48 +1332,49 @@ mod tests {
             // Proves import resolution handles single, renamed, self, and underscore imports.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let s = ccx.intern("S");
             let t = ccx.intern("T");
             let hidden = ccx.intern("_");
 
-            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(s),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Rename(t),
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, ccx.intern("self")],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
                 ImportKind::Rename(hidden),
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
 
@@ -1379,28 +1417,29 @@ mod tests {
             // Proves self imports preserve ambiguous and missing parent-path failures.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let missing = ccx.intern("missing");
             let self_name = ccx.intern("self");
 
-            module(&mut db, root, a, Visibility::Public);
-            module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            module(&mut db, crate_scope, a, root_scope);
+            module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
 
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, self_name],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), missing, self_name],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
 
@@ -1439,7 +1478,8 @@ mod tests {
             // Proves chained reexports and glob imports respect visibility while resolving.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let c = ccx.intern("c");
@@ -1447,43 +1487,43 @@ mod tests {
             let public = ccx.intern("Public");
             let private = ccx.intern("Private");
 
-            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-            let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
-            let (_, d_scope) = module(&mut db, root, d, Visibility::Public);
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
+            let (_, c_scope) = module(&mut db, crate_scope, c, root_scope);
+            let (_, d_scope) = module(&mut db, crate_scope, d, root_scope);
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(public),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(private),
-                Visibility::Private,
+                a_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, public],
                 ImportKind::Single,
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b, public],
                 ImportKind::Single,
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 d_scope,
                 vec![ccx.intern("super"), a],
                 ImportKind::Glob,
-                Visibility::Private,
+                d_scope,
                 Origin::Untracked,
             );
 
@@ -1528,49 +1568,50 @@ mod tests {
             // Proves import resolution reports ambiguous glob results and missing names.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let c = ccx.intern("c");
             let x = ccx.intern("X");
             let missing = ccx.intern("Missing");
 
-            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
-            let (_, c_scope) = module(&mut db, root, c, Visibility::Public);
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
+            let (_, c_scope) = module(&mut db, crate_scope, c, root_scope);
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(x),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_def(
                 b_scope,
                 DefKind::Struct,
                 Some(x),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a],
                 ImportKind::Glob,
-                Visibility::Private,
+                c_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b],
                 ImportKind::Glob,
-                Visibility::Private,
+                c_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a, missing],
                 ImportKind::Single,
-                Visibility::Private,
+                c_scope,
                 Origin::Untracked,
             );
 
@@ -1603,32 +1644,33 @@ mod tests {
             // Proves one import binding cannot resolve to different final targets by namespace.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let x = ccx.intern("X");
 
-            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
             db.add_def(
                 a_scope,
                 DefKind::Struct,
                 Some(x),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_def(
                 a_scope,
                 DefKind::Const,
                 Some(x),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, x],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
 
@@ -1654,19 +1696,20 @@ mod tests {
             // Proves imported enum variants populate both type and value namespaces.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root = db.root_scope();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let e = ccx.intern("E");
             let v = ccx.intern("V");
 
-            let (_, a_scope) = module(&mut db, root, a, Visibility::Public);
-            let (_, b_scope) = module(&mut db, root, b, Visibility::Public);
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, b_scope) = module(&mut db, crate_scope, b, root_scope);
             let enum_def = db.add_def(
                 a_scope,
                 DefKind::Enum,
                 Some(e),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             let enum_scope = db.add_scope(ScopeKind::Item, Some(a_scope));
@@ -1675,14 +1718,14 @@ mod tests {
                 enum_scope,
                 DefKind::Variant,
                 Some(v),
-                Visibility::Public,
+                root_scope,
                 Origin::Untracked,
             );
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, e, v],
                 ImportKind::Single,
-                Visibility::Private,
+                b_scope,
                 Origin::Untracked,
             );
 

@@ -1,7 +1,7 @@
 use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, SourceText};
 use syn_sem_name::{
-    DefId, DefKind, Name, NameDb, Namespace, Origin, ResolveResult, ScopeId, ScopeKind, Visibility,
+    DefId, DefKind, Name, NameDb, Namespace, Origin, ResolveResult, ScopeId, ScopeKind,
 };
 
 #[derive(Default)]
@@ -11,8 +11,8 @@ struct AstNameCollector<'cx> {
 
 impl<'cx> AstNameCollector<'cx> {
     fn collect_file(mut self, file: &ast::File<'cx>) -> NameDb<'cx> {
-        let root = self.db.root_scope();
-        self.collect_items(root, file.items);
+        let crate_scope = self.db.crate_scope();
+        self.collect_items(crate_scope, file.items);
         self.db
     }
 
@@ -131,13 +131,20 @@ impl<'cx> AstNameCollector<'cx> {
     }
 
     fn add_named(&mut self, scope: ScopeId, kind: DefKind, name: Name<'cx>) -> DefId {
-        self.db.add_def(
-            scope,
-            kind,
-            Some(name),
-            Visibility::Private,
-            Origin::Untracked,
-        )
+        let visibility = self.nearest_module_scope(scope);
+        self.db
+            .add_def(scope, kind, Some(name), visibility, Origin::Untracked)
+    }
+
+    fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
+        loop {
+            if matches!(self.db[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
+                return scope;
+            }
+            scope = self.db[scope]
+                .parent
+                .expect("collected scopes must be nested under a crate");
+        }
     }
 }
 

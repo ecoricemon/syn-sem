@@ -32,8 +32,11 @@ impl<'cx> Scope<'cx> {
 /// Kind of lexical or item scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScopeKind {
-    /// Crate root scope.
-    CrateRoot,
+    /// Synthetic visibility root containing every crate visibility domain.
+    Root,
+
+    /// Crate scope used as the root of crate-relative paths.
+    Crate,
 
     /// Module scope.
     Module,

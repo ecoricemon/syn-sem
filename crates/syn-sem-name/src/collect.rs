@@ -5,7 +5,7 @@
 
 use crate::{
     AstNodeId, DefId, DefKind, ImportId, ImportKind, Name, NameDb, Namespace, Origin, ScopeId,
-    ScopeKind, Visibility,
+    ScopeKind,
 };
 use std::{borrow::Borrow, collections::BTreeMap, io, path::PathBuf};
 use syn_sem_ast as ast;
@@ -40,7 +40,7 @@ impl<'cx> NameCollector<'cx> {
         mut self,
         roots: impl IntoIterator<Item = FilePath<'cx>>,
     ) -> Result<NameDb<'cx>> {
-        let root = self.db.root_scope();
+        let crate_scope = self.db.crate_scope();
         let mut seen = Set::default();
         for root_path in roots {
             if !seen.insert(root_path) {
@@ -49,7 +49,7 @@ impl<'cx> NameCollector<'cx> {
             let input = self.file(&root_path)?;
             let path = ast::ModulePath::from_entry_file(PathBuf::from(root_path.as_ref()));
             for item in input.file.items {
-                self.collect_item_from_module_tree(root, item, &path)?;
+                self.collect_item_from_module_tree(crate_scope, item, &path)?;
             }
         }
         self.db.resolve_imports();
@@ -431,7 +431,7 @@ impl<'cx> NameCollector<'cx> {
                     trait_scope,
                     DefKind::AssocConst,
                     item.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(trait_scope),
                     ast_node,
                 );
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
@@ -444,7 +444,7 @@ impl<'cx> NameCollector<'cx> {
                     trait_scope,
                     DefKind::AssocFn,
                     item.sig.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(trait_scope),
                     ast_node,
                 );
                 let generic_scope = self.create_generic_scope(trait_scope, &item.sig.generics);
@@ -463,7 +463,7 @@ impl<'cx> NameCollector<'cx> {
                     trait_scope,
                     DefKind::AssocType,
                     item.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(trait_scope),
                     ast_node,
                 );
                 if let Some(generic_scope) = self.create_generic_scope(trait_scope, &item.generics)
@@ -504,7 +504,7 @@ impl<'cx> NameCollector<'cx> {
             parent_scope,
             DefKind::Impl,
             None,
-            Visibility::Private,
+            self.nearest_module_scope(parent_scope),
             Origin::Ast(ast_node),
         );
 
@@ -548,7 +548,7 @@ impl<'cx> NameCollector<'cx> {
                     impl_scope,
                     DefKind::AssocConst,
                     item.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(impl_scope),
                     ast_node,
                 );
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
@@ -560,7 +560,7 @@ impl<'cx> NameCollector<'cx> {
                     impl_scope,
                     DefKind::AssocFn,
                     item.sig.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(impl_scope),
                     ast_node,
                 );
                 let generic_scope = self.create_generic_scope(impl_scope, &item.sig.generics);
@@ -577,7 +577,7 @@ impl<'cx> NameCollector<'cx> {
                     impl_scope,
                     DefKind::AssocType,
                     item.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(impl_scope),
                     ast_node,
                 );
                 if let Some(generic_scope) = self.create_generic_scope(impl_scope, &item.generics) {
@@ -661,7 +661,7 @@ impl<'cx> NameCollector<'cx> {
         scope: ScopeId,
         prefix: Vec<Name<'cx>>,
         tree: &'cx ast::UseTree<'cx>,
-        visibility: Visibility,
+        visibility: ScopeId,
     ) {
         match tree {
             ast::UseTree::Path(tree) => {
@@ -745,7 +745,7 @@ impl<'cx> NameCollector<'cx> {
                     scope,
                     DefKind::Local,
                     pat.ident.inner,
-                    Visibility::Private,
+                    self.nearest_module_scope(scope),
                     AstNodeId::from_ref(pat),
                 );
             }
@@ -789,7 +789,7 @@ impl<'cx> NameCollector<'cx> {
                         generic_scope,
                         DefKind::GenericType,
                         param.ident.inner,
-                        Visibility::Private,
+                        self.nearest_module_scope(generic_scope),
                         AstNodeId::from_ref(param),
                     );
                 }
@@ -798,7 +798,7 @@ impl<'cx> NameCollector<'cx> {
                         generic_scope,
                         DefKind::GenericConst,
                         param.ident.inner,
-                        Visibility::Private,
+                        self.nearest_module_scope(generic_scope),
                         AstNodeId::from_ref(param),
                     );
                 }
@@ -830,20 +830,20 @@ impl<'cx> NameCollector<'cx> {
         scope: ScopeId,
         kind: DefKind,
         name: Name<'cx>,
-        visibility: Visibility,
+        visibility: ScopeId,
         ast_node: AstNodeId<'cx>,
     ) -> DefId {
         self.db
             .add_def(scope, kind, Some(name), visibility, Origin::Ast(ast_node))
     }
 
-    fn visibility_from_ast(&self, scope: ScopeId, vis: &ast::Visibility<'cx>) -> Visibility {
+    fn visibility_from_ast(&self, scope: ScopeId, vis: &ast::Visibility<'cx>) -> ScopeId {
         match vis {
-            ast::Visibility::Public(_) => Visibility::Public,
+            ast::Visibility::Public(_) => self.db.root_scope(),
             ast::Visibility::Restricted(path) => {
-                Visibility::Restricted(self.resolve_restricted_visibility_scope(scope, path))
+                self.resolve_restricted_visibility_scope(scope, path)
             }
-            ast::Visibility::Private => Visibility::Private,
+            ast::Visibility::Private => self.nearest_module_scope(scope),
         }
     }
 
@@ -859,7 +859,7 @@ impl<'cx> NameCollector<'cx> {
             .expect("restricted visibility path must have at least one segment");
 
         match first.ident.inner.as_ref() {
-            "crate" => scope = self.db.root_scope(),
+            "crate" => scope = self.db.crate_scope(),
             "self" => {}
             "super" => {
                 scope = self
@@ -894,10 +894,7 @@ impl<'cx> NameCollector<'cx> {
 
     fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
         loop {
-            if matches!(
-                self.db[scope].kind,
-                ScopeKind::CrateRoot | ScopeKind::Module
-            ) {
+            if matches!(self.db[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
                 return scope;
             }
             let Some(parent) = self.db[scope].parent else {
@@ -910,10 +907,7 @@ impl<'cx> NameCollector<'cx> {
     fn parent_module_scope(&self, scope: ScopeId) -> Option<ScopeId> {
         let mut scope = self.db[scope].parent?;
         loop {
-            if matches!(
-                self.db[scope].kind,
-                ScopeKind::CrateRoot | ScopeKind::Module
-            ) {
+            if matches!(self.db[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
                 return Some(scope);
             }
             scope = self.db[scope].parent?;

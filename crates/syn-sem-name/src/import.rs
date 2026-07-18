@@ -1,4 +1,4 @@
-use crate::{ImportId, Name, Origin, ScopeId, Visibility};
+use crate::{ImportId, Name, Origin, ScopeId};
 
 /// Import declaration collected during name resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +15,8 @@ pub struct Import<'cx> {
     /// Import kind.
     pub kind: ImportKind<'cx>,
 
-    /// Visibility of the imported binding.
-    pub visibility: Visibility,
+    /// Outermost scope from which the imported binding is visible.
+    pub visibility: ScopeId,
 
     /// Current import status.
     pub status: ImportStatus,

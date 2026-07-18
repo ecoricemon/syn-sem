@@ -230,10 +230,10 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         mut self,
         files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
     ) -> Hir<'cx> {
-        let root = Some(self.names.root_scope());
+        let crate_scope = Some(self.names.crate_scope());
         for file in files {
             let id = self.hir.reserve_file();
-            let items = self.collect_items(file.file.items, root);
+            let items = self.collect_items(file.file.items, crate_scope);
             self.hir.fill_file(
                 id,
                 File {
@@ -1227,10 +1227,7 @@ mod tests {
     use crate::{Hir, HirBuilder};
     use syn_sem_ast::{SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{
-        collect::NameCollector, AstNodeId, DefKind, ImportKind, NameDb, Origin,
-        Visibility as NameVisibility,
-    };
+    use syn_sem_name::{collect::NameCollector, AstNodeId, DefKind, ImportKind, NameDb, Origin};
 
     fn parsed_model<'cx>(
         ccx: &'cx CommonCx,
@@ -2424,11 +2421,12 @@ mod tests {
             panic!("expected struct item");
         };
         let mut names = NameDb::default();
+        let crate_scope = names.crate_scope();
         let def = names.add_def(
-            names.root_scope(),
+            crate_scope,
             DefKind::Struct,
             Some(ccx.intern("S")),
-            NameVisibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(item)),
         );
 
@@ -2484,34 +2482,34 @@ mod tests {
         };
 
         let mut names = NameDb::default();
-        let root = names.root_scope();
+        let crate_scope = names.crate_scope();
         let first_impl_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Impl,
             None,
-            NameVisibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(first_impl_item)),
         );
         let second_impl_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::Impl,
             None,
-            NameVisibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(second_impl_item)),
         );
 
         let first_fn_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::AssocFn,
             Some(first_fn.sig.ident.inner),
-            NameVisibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(first_fn_item)),
         );
         let second_fn_def = names.add_def(
-            root,
+            crate_scope,
             DefKind::AssocFn,
             Some(second_fn.sig.ident.inner),
-            NameVisibility::Private,
+            crate_scope,
             Origin::Ast(AstNodeId::from_ref(second_fn_item)),
         );
 
