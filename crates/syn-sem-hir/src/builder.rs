@@ -1227,7 +1227,7 @@ mod tests {
     use crate::{Hir, HirBuilder};
     use syn_sem_ast::{SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{collect::NameCollector, AstNodeId, DefKind, ImportKind, NameDb, Origin};
+    use syn_sem_name::{AstNodeId, DefKind, ImportKind, NameDb, NameDbBuilder};
 
     fn parsed_model<'cx>(
         ccx: &'cx CommonCx,
@@ -1254,7 +1254,7 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names =
-            NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let hir = HirBuilder::new(&names).build(file_path, file);
         (file, names, hir)
     }
@@ -2420,16 +2420,11 @@ mod tests {
         let ast::Item::Struct(_) = item else {
             panic!("expected struct item");
         };
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let def = names.add_def(
-            crate_scope,
-            DefKind::Struct,
-            Some(ccx.intern("S")),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(item)),
-        );
-
+        let names =
+            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let def = names
+            .def_for_ast_node(AstNodeId::from_ref(item))
+            .expect("struct should have a definition");
         let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[0].def, Some(def));
     }
@@ -2474,45 +2469,27 @@ mod tests {
         };
         let first_fn_item = &first_impl.items[0];
         let second_fn_item = &second_impl.items[0];
-        let ast::ImplItem::Fn(first_fn) = first_fn_item else {
+        let ast::ImplItem::Fn(_) = first_fn_item else {
             panic!("expected first impl fn");
         };
-        let ast::ImplItem::Fn(second_fn) = second_fn_item else {
+        let ast::ImplItem::Fn(_) = second_fn_item else {
             panic!("expected second impl fn");
         };
 
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let first_impl_def = names.add_def(
-            crate_scope,
-            DefKind::Impl,
-            None,
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(first_impl_item)),
-        );
-        let second_impl_def = names.add_def(
-            crate_scope,
-            DefKind::Impl,
-            None,
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(second_impl_item)),
-        );
-
-        let first_fn_def = names.add_def(
-            crate_scope,
-            DefKind::AssocFn,
-            Some(first_fn.sig.ident.inner),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(first_fn_item)),
-        );
-        let second_fn_def = names.add_def(
-            crate_scope,
-            DefKind::AssocFn,
-            Some(second_fn.sig.ident.inner),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(second_fn_item)),
-        );
-
+        let names =
+            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let first_impl_def = names
+            .def_for_ast_node(AstNodeId::from_ref(first_impl_item))
+            .expect("first impl should have a definition");
+        let second_impl_def = names
+            .def_for_ast_node(AstNodeId::from_ref(second_impl_item))
+            .expect("second impl should have a definition");
+        let first_fn_def = names
+            .def_for_ast_node(AstNodeId::from_ref(first_fn_item))
+            .expect("first impl function should have a definition");
+        let second_fn_def = names
+            .def_for_ast_node(AstNodeId::from_ref(second_fn_item))
+            .expect("second impl function should have a definition");
         let model = HirBuilder::new(&names).build(file_path, file);
         assert_eq!(model.items()[1].def, Some(first_impl_def));
         assert_eq!(model.items()[2].def, Some(second_impl_def));

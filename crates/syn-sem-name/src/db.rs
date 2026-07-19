@@ -26,54 +26,14 @@ impl<'cx> NameDb<'cx> {
         ScopeId::new(1)
     }
 
-    /// Returns scopes with `kind`.
-    pub fn scopes_with_kind(&self, kind: ScopeKind) -> impl Iterator<Item = ScopeId> + '_ {
-        self.scopes
-            .iter()
-            .filter(move |scope| scope.kind == kind)
-            .map(|scope| scope.id)
-    }
-
-    /// Returns child scopes under `parent` with `kind`.
-    pub fn child_scopes(
-        &self,
-        parent: ScopeId,
-        kind: ScopeKind,
-    ) -> impl Iterator<Item = ScopeId> + '_ {
-        self.scopes
-            .iter()
-            .filter(move |scope| scope.parent == Some(parent) && scope.kind == kind)
-            .map(|scope| scope.id)
-    }
-
-    /// Returns definitions with `kind`.
-    pub fn defs_with_kind(&self, kind: DefKind) -> impl Iterator<Item = DefId> + '_ {
-        self.defs
-            .iter()
-            .filter(move |def| def.kind == kind)
-            .map(|def| def.id)
-    }
-
     /// Returns the number of collected imports.
-    pub fn import_count(&self) -> usize {
+    pub(crate) fn import_count(&self) -> usize {
         self.imports.len()
     }
 
     /// Returns all collected imports by id.
     pub fn import_ids(&self) -> impl ExactSizeIterator<Item = ImportId> + '_ {
         (0..self.imports.len()).map(ImportId::new)
-    }
-
-    /// Returns imports in `scope` with `source_path`.
-    pub fn imports_matching<'a>(
-        &'a self,
-        scope: ScopeId,
-        source_path: &'a [Name<'cx>],
-    ) -> impl Iterator<Item = ImportId> + 'a {
-        self.imports
-            .iter()
-            .filter(move |import| import.scope == scope && import.source_path == source_path)
-            .map(|import| import.id)
     }
 
     /// Returns imports created from `node`.
@@ -84,7 +44,10 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Records imports created from `node`.
-    pub fn set_imports_ast_node(&mut self, node: AstNodeId<'cx>, imports: Vec<ImportId>) {
+    pub(crate) fn set_imports_ast_node(&mut self, node: AstNodeId<'cx>, imports: Vec<ImportId>) {
+        for &import in &imports {
+            let _ = &self[import];
+        }
         let old = self.ast_imports.insert(node, imports);
         assert!(old.is_none(), "one AST node cannot create imports twice");
     }
@@ -100,7 +63,8 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Records that `scope` was created from `node`.
-    pub fn set_scope_ast_node(&mut self, scope: ScopeId, node: AstNodeId<'cx>) {
+    pub(crate) fn set_scope_ast_node(&mut self, scope: ScopeId, node: AstNodeId<'cx>) {
+        let _ = &self[scope];
         let old = self.ast_scopes.insert(node, scope);
         assert!(
             old.is_none() || old == Some(scope),
@@ -161,14 +125,17 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Adds a scope under `parent`.
-    pub fn add_scope(&mut self, kind: ScopeKind, parent: Option<ScopeId>) -> ScopeId {
+    pub(crate) fn add_scope(&mut self, kind: ScopeKind, parent: Option<ScopeId>) -> ScopeId {
+        if let Some(parent) = parent {
+            let _ = &self[parent];
+        }
         let id = ScopeId::new(self.scopes.len());
         self.scopes.push(Scope::new(id, kind, parent));
         id
     }
 
     /// Adds a definition and binds it in the default namespaces for its kind.
-    pub fn add_def(
+    pub(crate) fn add_def(
         &mut self,
         parent_scope: ScopeId,
         kind: DefKind,
@@ -187,7 +154,7 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Adds a definition and binds it in explicit namespaces.
-    pub fn add_def_in_namespaces(
+    pub(crate) fn add_def_in_namespaces(
         &mut self,
         parent_scope: ScopeId,
         kind: DefKind,
@@ -196,6 +163,7 @@ impl<'cx> NameDb<'cx> {
         visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> DefId {
+        let _ = &self[parent_scope];
         let id = self.push_def(
             name,
             kind,
@@ -224,7 +192,7 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Adds an unresolved import.
-    pub fn add_import(
+    pub(crate) fn add_import(
         &mut self,
         scope: ScopeId,
         source_path: Vec<Name<'cx>>,
@@ -232,6 +200,7 @@ impl<'cx> NameDb<'cx> {
         visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> ImportId {
+        let _ = &self[scope];
         self.assert_visibility_scope(visibility);
         let id = ImportId::new(self.imports.len());
         self.imports.push(Import {
@@ -247,18 +216,33 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Links a definition to a path scope that contains its path-reachable members.
-    pub fn set_path_scope(&mut self, def: DefId, path_scope: ScopeId) {
-        self.defs[def.index()].scopes.path = Some(path_scope);
+    pub(crate) fn set_path_scope(&mut self, def: DefId, path_scope: ScopeId) {
+        let _ = &self[path_scope];
+        let old = self.defs[def.index()].scopes.path.replace(path_scope);
+        assert!(
+            old.is_none() || old == Some(path_scope),
+            "one definition cannot have multiple path scopes"
+        );
     }
 
     /// Links a definition to the scope containing its generic parameters.
-    pub fn set_generic_scope(&mut self, def: DefId, generic_scope: ScopeId) {
-        self.defs[def.index()].scopes.generic = Some(generic_scope);
+    pub(crate) fn set_generic_scope(&mut self, def: DefId, generic_scope: ScopeId) {
+        let _ = &self[generic_scope];
+        let old = self.defs[def.index()].scopes.generic.replace(generic_scope);
+        assert!(
+            old.is_none() || old == Some(generic_scope),
+            "one definition cannot have multiple generic scopes"
+        );
     }
 
     /// Links a definition to the scope containing its value body.
-    pub fn set_body_scope(&mut self, def: DefId, body_scope: ScopeId) {
-        self.defs[def.index()].scopes.body = Some(body_scope);
+    pub(crate) fn set_body_scope(&mut self, def: DefId, body_scope: ScopeId) {
+        let _ = &self[body_scope];
+        let old = self.defs[def.index()].scopes.body.replace(body_scope);
+        assert!(
+            old.is_none() || old == Some(body_scope),
+            "one definition cannot have multiple body scopes"
+        );
     }
 
     /// Follows `DefKind::Use` alias definitions to their underlying definition.
@@ -278,9 +262,9 @@ impl<'cx> NameDb<'cx> {
     }
 
     /// Resolves all currently collected imports to local-crate bindings.
-    pub fn resolve_imports(&mut self) {
+    pub(crate) fn resolve_imports(&mut self) {
         loop {
-            let mut changed = false;
+            let mut made_progress = false;
             for index in 0..self.imports.len() {
                 if self.imports[index].status != ImportStatus::Unresolved {
                     continue;
@@ -289,17 +273,16 @@ impl<'cx> NameDb<'cx> {
                 match self.resolve_import(ImportId::new(index)) {
                     ImportResolve::Resolved => {
                         self.imports[index].status = ImportStatus::Resolved;
-                        changed = true;
+                        made_progress = true;
                     }
                     ImportResolve::Ambiguous => {
                         self.imports[index].status = ImportStatus::Ambiguous;
-                        changed = true;
                     }
                     ImportResolve::Pending => {}
                 }
             }
 
-            if !changed {
+            if !made_progress {
                 break;
             }
         }
@@ -445,7 +428,6 @@ impl<'cx> NameDb<'cx> {
         origin: Origin<'cx>,
     ) -> DefId {
         self.assert_visibility_scope(visibility);
-
         let id = DefId::new(self.defs.len());
         self.defs.push(Def {
             id,

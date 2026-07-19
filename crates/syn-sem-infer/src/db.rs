@@ -516,7 +516,7 @@ mod tests {
     use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
     use syn_sem_hir as hir;
-    use syn_sem_name::{collect::NameCollector, AstNodeId, DefKind, NameDb, Origin, ScopeKind};
+    use syn_sem_name::{AstNodeId, DefId, NameDb, NameDbBuilder, Namespace, ResolveResult};
 
     fn infer_ty_ids<'cx>(
         ccx: &'cx CommonCx,
@@ -534,22 +534,6 @@ mod tests {
         (hir, infer)
     }
 
-    fn infer_tids_with_names<'cx>(
-        ccx: &'cx CommonCx,
-        scx: &'cx SyntaxCx<'cx>,
-        source_text: &str,
-        names: &NameDb<'cx>,
-    ) -> (hir::Hir<'cx>, InferDb<'cx>) {
-        let file_path = ccx.intern("test.rs");
-        let source_text = ccx.intern(source_text);
-        scx.parse_file(file_path, source_text, SourceKind::Virtual)
-            .unwrap();
-        let file = scx.lookup_source(file_path).unwrap().ast();
-        let hir = hir::HirBuilder::new(names).build(file_path, file);
-        let infer = InferDb::analyze(ccx, &hir, names, &InferConstFacts::default());
-        (hir, infer)
-    }
-
     fn infer_collected_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
@@ -561,10 +545,19 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names =
-            NameCollector::collect([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, names, infer)
+    }
+
+    fn root_type_def<'cx>(names: &NameDb<'cx>, name: syn_sem_name::Name<'cx>) -> DefId {
+        let ResolveResult::Found(def) =
+            names.resolve_type_path(names.crate_scope(), [name].into_iter())
+        else {
+            panic!("expected root type definition");
+        };
+        def
     }
 
     #[test]
@@ -763,16 +756,9 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let local = ccx.intern("Local");
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let local_def = names.add_def(
-            crate_scope,
-            DefKind::Struct,
-            Some(local),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Local }", &names);
+        let (hir, names, infer) =
+            infer_collected_types(&ccx, &scx, "struct Local; struct S { field: Local }");
+        let local_def = root_type_def(&names, local);
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),
@@ -786,16 +772,15 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let t = ccx.intern("T");
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let t_def = names.add_def(
-            crate_scope,
-            DefKind::GenericType,
-            Some(t),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: T }", &names);
+        let (hir, names, infer) = infer_collected_types(&ccx, &scx, "struct S<T> { field: T }");
+        let s_def = root_type_def(&names, ccx.intern("S"));
+        let generic_scope = names
+            .def_generic_scope(s_def)
+            .expect("struct should have a generic scope");
+        let t_def = names
+            .binding(generic_scope, Namespace::Type, t)
+            .and_then(|binding| binding.single())
+            .expect("generic type should have a definition");
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),
@@ -809,16 +794,15 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let item = ccx.intern("Item");
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let item_def = names.add_def(
-            crate_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Untracked,
+        let (hir, names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            "trait Tr { type Item; } use Tr::Item; struct S { field: Item }",
         );
-        let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Item }", &names);
+        let tr_def = root_type_def(&names, ccx.intern("Tr"));
+        let ResolveResult::Found(item_def) = names.member(tr_def, Namespace::Type, item) else {
+            panic!("trait should have an associated type");
+        };
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),
@@ -841,56 +825,28 @@ mod tests {
         let b = ccx.intern("b");
         let trait_name = ccx.intern("Trait");
         let item = ccx.intern("Item");
-        let mut names = NameDb::default();
-        let root_scope = names.root_scope();
-        let crate_scope = names.crate_scope();
-        let t_def = names.add_def(
-            crate_scope,
-            DefKind::GenericType,
-            Some(t),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let a_def = names.add_def(
-            crate_scope,
-            DefKind::Module,
-            Some(a),
-            root_scope,
-            Origin::Untracked,
-        );
-        let a_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(crate_scope));
-        names.set_path_scope(a_def, a_scope);
-        let b_def = names.add_def(
-            a_scope,
-            DefKind::Module,
-            Some(b),
-            root_scope,
-            Origin::Untracked,
-        );
-        let b_scope = names.add_scope(syn_sem_name::ScopeKind::Module, Some(a_scope));
-        names.set_path_scope(b_def, b_scope);
-        let trait_def = names.add_def(
-            b_scope,
-            DefKind::Trait,
-            Some(trait_name),
-            root_scope,
-            Origin::Untracked,
-        );
-        let trait_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(b_scope));
-        names.set_path_scope(trait_def, trait_scope);
-        let item_def = names.add_def(
-            trait_scope,
-            DefKind::AssocType,
-            Some(item),
-            root_scope,
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(
+        let (hir, names, infer) = infer_collected_types(
             &ccx,
             &scx,
-            "struct S { field: <T as a::b::Trait>::Item }",
-            &names,
+            "mod a { pub mod b { pub trait Trait { type Item; } } } struct S<T> { field: <T as a::b::Trait>::Item }",
         );
+        let s_def = root_type_def(&names, ccx.intern("S"));
+        let generic_scope = names
+            .def_generic_scope(s_def)
+            .expect("struct should have a generic scope");
+        let t_def = names
+            .binding(generic_scope, Namespace::Type, t)
+            .and_then(|binding| binding.single())
+            .expect("generic type should have a definition");
+        let ResolveResult::Found(trait_def) = names.resolve_type_path(
+            names.crate_scope(),
+            [ccx.intern("crate"), a, b, trait_name].into_iter(),
+        ) else {
+            panic!("trait path should resolve");
+        };
+        let ResolveResult::Found(item_def) = names.member(trait_def, Namespace::Type, item) else {
+            panic!("trait should have an associated type");
+        };
 
         let path = struct_field_path_type(&hir, &infer);
         let projection = struct_field_type_id(&hir, &infer);
@@ -952,44 +908,30 @@ mod tests {
         let t = ccx.intern("T");
         let iterator = ccx.intern("Iterator");
         let item = ccx.intern("Item");
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let t_def = names.add_def(
-            crate_scope,
-            DefKind::GenericType,
-            Some(t),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let iterator_def = names.add_def(
-            crate_scope,
-            DefKind::Trait,
-            Some(iterator),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let iterator_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(crate_scope));
-        names.set_path_scope(iterator_def, iterator_scope);
-        let iterator_item_def = names.add_def(
-            iterator_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let item_def = names.add_def(
-            crate_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(
+        let (hir, names, infer) = infer_collected_types(
             &ccx,
             &scx,
-            "struct S<T: Iterator> { field: <T>::Item }",
-            &names,
+            "trait PathItem { type Item; } use PathItem::Item; trait Iterator { type Item; } struct S<T: Iterator> { field: <T>::Item }",
         );
+        let s_def = root_type_def(&names, ccx.intern("S"));
+        let generic_scope = names
+            .def_generic_scope(s_def)
+            .expect("struct should have a generic scope");
+        let t_def = names
+            .binding(generic_scope, Namespace::Type, t)
+            .and_then(|binding| binding.single())
+            .expect("generic type should have a definition");
+        let iterator_def = root_type_def(&names, iterator);
+        let ResolveResult::Found(iterator_item_def) =
+            names.member(iterator_def, Namespace::Type, item)
+        else {
+            panic!("iterator should have an associated type");
+        };
+        let path_item_def = root_type_def(&names, ccx.intern("PathItem"));
+        let ResolveResult::Found(item_def) = names.member(path_item_def, Namespace::Type, item)
+        else {
+            panic!("path item trait should have an associated type");
+        };
 
         let path = struct_field_path_type(&hir, &infer);
         let projection = struct_field_type_id(&hir, &infer);
@@ -1060,37 +1002,25 @@ mod tests {
         let t = ccx.intern("T");
         let display = ccx.intern("Display");
         let item = ccx.intern("Item");
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let t_def = names.add_def(
-            crate_scope,
-            DefKind::GenericType,
-            Some(t),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let display_def = names.add_def(
-            crate_scope,
-            DefKind::Trait,
-            Some(display),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let display_scope = names.add_scope(syn_sem_name::ScopeKind::Trait, Some(crate_scope));
-        names.set_path_scope(display_def, display_scope);
-        names.add_def(
-            crate_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(
+        let (hir, names, infer) = infer_collected_types(
             &ccx,
             &scx,
-            "struct S<T: Display> { field: <T>::Item }",
-            &names,
+            "trait PathItem { type Item; } use PathItem::Item; trait Display {} struct S<T: Display> { field: <T>::Item }",
         );
+        let s_def = root_type_def(&names, ccx.intern("S"));
+        let generic_scope = names
+            .def_generic_scope(s_def)
+            .expect("struct should have a generic scope");
+        let t_def = names
+            .binding(generic_scope, Namespace::Type, t)
+            .and_then(|binding| binding.single())
+            .expect("generic type should have a definition");
+        let display_def = root_type_def(&names, display);
+        let path_item_def = root_type_def(&names, ccx.intern("PathItem"));
+        assert!(matches!(
+            names.member(path_item_def, Namespace::Type, item),
+            ResolveResult::Found(_)
+        ));
 
         let path = struct_field_path_type(&hir, &infer);
         let qself = path
@@ -1128,9 +1058,6 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
 
-        let iterator = ccx.intern("Iterator");
-        let vec = ccx.intern("Vec");
-        let item = ccx.intern("Item");
         let ast::Item::Struct(_) = &file.items[0] else {
             panic!("expected struct item");
         };
@@ -1147,39 +1074,20 @@ mod tests {
             panic!("expected impl associated type");
         };
 
-        let mut names = NameDb::default();
-        let crate_scope = names.crate_scope();
-        let vec_def = names.add_def(
-            crate_scope,
-            DefKind::Struct,
-            Some(vec),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(&file.items[0])),
-        );
-        let iterator_def = names.add_def(
-            crate_scope,
-            DefKind::Trait,
-            Some(iterator),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(&file.items[1])),
-        );
-        let iterator_scope = names.add_scope(ScopeKind::Trait, Some(crate_scope));
-        names.set_path_scope(iterator_def, iterator_scope);
-        let trait_assoc_def = names.add_def(
-            iterator_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Untracked,
-        );
-        let impl_item_def = names.add_def(
-            crate_scope,
-            DefKind::AssocType,
-            Some(item),
-            crate_scope,
-            Origin::Ast(AstNodeId::from_ref(&impl_item.items[0])),
-        );
-
+        let names =
+            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let vec_def = names
+            .def_for_ast_node(AstNodeId::from_ref(&file.items[0]))
+            .expect("Vec should have a definition");
+        let iterator_def = names
+            .def_for_ast_node(AstNodeId::from_ref(&file.items[1]))
+            .expect("Iterator should have a definition");
+        let trait_assoc_def = names
+            .def_for_ast_node(AstNodeId::from_ref(&trait_item.items[0]))
+            .expect("trait associated type should have a definition");
+        let impl_item_def = names
+            .def_for_ast_node(AstNodeId::from_ref(&impl_item.items[0]))
+            .expect("impl associated type should have a definition");
         let hir = hir::HirBuilder::new(&names).build(file_path, file);
         let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());
         let [impl_assoc_type] = infer.impl_assoc_types.as_slice() else {
@@ -2433,26 +2341,20 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let maybe = ccx.intern("Maybe");
-        let mut names = NameDb::default();
-        let first = names.add_def(
-            names.crate_scope(),
-            DefKind::Struct,
-            Some(maybe),
-            names.crate_scope(),
-            Origin::Untracked,
+        let (hir, names, infer) = infer_collected_types(
+            &ccx,
+            &scx,
+            "struct Maybe; enum Maybe {} struct S { field: Maybe }",
         );
-        let second = names.add_def(
-            names.crate_scope(),
-            DefKind::Enum,
-            Some(maybe),
-            names.crate_scope(),
-            Origin::Untracked,
-        );
-        let (hir, infer) = infer_tids_with_names(&ccx, &scx, "struct S { field: Maybe }", &names);
+        let defs = names
+            .binding(names.crate_scope(), Namespace::Type, maybe)
+            .expect("duplicate definitions should have a binding")
+            .iter()
+            .collect::<Vec<_>>();
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),
-            PathTypeResolution::Ambiguous(vec![first, second])
+            PathTypeResolution::Ambiguous(defs)
         );
 
         let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: Missing }");

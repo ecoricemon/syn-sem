@@ -1,8 +1,8 @@
 use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, FilePath};
 use syn_sem_name::{
-    collect::NameCollector, AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name,
-    NameDb, Namespace, ResolveResult, ScopeId, ScopeKind,
+    AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name, NameDb, NameDbBuilder,
+    Namespace, ResolveResult, ScopeId, ScopeKind,
 };
 
 struct TestCx {
@@ -31,7 +31,7 @@ fn collect<'cx>(
     files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
     entry_path: FilePath<'cx>,
 ) -> NameDb<'cx> {
-    NameCollector::collect(files, [entry_path]).unwrap()
+    NameDbBuilder::build(files, [entry_path]).unwrap()
 }
 
 fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {
@@ -68,27 +68,6 @@ fn direct_binding<'cx>(
         .and_then(|binding| binding.iter().next())
 }
 
-fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
-    db.scopes_with_kind(kind).nth(nth).unwrap()
-}
-
-fn unique_child_scope(db: &NameDb<'_>, parent: ScopeId, kind: ScopeKind) -> ScopeId {
-    let mut scopes = db.child_scopes(parent, kind);
-    let scope = scopes.next().unwrap();
-    assert!(
-        scopes.next().is_none(),
-        "expected exactly one {kind:?} child scope under {parent:?}"
-    );
-    scope
-}
-
-fn single_def(db: &NameDb<'_>, kind: DefKind) -> DefId {
-    let mut defs = db.defs_with_kind(kind);
-    let def = defs.next().unwrap();
-    assert!(defs.next().is_none(), "expected exactly one {kind:?} def");
-    def
-}
-
 fn module_scope<'cx>(db: &NameDb<'cx>, parent: ScopeId, name: Name<'cx>) -> ScopeId {
     let def = direct_type_binding(db, parent, name).expect("expected module binding");
     assert_eq!(db[def].kind, DefKind::Module);
@@ -96,7 +75,9 @@ fn module_scope<'cx>(db: &NameDb<'cx>, parent: ScopeId, name: Name<'cx>) -> Scop
 }
 
 fn import_for<'cx>(db: &NameDb<'cx>, scope: ScopeId, source_path: &[Name<'cx>]) -> ImportId {
-    let mut imports = db.imports_matching(scope, source_path);
+    let mut imports = db
+        .import_ids()
+        .filter(|&import| db[import].scope == scope && db[import].source_path == source_path);
     let import = imports.next().unwrap();
     assert!(
         imports.next().is_none(),
@@ -209,7 +190,7 @@ mod imports {
         let c = tcx.common.intern("c");
         let d = tcx.common.intern("d");
 
-        assert_eq!(db.import_count(), 3);
+        assert_eq!(db.import_ids().len(), 3);
         let single = import_for(&db, crate_scope, &[a, b]);
         let renamed = import_for(&db, crate_scope, &[a, c]);
         let glob = import_for(&db, crate_scope, &[a]);
@@ -463,7 +444,8 @@ mod scopes {
         let tr = direct_type_binding(&db, crate_scope, tcx.common.intern("Tr")).unwrap();
         assert_eq!(db[tr].kind, DefKind::Trait);
         let tr_generic = db.def_generic_scope(tr).unwrap();
-        let tr_scope = unique_child_scope(&db, tr_generic, ScopeKind::Trait);
+        let tr_scope = db.def_path_scope(tr).unwrap();
+        assert_eq!(db[tr_scope].parent, Some(tr_generic));
         let c = direct_value_binding(&db, tr_scope, tcx.common.intern("C")).unwrap();
         assert_eq!(db[c].kind, DefKind::AssocConst);
         let assoc = direct_type_binding(&db, tr_scope, tcx.common.intern("Assoc")).unwrap();
@@ -479,10 +461,26 @@ mod scopes {
         assert_eq!(db[m_body].kind, ScopeKind::Function);
         assert_eq!(db[m_body].parent, Some(m_generic));
 
-        let impl_def = single_def(&db, DefKind::Impl);
+        let impl_item = entry
+            .file
+            .items
+            .iter()
+            .find(|item| matches!(item, ast::Item::Impl(_)))
+            .expect("expected impl item");
+        let ast::Item::Impl(impl_item_data) = impl_item else {
+            unreachable!()
+        };
+        let impl_def = db
+            .def_for_ast_node(AstNodeId::from_ref(impl_item))
+            .expect("impl should have a definition");
         let impl_generic = db.def_generic_scope(impl_def).unwrap();
-        let impl_scope = unique_child_scope(&db, impl_generic, ScopeKind::Impl);
-        let make = direct_value_binding(&db, impl_scope, tcx.common.intern("make")).unwrap();
+        let make_item = &impl_item_data.items[0];
+        let make = db
+            .def_for_ast_node(AstNodeId::from_ref(make_item))
+            .expect("impl function should have a definition");
+        let impl_scope = db[make].parent_scope;
+        assert_eq!(db[impl_scope].kind, ScopeKind::Impl);
+        assert_eq!(db[impl_scope].parent, Some(impl_generic));
         assert_eq!(db[make].kind, DefKind::AssocFn);
         let make_generic = db.def_generic_scope(make).unwrap();
         let make_body = db.def_body_scope(make).unwrap();
@@ -544,9 +542,9 @@ mod scopes {
         .expect("function should be collected in the value namespace");
         let generic_scope = db.def_generic_scope(f).unwrap();
         let function_scope = db.def_body_scope(f).unwrap();
-        let block_scope = scope(&db, ScopeKind::Block, 0);
-
-        assert_eq!(db.scope_for_ast_node(block_node), Some(block_scope));
+        let block_scope = db
+            .scope_for_ast_node(block_node)
+            .expect("function block should have a scope");
         let type_param_def =
             direct_type_binding(&db, generic_scope, tcx.common.intern("T")).unwrap();
         assert_eq!(db[type_param_def].kind, DefKind::GenericType);

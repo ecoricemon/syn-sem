@@ -1,171 +1,20 @@
 use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, SourceText};
 use syn_sem_name::{
-    DefId, DefKind, Name, NameDb, Namespace, Origin, ResolveResult, ScopeId, ScopeKind,
+    AstNodeId, DefId, DefKind, Name, NameDb, NameDbBuilder, Namespace, ResolveResult, ScopeId,
 };
 
-#[derive(Default)]
-struct AstNameCollector<'cx> {
-    db: NameDb<'cx>,
-}
-
-impl<'cx> AstNameCollector<'cx> {
-    fn collect_file(mut self, file: &ast::File<'cx>) -> NameDb<'cx> {
-        let crate_scope = self.db.crate_scope();
-        self.collect_items(crate_scope, file.items);
-        self.db
-    }
-
-    fn collect_items(&mut self, scope: ScopeId, items: &[ast::Item<'cx>]) {
-        for item in items {
-            self.collect_item(scope, item);
-        }
-    }
-
-    fn collect_item(&mut self, scope: ScopeId, item: &ast::Item<'cx>) {
-        match item {
-            ast::Item::Const(item) => {
-                self.add_named(scope, DefKind::Const, item.ident.inner);
-            }
-            ast::Item::Enum(item) => {
-                self.add_named(scope, DefKind::Enum, item.ident.inner);
-                self.collect_generics(scope, &item.generics);
-            }
-            ast::Item::Fn(item) => self.collect_fn(scope, item),
-            ast::Item::Mod(item) => self.collect_mod(scope, item),
-            ast::Item::Struct(item) => {
-                self.add_named(scope, DefKind::Struct, item.ident.inner);
-                self.collect_generics(scope, &item.generics);
-            }
-            ast::Item::Trait(item) => {
-                self.add_named(scope, DefKind::Trait, item.ident.inner);
-                self.collect_generics(scope, &item.generics);
-            }
-            ast::Item::Type(item) => {
-                self.add_named(scope, DefKind::TypeAlias, item.ident.inner);
-                self.collect_generics(scope, &item.generics);
-            }
-            ast::Item::Impl(_) | ast::Item::Use(_) => {}
-        }
-    }
-
-    fn collect_mod(&mut self, parent_scope: ScopeId, item: &ast::ItemMod<'cx>) {
-        self.add_named(parent_scope, DefKind::Module, item.ident.inner);
-        let module_scope = self.db.add_scope(ScopeKind::Module, Some(parent_scope));
-
-        if let Some(items) = item.items {
-            self.collect_items(module_scope, items);
-        }
-    }
-
-    fn collect_fn(&mut self, parent_scope: ScopeId, item: &ast::ItemFn<'cx>) {
-        self.add_named(parent_scope, DefKind::Fn, item.sig.ident.inner);
-
-        let generic_scope = self.db.add_scope(ScopeKind::Generic, Some(parent_scope));
-        self.collect_generics_into(generic_scope, &item.sig.generics);
-
-        let body_scope = self.db.add_scope(ScopeKind::Function, Some(generic_scope));
-
-        for param in item.sig.params.iter().skip(1) {
-            self.collect_pat(body_scope, param.pat.pat);
-        }
-
-        self.collect_block(body_scope, &item.block);
-    }
-
-    fn collect_block(&mut self, parent_scope: ScopeId, block: &ast::Block<'cx>) {
-        let block_scope = self.db.add_scope(ScopeKind::Block, Some(parent_scope));
-
-        for stmt in block.stmts {
-            match stmt {
-                ast::Stmt::Local(local) => self.collect_pat(block_scope, &local.pat),
-                ast::Stmt::Item(item) => self.collect_item(block_scope, item),
-                ast::Stmt::Expr { .. } => {}
-            }
-        }
-    }
-
-    fn collect_generics(&mut self, parent_scope: ScopeId, generics: &ast::Generics<'cx>) {
-        let generic_scope = self.db.add_scope(ScopeKind::Generic, Some(parent_scope));
-        self.collect_generics_into(generic_scope, generics);
-    }
-
-    fn collect_generics_into(&mut self, scope: ScopeId, generics: &ast::Generics<'cx>) {
-        for param in generics.params {
-            match param {
-                ast::GenericParam::Type(param) => {
-                    self.add_named(scope, DefKind::GenericType, param.ident.inner);
-                }
-                ast::GenericParam::Const(param) => {
-                    self.add_named(scope, DefKind::GenericConst, param.ident.inner);
-                }
-                ast::GenericParam::Unsupported(_) => {}
-            }
-        }
-    }
-
-    fn collect_pat(&mut self, scope: ScopeId, pat: &ast::Pat<'cx>) {
-        match pat {
-            ast::Pat::Ident(pat) => {
-                self.add_named(scope, DefKind::Local, pat.ident.inner);
-            }
-            ast::Pat::Reference(pat) => self.collect_pat(scope, pat.pat),
-            ast::Pat::Slice(pat) => {
-                for elem in pat.elems {
-                    self.collect_pat(scope, elem);
-                }
-            }
-            ast::Pat::Struct(pat) => {
-                for field in pat.fields {
-                    self.collect_pat(scope, field.pat);
-                }
-            }
-            ast::Pat::Tuple(pat) => {
-                for elem in pat.elems {
-                    self.collect_pat(scope, elem);
-                }
-            }
-            ast::Pat::Type(pat) => self.collect_pat(scope, pat.pat),
-            ast::Pat::Lit(_) | ast::Pat::Path(_) | ast::Pat::Rest(_) => {}
-        }
-    }
-
-    fn add_named(&mut self, scope: ScopeId, kind: DefKind, name: Name<'cx>) -> DefId {
-        let visibility = self.nearest_module_scope(scope);
-        self.db
-            .add_def(scope, kind, Some(name), visibility, Origin::Untracked)
-    }
-
-    fn nearest_module_scope(&self, mut scope: ScopeId) -> ScopeId {
-        loop {
-            if matches!(self.db[scope].kind, ScopeKind::Crate | ScopeKind::Module) {
-                return scope;
-            }
-            scope = self.db[scope]
-                .parent
-                .expect("collected scopes must be nested under a crate");
-        }
-    }
-}
-
-fn collect_ast_names<'cx>(
+fn parse_input<'cx>(
     scx: &'cx ast::SyntaxCx<'cx>,
     source_text: SourceText<'cx>,
-) -> NameDb<'cx> {
-    let file = parse_file(scx, source_text);
-    AstNameCollector::default().collect_file(&file)
-}
-
-fn parse_file<'cx>(scx: &'cx ast::SyntaxCx<'cx>, source_text: SourceText<'cx>) -> ast::File<'cx> {
+) -> ast::SourceInput<'cx> {
     let file_path = scx.common.intern("test.rs");
     scx.parse_file(file_path, source_text, SourceKind::Virtual)
         .unwrap();
-    let source = scx.get_source(file_path).unwrap();
-    source.ast().clone()
-}
-
-fn scope(db: &NameDb<'_>, kind: ScopeKind, nth: usize) -> ScopeId {
-    db.scopes_with_kind(kind).nth(nth).unwrap()
+    ast::SourceInput {
+        file_path,
+        file: scx.lookup_source(file_path).unwrap().ast(),
+    }
 }
 
 fn expect_def<'cx>(
@@ -175,46 +24,27 @@ fn expect_def<'cx>(
     name: Name<'cx>,
     kind: DefKind,
 ) -> DefId {
-    let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
+    let result = match namespace {
+        Namespace::Type => db.resolve_type_path(scope, [name].into_iter()),
+        Namespace::Value => db.resolve_value_path(scope, [name].into_iter()),
+        Namespace::Macro | Namespace::Lifetime => {
+            panic!("test helper supports only type and value namespaces")
+        }
+    };
+    let ResolveResult::Found(def) = result else {
         panic!("expected {name:?} to resolve in {namespace:?}");
     };
     assert_eq!(db[def].kind, kind);
     def
 }
 
-fn resolve_lexical<'cx>(
-    db: &NameDb<'cx>,
-    mut scope: ScopeId,
-    namespace: Namespace,
-    name: Name<'cx>,
-) -> ResolveResult {
-    loop {
-        if let Some(binding) = db.binding(scope, namespace, name) {
-            let mut defs = binding.iter();
-            return match defs.len() {
-                0 => ResolveResult::NotFound,
-                1 => ResolveResult::Found(defs.next().unwrap()),
-                _ => ResolveResult::Ambiguous(defs.collect()),
-            };
-        }
-
-        let Some(parent) = db[scope].parent else {
-            return ResolveResult::NotFound;
-        };
-        scope = parent;
-    }
-}
-
-mod resolution {
-    use super::*;
-
-    #[test]
-    fn resolves_function_generics_params_locals_and_local_items_from_ast() {
-        // Proves AST collection resolves generics, params, locals, and local items by scope.
-        let ccx = CommonCx::default();
-        let scx = ast::SyntaxCx::new(&ccx);
-        let source_text = ccx.intern(
-            r#"
+#[test]
+fn resolves_function_generics_params_locals_and_local_items_from_ast() {
+    // Proves AST collection resolves generics, params, locals, and local items by scope.
+    let ccx = CommonCx::default();
+    let scx = ast::SyntaxCx::new(&ccx);
+    let source_text = ccx.intern(
+        r#"
         fn f<T, const N: usize>(x: T) {
             let y = x;
             struct Local<U> {
@@ -224,92 +54,110 @@ mod resolution {
             let z: Local<T>;
         }
         "#,
-        );
-        let db = collect_ast_names(&scx, source_text);
+    );
+    let input = parse_input(&scx, source_text);
+    let fn_item = &input.file.items[0];
+    let ast::Item::Fn(fn_data) = fn_item else {
+        panic!("expected function item");
+    };
+    let fn_node = AstNodeId::from_ref(fn_item);
+    let block_node = AstNodeId::from_ref(&fn_data.block);
+    let db = NameDbBuilder::build([input], [input.file_path]).unwrap();
+    let fn_def = db
+        .def_for_ast_node(fn_node)
+        .expect("function should have a definition");
+    let generic_scope = db
+        .def_generic_scope(fn_def)
+        .expect("function should have a generic scope");
+    let block_scope = db
+        .scope_for_ast_node(block_node)
+        .expect("function block should have a scope");
 
-        let generic_scope = scope(&db, ScopeKind::Generic, 0);
-        let block_scope = scope(&db, ScopeKind::Block, 0);
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Type,
+        scx.common.intern("Local"),
+        DefKind::Struct,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Type,
+        scx.common.intern("T"),
+        DefKind::GenericType,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Value,
+        scx.common.intern("N"),
+        DefKind::GenericConst,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Value,
+        scx.common.intern("x"),
+        DefKind::Local,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Value,
+        scx.common.intern("y"),
+        DefKind::Local,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Value,
+        scx.common.intern("z"),
+        DefKind::Local,
+    );
+    expect_def(
+        &db,
+        generic_scope,
+        Namespace::Type,
+        scx.common.intern("T"),
+        DefKind::GenericType,
+    );
+}
 
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Type,
-            scx.common.intern("Local"),
-            DefKind::Struct,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Type,
-            scx.common.intern("T"),
-            DefKind::GenericType,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Value,
-            scx.common.intern("N"),
-            DefKind::GenericConst,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Value,
-            scx.common.intern("x"),
-            DefKind::Local,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Value,
-            scx.common.intern("y"),
-            DefKind::Local,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Value,
-            scx.common.intern("z"),
-            DefKind::Local,
-        );
-        expect_def(
-            &db,
-            generic_scope,
-            Namespace::Type,
-            scx.common.intern("T"),
-            DefKind::GenericType,
-        );
-    }
-
-    #[test]
-    fn keeps_type_and_value_namespaces_separate_from_ast() {
-        // Proves AST collection keeps same-spelled type and value names in separate namespaces.
-        let ccx = CommonCx::default();
-        let scx = ast::SyntaxCx::new(&ccx);
-        let source_text = ccx.intern(
-            r#"
+#[test]
+fn keeps_type_and_value_namespaces_separate_from_ast() {
+    // Proves AST collection keeps same-spelled type and value names in separate namespaces.
+    let ccx = CommonCx::default();
+    let scx = ast::SyntaxCx::new(&ccx);
+    let source_text = ccx.intern(
+        r#"
         fn f<T>(T: i32) {
             let x: T = T;
         }
         "#,
-        );
-        let db = collect_ast_names(&scx, source_text);
+    );
+    let input = parse_input(&scx, source_text);
+    let ast::Item::Fn(fn_data) = &input.file.items[0] else {
+        panic!("expected function item");
+    };
+    let block_node = AstNodeId::from_ref(&fn_data.block);
+    let db = NameDbBuilder::build([input], [input.file_path]).unwrap();
+    let block_scope = db
+        .scope_for_ast_node(block_node)
+        .expect("function block should have a scope");
 
-        let block_scope = scope(&db, ScopeKind::Block, 0);
-
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Type,
-            scx.common.intern("T"),
-            DefKind::GenericType,
-        );
-        expect_def(
-            &db,
-            block_scope,
-            Namespace::Value,
-            scx.common.intern("T"),
-            DefKind::Local,
-        );
-    }
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Type,
+        scx.common.intern("T"),
+        DefKind::GenericType,
+    );
+    expect_def(
+        &db,
+        block_scope,
+        Namespace::Value,
+        scx.common.intern("T"),
+        DefKind::Local,
+    );
 }

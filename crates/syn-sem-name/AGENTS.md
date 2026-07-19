@@ -28,4 +28,4 @@
 
 ## Entry Points
 
-- Start from `NameDb` for name facts and `collect::NameCollector` for AST-aware collection.
+- Start from `NameDb` for name facts and `NameDbBuilder::build` for AST-aware construction.

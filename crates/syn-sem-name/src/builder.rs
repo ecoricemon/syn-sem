@@ -1,4 +1,4 @@
-//! AST-aware collection into [`NameDb`].
+//! AST-aware collection into [`NameDbBuilder`].
 //!
 //! Callers provide already parsed files, so this module does not read source files or depend on a
 //! top-level orchestration context.
@@ -11,35 +11,37 @@ use std::{borrow::Borrow, collections::BTreeMap, io, path::PathBuf};
 use syn_sem_ast as ast;
 use syn_sem_common::{FilePath, MaybeResult, Result, Set};
 
-/// Collects name-resolution facts from prepared AST inputs.
-pub struct NameCollector<'cx> {
-    files: BTreeMap<FilePath<'cx>, ast::SourceInput<'cx>>,
-    db: NameDb<'cx>,
-}
+/// Builds a name-resolution database from prepared AST inputs.
+pub struct NameDbBuilder;
 
-impl<'cx> NameCollector<'cx> {
-    /// Collects names from prepared AST inputs starting at one or more root files.
-    ///
-    /// Each root is collected into the crate root scope. This is useful for caller-provided
-    /// well-known library sources that are not reachable through the entry file's module tree.
-    pub fn collect(
+impl NameDbBuilder {
+    /// Builds a name database from prepared AST inputs in one step.
+    pub fn build<'cx>(
         files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
         roots: impl IntoIterator<Item = FilePath<'cx>>,
     ) -> Result<NameDb<'cx>> {
-        let this = Self {
+        let mut db = NameDb::default();
+        AstCollector {
             files: files
                 .into_iter()
                 .map(|input| (input.file_path, input))
                 .collect(),
-            db: NameDb::default(),
-        };
-        this.collect_inner(roots)
+            db: &mut db,
+        }
+        .collect_roots(roots)?;
+        db.resolve_imports();
+        Ok(db)
     }
+}
 
-    fn collect_inner(
-        mut self,
-        roots: impl IntoIterator<Item = FilePath<'cx>>,
-    ) -> Result<NameDb<'cx>> {
+/// Collects prepared AST inputs into a name database under construction.
+struct AstCollector<'a, 'cx> {
+    files: BTreeMap<FilePath<'cx>, ast::SourceInput<'cx>>,
+    db: &'a mut NameDb<'cx>,
+}
+
+impl<'a, 'cx> AstCollector<'a, 'cx> {
+    fn collect_roots(&mut self, roots: impl IntoIterator<Item = FilePath<'cx>>) -> Result<()> {
         let crate_scope = self.db.crate_scope();
         let mut seen = Set::default();
         for root_path in roots {
@@ -52,8 +54,7 @@ impl<'cx> NameCollector<'cx> {
                 self.collect_item_from_module_tree(crate_scope, item, &path)?;
             }
         }
-        self.db.resolve_imports();
-        Ok(self.db)
+        Ok(())
     }
 
     fn file<Q>(&self, file_path: &Q) -> Result<ast::SourceInput<'cx>>

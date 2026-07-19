@@ -4,7 +4,7 @@ use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
 use syn_sem_hir::HirBuilder;
 use syn_sem_infer::{InferConstFacts, InferDb};
-use syn_sem_name::collect::NameCollector;
+use syn_sem_name::NameDbBuilder;
 
 pub(crate) const NO_KNOWN_LIBRARIES: KnownLibraryConfig = KnownLibraryConfig {
     core: false,
@@ -38,7 +38,7 @@ pub(crate) fn run_analysis(source_text: &str, known: KnownLibraryConfig) {
     }
 
     let names =
-        NameCollector::collect(inputs.clone(), roots).expect("name collection should succeed");
+        NameDbBuilder::build(inputs.clone(), roots).expect("name collection should succeed");
     let hir = HirBuilder::new(&names).build_files(inputs);
     let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());
     black_box(infer);

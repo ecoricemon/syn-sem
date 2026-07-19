@@ -1,11 +1,10 @@
 //! Name-resolution model for `syn-sem`.
 //!
 //! This crate owns the reusable vocabulary for resolving names: definitions, scopes, namespaces,
-//! bindings, imports, and simple lexical lookup. Its core database remains syntax-agnostic, while
-//! [`collect`] provides AST-aware collection from already parsed source inputs.
+//! bindings, imports, and simple lexical lookup. Build a database from prepared AST inputs with
+//! [`NameDbBuilder::build`].
 
-pub mod collect;
-
+mod builder;
 mod db;
 mod def;
 mod id;
@@ -13,6 +12,7 @@ mod import;
 mod namespace;
 mod scope;
 
+pub use builder::*;
 pub use db::*;
 pub use def::*;
 pub use id::*;

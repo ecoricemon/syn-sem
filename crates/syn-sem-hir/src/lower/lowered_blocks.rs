@@ -156,7 +156,7 @@ mod tests {
     use crate::{HirBuilder, ItemKind};
     use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{collect::NameCollector, DefKind};
+    use syn_sem_name::{DefKind, NameDbBuilder};
 
     fn parsed_hir<'cx>(
         ccx: &'cx CommonCx,
@@ -168,7 +168,7 @@ mod tests {
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameCollector::collect([ast::SourceInput { file_path, file }], [file_path])
+        let names = NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path])
             .expect("name collection should succeed");
         let hir = HirBuilder::new(&names).build(file_path, file);
         (names, hir)
