@@ -6,6 +6,8 @@ use syn_sem_macros::CheckDropless;
 /// Examples include `T`, `std::vec::Vec`, and `a::B<T>::C<U>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Path<'cx> {
+    /// Leading absolute-path separator, when the source path starts with `::`.
+    pub leading_colon: Option<Span<'cx>>,
     /// Path segments in order.
     pub segments: &'cx [PathSegment<'cx>],
     /// Source span of the path.
@@ -27,7 +29,11 @@ impl<'cx> Path<'cx> {
         let segments = scx.alloc_slice(len, |_| {
             PathSegment::from_str(scx, iter.next().unwrap(), Span::new_empty(scx))
         });
-        Self { segments, span }
+        Self {
+            leading_colon: None,
+            segments,
+            span,
+        }
     }
 
     /// Returns the identifier if this path is a single plain segment.
@@ -54,6 +60,11 @@ impl<'cx> Path<'cx> {
 impl<'cx> FromSyn<'cx, syn::Path> for Path<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::Path>) -> Self {
         Self {
+            leading_colon: desc
+                .input
+                .leading_colon
+                .as_ref()
+                .map(|colon| desc.span(colon)),
             segments: FromSyn::from_syn(scx, desc.with_input(&desc.input.segments)),
             span: desc.span(desc.input),
         }
@@ -300,11 +311,12 @@ mod tests {
 
     #[test]
     fn path() {
-        // Proves paths preserve segments and expose helper accessors.
+        // Proves paths preserve their root syntax and segments and expose helper accessors.
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let path = parse::<syn::Path, Path>(&scx, "A");
+        assert!(path.leading_colon.is_none());
         assert_eq!(&**path.get_ident().unwrap(), "A");
         assert!(!path.segments[0].has_args());
         assert!(path.segments[0].is_plain_ident());
@@ -318,6 +330,16 @@ mod tests {
         assert!(path.segments[2].has_args());
         assert_eq!(path.parent_segments().len(), 2);
         assert_eq!(&*path.last().unwrap().ident, "C");
+
+        let path = parse::<syn::Path, Path>(&scx, "::root::Item");
+        assert_eq!(
+            path.leading_colon
+                .expect("absolute path should preserve its leading separator")
+                .source_text(),
+            "::"
+        );
+        assert_eq!(path.segments.len(), 2);
+        assert_eq!(&*path.segments[0].ident, "root");
     }
 
     #[test]

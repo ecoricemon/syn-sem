@@ -459,6 +459,8 @@ impl<'cx> FromSyn<'cx, syn::ItemType> for ItemType<'cx> {
 pub struct ItemUse<'cx> {
     /// Item visibility.
     pub vis: Visibility<'cx>,
+    /// Leading absolute-path separator, when the use path starts with `::`.
+    pub leading_colon: Option<Span<'cx>>,
     /// Imported use tree.
     pub tree: UseTree<'cx>,
     /// Source span of the item.
@@ -473,6 +475,11 @@ impl<'cx> FromSyn<'cx, syn::ItemUse> for ItemUse<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ItemUse>) -> Self {
         Self {
             vis: Visibility::from_syn(scx, desc.with_input(&desc.input.vis)),
+            leading_colon: desc
+                .input
+                .leading_colon
+                .as_ref()
+                .map(|colon| desc.span(colon)),
             tree: UseTree::from_syn(scx, desc.with_input(&desc.input.tree)),
             span: desc.span(desc.input),
         }
@@ -1038,10 +1045,24 @@ mod tests {
 
         let item_use = parse::<T, U>(&scx, "pub use a;");
         assert!(matches!(item_use.vis, Visibility::Public(..)));
+        assert!(item_use.leading_colon.is_none());
         let UseTree::Name(name) = &item_use.tree else {
             panic!()
         };
         assert_eq!(&*name.ident, "a");
+
+        let item_use = parse::<T, U>(&scx, "use ::a::b;");
+        assert_eq!(
+            item_use
+                .leading_colon
+                .expect("absolute use should preserve its leading separator")
+                .source_text(),
+            "::"
+        );
+        let UseTree::Path(path) = &item_use.tree else {
+            panic!()
+        };
+        assert_eq!(&*path.ident, "a");
 
         let item_use = parse::<T, U>(&scx, "use a::b as c;");
         let UseTree::Path(path) = &item_use.tree else {

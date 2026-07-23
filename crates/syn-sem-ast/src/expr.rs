@@ -1,4 +1,7 @@
-use crate::{Block, FromSyn, Ident, InputDesc, Lit, Param, ParamCx, Path, Span, SyntaxCx, Type};
+use crate::{
+    AngleBracketedGenericArgs, Block, FromSyn, Ident, InputDesc, Lit, Param, ParamCx, Path, QSelf,
+    Span, SyntaxCx, Type,
+};
 use std::iter;
 use syn_sem_macros::CheckDropless;
 
@@ -450,6 +453,8 @@ pub struct ExprMethodCall<'cx> {
     pub receiver: &'cx Expr<'cx>,
     /// Method name.
     pub method: Ident<'cx>,
+    /// Explicit generic arguments supplied with turbofish syntax.
+    pub turbofish: Option<AngleBracketedGenericArgs<'cx>>,
     /// Method arguments.
     pub args: &'cx [Expr<'cx>],
     /// Source span of the expression.
@@ -461,6 +466,11 @@ impl<'cx> FromSyn<'cx, syn::ExprMethodCall> for ExprMethodCall<'cx> {
         Self {
             receiver: scx.alloc(Expr::from_syn(scx, desc.with_input(&desc.input.receiver))),
             method: Ident::from_syn(scx, desc.with_input(&desc.input.method)),
+            turbofish: desc
+                .input
+                .turbofish
+                .as_ref()
+                .map(|args| AngleBracketedGenericArgs::from_syn(scx, desc.with_input(args))),
             args: FromSyn::from_syn(scx, desc.with_input(&desc.input.args)),
             span: desc.span(desc.input),
         }
@@ -494,6 +504,8 @@ impl<'cx> FromSyn<'cx, syn::ExprParen> for ExprParen<'cx> {
 /// Examples include `x`, `Self::new`, and `module::CONST`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprPath<'cx> {
+    /// Qualified self type, when the expression uses qualified path syntax.
+    pub qself: Option<QSelf<'cx>>,
     /// Path being referenced.
     pub path: Path<'cx>,
     /// Source span of the expression.
@@ -503,6 +515,11 @@ pub struct ExprPath<'cx> {
 impl<'cx> FromSyn<'cx, syn::ExprPath> for ExprPath<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ExprPath>) -> Self {
         Self {
+            qself: desc
+                .input
+                .qself
+                .as_ref()
+                .map(|qself| QSelf::from_syn(scx, desc.with_input(qself))),
             path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
             span: desc.span(desc.input),
         }
@@ -592,6 +609,8 @@ impl<'cx> FromSyn<'cx, syn::ExprReturn> for ExprReturn<'cx> {
 /// For example, `Point { x: 1, y: 2 }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct ExprStruct<'cx> {
+    /// Qualified self type, when the struct path uses qualified path syntax.
+    pub qself: Option<QSelf<'cx>>,
     /// Path naming the constructed struct.
     pub path: Path<'cx>,
     /// Field initializers.
@@ -607,6 +626,11 @@ pub struct ExprStruct<'cx> {
 impl<'cx> FromSyn<'cx, syn::ExprStruct> for ExprStruct<'cx> {
     fn from_syn(scx: &'cx SyntaxCx<'cx>, desc: InputDesc<'cx, '_, syn::ExprStruct>) -> Self {
         Self {
+            qself: desc
+                .input
+                .qself
+                .as_ref()
+                .map(|qself| QSelf::from_syn(scx, desc.with_input(qself))),
             path: Path::from_syn(scx, desc.with_input(&desc.input.path)),
             fields: FromSyn::from_syn(scx, desc.with_input(&desc.input.fields)),
             rest: desc
@@ -830,11 +854,12 @@ mod tests {
 
     #[test]
     fn expr_struct() {
-        // Proves struct expressions preserve path, fields, rest, and path arguments.
+        // Proves struct expressions preserve qualified paths, fields, rest, and path arguments.
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprStruct, ExprStruct>(&scx, "S { a, b: c }");
+        assert!(expr.qself.is_none());
         assert_eq!(&**expr.path.get_ident().unwrap(), "S");
         assert_eq!(expr.fields.len(), 2);
         assert_eq!(&*expr.fields[0].member, "a");
@@ -850,17 +875,55 @@ mod tests {
         let expr = parse::<syn::ExprStruct, ExprStruct>(&scx, "S::<T> { value }");
         assert_eq!(&*expr.path.segments[0].ident, "S");
         assert!(expr.path.segments[0].has_args());
+
+        let expr = parse::<syn::ExprStruct, ExprStruct>(&scx, "<S as Trait>::Output { value: 1 }");
+        let qself = expr
+            .qself
+            .as_ref()
+            .expect("qualified struct path should preserve its self type");
+        assert_eq!(qself.position, 1);
+        assert!(matches!(qself.ty, Type::Path(_)));
     }
 
     #[test]
     fn expr_path() {
-        // Proves expression paths preserve generic arguments on path segments.
+        // Proves expression paths preserve qualified self types and generic arguments.
         let ccx = syn_sem_common::CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
 
         let expr = parse::<syn::ExprPath, ExprPath>(&scx, "make::<T>");
+        assert!(expr.qself.is_none());
         assert_eq!(&*expr.path.segments[0].ident, "make");
         assert!(expr.path.segments[0].has_args());
+
+        let expr = parse::<syn::ExprPath, ExprPath>(&scx, "<T as Trait>::CONST");
+        let qself = expr
+            .qself
+            .as_ref()
+            .expect("qualified expression path should preserve its self type");
+        assert_eq!(qself.position, 1);
+        assert!(matches!(qself.ty, Type::Path(_)));
+        assert_eq!(expr.path.segments.len(), 2);
+    }
+
+    #[test]
+    fn expr_method_call() {
+        // Proves method calls preserve explicit turbofish arguments separately from value args.
+        let ccx = syn_sem_common::CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+
+        let expr = parse::<syn::ExprMethodCall, ExprMethodCall>(&scx, "value.convert::<T, 3>(arg)");
+        let turbofish = expr
+            .turbofish
+            .as_ref()
+            .expect("method turbofish should be preserved");
+        assert_eq!(turbofish.args.len(), 2);
+        assert!(matches!(turbofish.args[0], crate::GenericArg::Type(_)));
+        assert!(matches!(turbofish.args[1], crate::GenericArg::Const(_)));
+        assert_eq!(expr.args.len(), 1);
+
+        let expr = parse::<syn::ExprMethodCall, ExprMethodCall>(&scx, "value.convert(arg)");
+        assert!(expr.turbofish.is_none());
     }
 
     #[test]
