@@ -5,6 +5,7 @@
 //! deciding when to alternate evaluation with inference.
 
 mod db;
+mod roots;
 mod value;
 
 pub use db::*;

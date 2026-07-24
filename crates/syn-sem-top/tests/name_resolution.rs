@@ -703,22 +703,36 @@ mod phases {
     }
 
     #[test]
-    fn reports_unsupported_closure_during_evaluation() {
-        // Proves unsupported closure const evaluation reports an error.
+    fn skips_unsupported_runtime_expressions_during_evaluation() {
+        // Proves evaluation does not make ordinary runtime expression support a global gate.
+        let tcx = TopCx::default();
+        tcx.analyze_virtual_file(
+            "unsupported_runtime_expressions.rs",
+            r#"
+            fn main() {
+                let _f = |x| x;
+                let _same = 1 == 1;
+            }
+            "#,
+        )
+        .expect("runtime expressions outside const-required roots should not be evaluated");
+    }
+
+    #[test]
+    fn reports_unsupported_expression_in_const_context() {
+        // Proves unsupported forms still report an error when a const-required root reaches them.
         let tcx = TopCx::default();
         let err = tcx
             .analyze_virtual_file(
-                "unsupported_closure.rs",
+                "unsupported_const_expression.rs",
                 r#"
-            fn main() {
-                let _f = |x| x;
-            }
+            const F: bool = || true;
             "#,
             )
-            .expect_err("closures should be reported as unsupported");
+            .expect_err("unsupported const expressions should be reported");
         let message = err.to_string();
         assert!(message.contains("EvalDb::evaluate_expr"));
-        assert!(message.contains("unsupported closure expression"));
+        assert!(message.contains("unsupported expression Closure"));
     }
 
     #[test]

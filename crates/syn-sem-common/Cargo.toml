@@ -11,3 +11,4 @@ repository = "https://github.com/ecoricemon/syn-sem"
 any-intern = { workspace = true }
 fxhash = { workspace = true }
 elsa = { workspace = true }
+indexmap = { workspace = true }

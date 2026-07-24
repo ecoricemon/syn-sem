@@ -1,4 +1,4 @@
-use crate::{ConstInt, ConstValue};
+use crate::{roots::required_exprs, ConstInt, ConstValue};
 use syn_sem_common::{Map, MaybeResult, Result};
 use syn_sem_hir as hir;
 use syn_sem_infer::{InferDb, PrimitiveType, Type};
@@ -16,9 +16,9 @@ pub struct EvalDb {
 impl EvalDb {
     /// Builds constant-evaluation facts from HIR, name facts, and current inference facts.
     ///
-    /// The initial pass records literal values and simple expression values. Later passes can
-    /// extend this entry point with path evaluation, typed arithmetic, const blocks, and
-    /// fixed-point refinement.
+    /// Evaluation starts from expressions that Rust requires to be constant, such as const item
+    /// initializers, array lengths, const blocks, and const generic arguments. Unsupported runtime
+    /// expressions outside those roots do not make semantic analysis fail.
     pub fn analyze<'cx>(
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
@@ -27,7 +27,7 @@ impl EvalDb {
         let mut db = Self::default();
         db.collect_const_item_inits(hir);
         db.collect_const_item_values(hir, names, infer)?;
-        db.collect_expr_values(hir, names, infer)?;
+        db.collect_required_expr_values(hir, names, infer)?;
         Ok(db)
     }
 
@@ -100,14 +100,14 @@ impl EvalDb {
         Ok(())
     }
 
-    fn collect_expr_values<'cx>(
+    fn collect_required_expr_values<'cx>(
         &mut self,
         hir: &hir::Hir<'cx>,
         names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
     ) -> Result<()> {
-        for expr in hir.exprs() {
-            self.evaluate_expr(hir, names, infer, expr.id, &mut Vec::new())?;
+        for expr in required_exprs(hir) {
+            self.evaluate_expr(hir, names, infer, expr, &mut Vec::new())?;
         }
         Ok(())
     }
@@ -181,21 +181,9 @@ impl EvalDb {
                 };
                 value
             }
-            hir::ExprKind::Array { .. }
-            | hir::ExprKind::Assign { .. }
-            | hir::ExprKind::Call { .. }
-            | hir::ExprKind::Const { .. }
-            | hir::ExprKind::Field { .. }
-            | hir::ExprKind::Index { .. }
-            | hir::ExprKind::MethodCall { .. }
-            | hir::ExprKind::Reference { .. }
-            | hir::ExprKind::Repeat { .. }
-            | hir::ExprKind::Return { .. }
-            | hir::ExprKind::Struct { .. }
-            | hir::ExprKind::Tuple { .. } => return Ok(None),
-            hir::ExprKind::Closure { .. } => {
+            kind => {
                 return Err(format!(
-                    "EvalDb::evaluate_expr: unsupported closure expression for {expr:?}"
+                    "EvalDb::evaluate_expr: unsupported expression {kind:?} for {expr:?}"
                 )
                 .into());
             }
@@ -219,10 +207,16 @@ impl EvalDb {
     ) -> MaybeResult<ConstValue> {
         let block = &hir.lowered_blocks()[block];
         let Some(tail) = block.tail_expr else {
-            return Ok(None);
+            return Err(format!(
+                "EvalDb::evaluate_block: unsupported block without a tail expression for {block:?}"
+            )
+            .into());
         };
         let [hir::lower::Stmt::Expr(expr)] = block.stmts.as_slice() else {
-            return Ok(None);
+            return Err(format!(
+                "EvalDb::evaluate_block: unsupported statement shape for {block:?}"
+            )
+            .into());
         };
         if *expr != tail {
             return Ok(None);

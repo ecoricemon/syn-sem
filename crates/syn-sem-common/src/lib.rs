@@ -7,11 +7,13 @@
 mod arena;
 mod collections;
 mod context;
+mod directed_graph;
 pub mod known;
 
 pub use arena::*;
 pub use collections::*;
 pub use context::*;
+pub use directed_graph::*;
 
 use any_intern::{Interned, RawInterned};
 use std::{
