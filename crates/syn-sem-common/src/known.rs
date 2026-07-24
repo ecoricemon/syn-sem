@@ -51,6 +51,7 @@ pub const STD: KnownLibrary = KnownLibrary {
     source_text: STD_SOURCE,
 };
 
+/// Lightweight `core` model source text.
 pub const CORE_SOURCE: &str = include_str!("known/core.rs");
 
 /// Lightweight `std` model.

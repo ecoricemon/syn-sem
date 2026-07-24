@@ -27,6 +27,9 @@ impl<'cx> SyntaxCx<'cx> {
         }
     }
 
+    /// Parses and stores one source file as a semantic AST.
+    ///
+    /// Known-library sources skip syntax location because they do not need physical source spans.
     pub fn parse_file(
         &'cx self,
         file_path: FilePath<'cx>,
