@@ -641,7 +641,13 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
     fn collect_use(&mut self, scope: ScopeId, item: &'cx ast::ItemUse<'cx>) {
         let visibility = self.visibility_from_ast(scope, &item.vis);
         let start = self.db.import_count();
-        self.collect_use_tree(scope, Vec::new(), &item.tree, visibility);
+        self.collect_use_tree(
+            scope,
+            Vec::new(),
+            item.leading_colon.is_some(),
+            &item.tree,
+            visibility,
+        );
         let imports = (start..self.db.import_count()).map(ImportId::new).collect();
         self.db
             .set_imports_ast_node(AstNodeId::from_ref(item), imports);
@@ -661,6 +667,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
         &mut self,
         scope: ScopeId,
         prefix: Vec<Name<'cx>>,
+        is_absolute: bool,
         tree: &'cx ast::UseTree<'cx>,
         visibility: ScopeId,
     ) {
@@ -668,7 +675,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
             ast::UseTree::Path(tree) => {
                 let mut prefix = prefix;
                 prefix.push(tree.ident.inner);
-                self.collect_use_tree(scope, prefix, tree.tree, visibility);
+                self.collect_use_tree(scope, prefix, is_absolute, tree.tree, visibility);
             }
             ast::UseTree::Name(tree) => {
                 let mut source_path = prefix;
@@ -676,6 +683,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
                 self.db.add_import(
                     scope,
                     source_path,
+                    is_absolute,
                     ImportKind::Single,
                     visibility,
                     Origin::Untracked,
@@ -687,6 +695,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
                 self.db.add_import(
                     scope,
                     source_path,
+                    is_absolute,
                     ImportKind::Rename(tree.rename.inner),
                     visibility,
                     Origin::Untracked,
@@ -696,6 +705,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
                 self.db.add_import(
                     scope,
                     prefix,
+                    is_absolute,
                     ImportKind::Glob,
                     visibility,
                     Origin::Untracked,
@@ -703,7 +713,7 @@ impl<'a, 'cx> AstCollector<'a, 'cx> {
             }
             ast::UseTree::Group(tree) => {
                 for tree in tree.items {
-                    self.collect_use_tree(scope, prefix.clone(), tree, visibility);
+                    self.collect_use_tree(scope, prefix.clone(), is_absolute, tree, visibility);
                 }
             }
         }

@@ -45,9 +45,6 @@ impl<'cx> NameDb<'cx> {
 
     /// Records imports created from `node`.
     pub(crate) fn set_imports_ast_node(&mut self, node: AstNodeId<'cx>, imports: Vec<ImportId>) {
-        for &import in &imports {
-            let _ = &self[import];
-        }
         let old = self.ast_imports.insert(node, imports);
         assert!(old.is_none(), "one AST node cannot create imports twice");
     }
@@ -196,6 +193,7 @@ impl<'cx> NameDb<'cx> {
         &mut self,
         scope: ScopeId,
         source_path: Vec<Name<'cx>>,
+        is_absolute: bool,
         kind: ImportKind<'cx>,
         visibility: ScopeId,
         origin: Origin<'cx>,
@@ -207,6 +205,7 @@ impl<'cx> NameDb<'cx> {
             id,
             scope,
             source_path,
+            is_absolute,
             kind,
             visibility,
             status: ImportStatus::Unresolved,
@@ -319,7 +318,7 @@ impl<'cx> NameDb<'cx> {
             };
         }
 
-        let candidates = match self.resolve_import_path(scope, path) {
+        let candidates = match self.resolve_import_path(scope, false, path) {
             CandidateResolution::Found(candidates) => candidates,
             CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
             CandidateResolution::NotFound => return ResolveResult::NotFound,
@@ -364,7 +363,7 @@ impl<'cx> NameDb<'cx> {
             };
         }
 
-        let candidates = match self.resolve_import_path(scope, path) {
+        let candidates = match self.resolve_import_path(scope, false, path) {
             CandidateResolution::Found(candidates) => candidates,
             CandidateResolution::Ambiguous => return ResolveResult::Ambiguous(Vec::new()),
             CandidateResolution::NotFound => return ResolveResult::NotFound,
@@ -557,6 +556,7 @@ impl<'cx> NameDb<'cx> {
                     ImportLocalName::NoBinding => {
                         return match self.resolve_import_path(
                             import_data.scope,
+                            import_data.is_absolute,
                             import_data.source_path.iter().copied(),
                         ) {
                             CandidateResolution::Found(_) => ImportResolve::Resolved,
@@ -568,9 +568,11 @@ impl<'cx> NameDb<'cx> {
                     ImportLocalName::Pending => return ImportResolve::Pending,
                 };
 
-                let candidates = match self
-                    .resolve_import_path(import_data.scope, import_data.source_path.iter().copied())
-                {
+                let candidates = match self.resolve_import_path(
+                    import_data.scope,
+                    import_data.is_absolute,
+                    import_data.source_path.iter().copied(),
+                ) {
                     CandidateResolution::Found(candidates) => candidates,
                     CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
                     CandidateResolution::NotFound => return ImportResolve::Pending,
@@ -594,9 +596,11 @@ impl<'cx> NameDb<'cx> {
                 ImportResolve::Resolved
             }
             ImportKind::Glob => {
-                let candidates = match self
-                    .resolve_import_path(import_data.scope, import_data.source_path.iter().copied())
-                {
+                let candidates = match self.resolve_import_path(
+                    import_data.scope,
+                    import_data.is_absolute,
+                    import_data.source_path.iter().copied(),
+                ) {
                     CandidateResolution::Found(candidates) => candidates,
                     CandidateResolution::Ambiguous => return ImportResolve::Ambiguous,
                     CandidateResolution::NotFound => return ImportResolve::Pending,
@@ -661,12 +665,15 @@ impl<'cx> NameDb<'cx> {
                 if terminal.as_ref() == "self" {
                     let parent = &import.source_path[..import.source_path.len().saturating_sub(1)];
 
-                    let candidates =
-                        match self.resolve_import_path(import.scope, parent.iter().copied()) {
-                            CandidateResolution::Found(candidates) => candidates,
-                            CandidateResolution::Ambiguous => return ImportLocalName::Ambiguous,
-                            CandidateResolution::NotFound => return ImportLocalName::Pending,
-                        };
+                    let candidates = match self.resolve_import_path(
+                        import.scope,
+                        import.is_absolute,
+                        parent.iter().copied(),
+                    ) {
+                        CandidateResolution::Found(candidates) => candidates,
+                        CandidateResolution::Ambiguous => return ImportLocalName::Ambiguous,
+                        CandidateResolution::NotFound => return ImportLocalName::Pending,
+                    };
 
                     let import_binding = self.validate_import_binding_candidates(&candidates);
 
@@ -699,9 +706,17 @@ impl<'cx> NameDb<'cx> {
     fn resolve_import_path(
         &self,
         scope: ScopeId,
+        is_absolute: bool,
         mut path: impl ExactSizeIterator<Item = Name<'cx>>,
     ) -> CandidateResolution {
         if path.len() == 0 {
+            return CandidateResolution::NotFound;
+        }
+
+        // Absolute paths start in the edition-dependent extern prelude in modern Rust. NameDb
+        // does not model editions or external-crate roots yet, so do not misresolve them through
+        // the relative lexical lookup below.
+        if is_absolute {
             return CandidateResolution::NotFound;
         }
 
@@ -1334,6 +1349,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,
@@ -1341,6 +1357,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
+                false,
                 ImportKind::Rename(t),
                 b_scope,
                 Origin::Untracked,
@@ -1348,6 +1365,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, ccx.intern("self")],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,
@@ -1355,6 +1373,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, s],
+                false,
                 ImportKind::Rename(hidden),
                 b_scope,
                 Origin::Untracked,
@@ -1379,6 +1398,44 @@ mod tests {
             );
             assert_eq!(
                 db.resolve_lexical(b_scope, Namespace::Type, hidden),
+                ResolveResult::NotFound
+            );
+        }
+
+        #[test]
+        fn absolute_import_does_not_fall_back_to_relative_lookup() {
+            // Proves unsupported extern-root imports do not resolve through local lexical scopes.
+            let ccx = CommonCx::default();
+            let mut db = NameDb::default();
+            let root_scope = db.root_scope();
+            let crate_scope = db.crate_scope();
+            let a = ccx.intern("a");
+            let inner = ccx.intern("inner");
+            let s = ccx.intern("S");
+
+            let (_, a_scope) = module(&mut db, crate_scope, a, root_scope);
+            let (_, inner_scope) = module(&mut db, crate_scope, inner, root_scope);
+            db.add_def(
+                a_scope,
+                DefKind::Struct,
+                Some(s),
+                root_scope,
+                Origin::Untracked,
+            );
+            let import = db.add_import(
+                inner_scope,
+                vec![a, s],
+                true,
+                ImportKind::Single,
+                inner_scope,
+                Origin::Untracked,
+            );
+
+            db.resolve_imports();
+
+            assert_eq!(db[import].status, ImportStatus::NotFound);
+            assert_eq!(
+                db.resolve_lexical(inner_scope, Namespace::Type, s),
                 ResolveResult::NotFound
             );
         }
@@ -1413,6 +1470,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, self_name],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,
@@ -1420,6 +1478,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), missing, self_name],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,
@@ -1490,6 +1549,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, public],
+                false,
                 ImportKind::Single,
                 root_scope,
                 Origin::Untracked,
@@ -1497,6 +1557,7 @@ mod tests {
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b, public],
+                false,
                 ImportKind::Single,
                 root_scope,
                 Origin::Untracked,
@@ -1504,6 +1565,7 @@ mod tests {
             db.add_import(
                 d_scope,
                 vec![ccx.intern("super"), a],
+                false,
                 ImportKind::Glob,
                 d_scope,
                 Origin::Untracked,
@@ -1578,6 +1640,7 @@ mod tests {
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a],
+                false,
                 ImportKind::Glob,
                 c_scope,
                 Origin::Untracked,
@@ -1585,6 +1648,7 @@ mod tests {
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), b],
+                false,
                 ImportKind::Glob,
                 c_scope,
                 Origin::Untracked,
@@ -1592,6 +1656,7 @@ mod tests {
             db.add_import(
                 c_scope,
                 vec![ccx.intern("super"), a, missing],
+                false,
                 ImportKind::Single,
                 c_scope,
                 Origin::Untracked,
@@ -1651,6 +1716,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, x],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,
@@ -1706,6 +1772,7 @@ mod tests {
             db.add_import(
                 b_scope,
                 vec![ccx.intern("super"), a, e, v],
+                false,
                 ImportKind::Single,
                 b_scope,
                 Origin::Untracked,

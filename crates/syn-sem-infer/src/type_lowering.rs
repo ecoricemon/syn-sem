@@ -293,7 +293,9 @@ impl<'a, 'cx> TypeLowerer<'a, 'cx> {
 
     fn lower_type_param_bound(&mut self, bound: &hir::TypeParamBound<'cx>) -> TypeParamBound<'cx> {
         match bound {
-            hir::TypeParamBound::Trait(path) => TypeParamBound::Trait(self.lower_plain_path(path)),
+            hir::TypeParamBound::Trait(path) => {
+                TypeParamBound::Trait(self.lower_plain_path(&path.segments))
+            }
             hir::TypeParamBound::Unsupported => TypeParamBound::Unsupported,
         }
     }

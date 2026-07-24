@@ -55,7 +55,7 @@ impl<'a, 'cx> TraitBoundCollector<'a, 'cx> {
                 };
                 let trait_ = self
                     .ty_lowerer
-                    .lower_plain_path_as_type(path, generics.scope);
+                    .lower_plain_path_as_type(&path.segments, generics.scope);
                 self.trait_bounds.push(TraitBound { subject, trait_ });
             }
         }

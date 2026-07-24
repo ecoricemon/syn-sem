@@ -654,7 +654,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     ) -> TypeParamBound<'cx> {
         match bound {
             ast::TypeParamBound::Trait(bound) => {
-                TypeParamBound::Trait(self.collect_type_path(&bound.path, scope))
+                TypeParamBound::Trait(self.collect_path(None, &bound.path, scope))
             }
             ast::TypeParamBound::Unsupported(_) => TypeParamBound::Unsupported,
         }
@@ -694,6 +694,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 id: ty,
                 ty: None,
                 kind: TypeKind::Path(Path {
+                    is_absolute: false,
                     qself: None,
                     segments: vec![PathSegment {
                         name,
@@ -714,16 +715,13 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         source: TypeSource,
     ) -> TypeId {
         let ty = self.hir.reserve_type();
-        let segments = self.collect_type_path(path, scope);
+        let path = self.collect_path(None, path, scope);
         self.hir.fill_type(
             ty,
             Type {
                 id: ty,
                 ty: None,
-                kind: TypeKind::Path(Path {
-                    qself: None,
-                    segments,
-                }),
+                kind: TypeKind::Path(path),
                 scope,
                 source,
             },
@@ -742,10 +740,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 len: ArrayLen::Expr(self.collect_expr(&ty.len, scope)),
             },
             ast::Type::Infer(_) => TypeKind::Infer,
-            ast::Type::Path(ty) => TypeKind::Path(Path {
-                qself: self.collect_type_qself(ty.qself.as_ref(), &ty.path, scope),
-                segments: self.collect_type_path(&ty.path, scope),
-            }),
+            ast::Type::Path(ty) => {
+                TypeKind::Path(self.collect_path(ty.qself.as_ref(), &ty.path, scope))
+            }
             ast::Type::Reference(ty) => TypeKind::Reference {
                 elem: self.collect_type(ty.elem, scope, TypeSource::Nested),
                 is_mut: ty.is_mut,
@@ -763,7 +760,20 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         }
     }
 
-    fn collect_type_qself(
+    fn collect_path(
+        &mut self,
+        qself: Option<&ast::QSelf<'cx>>,
+        path: &'cx ast::Path<'cx>,
+        scope: Option<ScopeId>,
+    ) -> Path<'cx> {
+        Path {
+            is_absolute: path.leading_colon.is_some(),
+            qself: self.collect_qself(qself, path, scope),
+            segments: self.collect_path_segments(path, scope),
+        }
+    }
+
+    fn collect_qself(
         &mut self,
         qself: Option<&ast::QSelf<'cx>>,
         path: &'cx ast::Path<'cx>,
@@ -788,39 +798,38 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         path.segments
             .iter()
             .take(position)
-            .map(|segment| self.collect_type_path_segment(segment, scope))
+            .map(|segment| self.collect_path_segment(segment, scope))
             .collect()
     }
 
-    fn collect_type_path(
+    fn collect_path_segments(
         &mut self,
         path: &'cx ast::Path<'cx>,
         scope: Option<ScopeId>,
     ) -> Vec<PathSegment<'cx>> {
         path.segments
             .iter()
-            .map(|segment| self.collect_type_path_segment(segment, scope))
+            .map(|segment| self.collect_path_segment(segment, scope))
             .collect()
     }
 
-    fn collect_type_path_segment(
+    fn collect_path_segment(
         &mut self,
         segment: &'cx ast::PathSegment<'cx>,
         scope: Option<ScopeId>,
     ) -> PathSegment<'cx> {
         PathSegment {
             name: segment.ident.inner,
-            args: self.collect_generic_args(&segment.args, scope),
+            args: self.collect_generic_args(segment.args.args(), scope),
         }
     }
 
     fn collect_generic_args(
         &mut self,
-        args: &'cx ast::PathArgs<'cx>,
+        args: impl IntoIterator<Item = &'cx ast::GenericArg<'cx>>,
         scope: Option<ScopeId>,
     ) -> Vec<GenericArg<'cx>> {
-        args.args()
-            .iter()
+        args.into_iter()
             .map(|arg| self.collect_generic_arg(arg, scope))
             .collect()
     }
@@ -900,10 +909,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         };
         match self.names[def].kind {
             DefKind::Const | DefKind::GenericConst => Some(ConstArg::Path {
-                path: Path {
-                    qself: None,
-                    segments: self.collect_type_path(&ty.path, Some(scope)),
-                },
+                path: self.collect_path(None, &ty.path, Some(scope)),
                 scope: Some(scope),
             }),
             _ => None,
@@ -918,10 +924,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         match arg {
             ast::Expr::Lit(arg) => ConstArg::Lit(Self::collect_lit(&arg.lit)),
             ast::Expr::Path(arg) => ConstArg::Path {
-                path: Path {
-                    qself: None,
-                    segments: self.collect_type_path(&arg.path, scope),
-                },
+                path: self.collect_path(arg.qself.as_ref(), &arg.path, scope),
                 scope,
             },
             _ => ConstArg::Expr(self.collect_expr(arg, scope)),
@@ -1038,12 +1041,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 pat: self.collect_pat(pat.pat, scope),
                 is_mut: pat.is_mut,
             },
-            ast::Pat::Path(pat) => PatKind::Path(Path {
-                qself: None,
-                segments: self.collect_type_path(&pat.path, scope),
-            }),
+            ast::Pat::Path(pat) => PatKind::Path(self.collect_path(None, &pat.path, scope)),
             ast::Pat::Struct(pat) => PatKind::Struct {
-                path: self.collect_type_path(&pat.path, scope),
+                path: self.collect_path(None, &pat.path, scope),
                 fields: pat
                     .fields
                     .iter()
@@ -1136,6 +1136,10 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             ast::Expr::MethodCall(expr) => ExprKind::MethodCall {
                 receiver: self.collect_expr(expr.receiver, scope),
                 method: expr.method.inner,
+                generic_args: expr
+                    .turbofish
+                    .as_ref()
+                    .map(|args| self.collect_generic_args(args.args, scope)),
                 args: expr
                     .args
                     .iter()
@@ -1145,10 +1149,9 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             ast::Expr::Paren(expr) => ExprKind::Paren {
                 expr: self.collect_expr(expr.expr, scope),
             },
-            ast::Expr::Path(expr) => ExprKind::Path(Path {
-                qself: None,
-                segments: self.collect_type_path(&expr.path, scope),
-            }),
+            ast::Expr::Path(expr) => {
+                ExprKind::Path(self.collect_path(expr.qself.as_ref(), &expr.path, scope))
+            }
             ast::Expr::Reference(expr) => ExprKind::Reference {
                 expr: self.collect_expr(expr.expr, scope),
                 is_mut: expr.is_mut,
@@ -1161,7 +1164,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 expr: expr.expr.map(|expr| self.collect_expr(expr, scope)),
             },
             ast::Expr::Struct(expr) => ExprKind::Struct {
-                path: self.collect_type_path(&expr.path, scope),
+                path: self.collect_path(expr.qself.as_ref(), &expr.path, scope),
                 fields: expr
                     .fields
                     .iter()
@@ -1705,7 +1708,8 @@ mod tests {
             .find(|pat| {
                 matches!(
                     &pat.kind,
-                    PatKind::Struct { path, .. } if path[0].name.as_ref() == "Point"
+                    PatKind::Struct { path, .. }
+                        if path.segments[0].name.as_ref() == "Point"
                 )
             })
             .expect("expected struct pattern");
@@ -2153,7 +2157,7 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        let GenericArg::AssocConst { name, value } = &bound[0].args[0] else {
+        let GenericArg::AssocConst { name, value } = &bound.segments[0].args[0] else {
             panic!("expected associated const argument");
         };
 
@@ -2186,7 +2190,7 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        let GenericArg::Constraint { name, bounds } = &bound[0].args[0] else {
+        let GenericArg::Constraint { name, bounds } = &bound.segments[0].args[0] else {
             panic!("expected associated type constraint");
         };
         assert_eq!(name.as_ref(), "Item");
@@ -2194,9 +2198,9 @@ mod tests {
         let TypeParamBound::Trait(bound) = &bounds[0] else {
             panic!("expected trait bound");
         };
-        assert_eq!(bound[0].name.as_ref(), "std");
-        assert_eq!(bound[1].name.as_ref(), "fmt");
-        assert_eq!(bound[2].name.as_ref(), "Display");
+        assert_eq!(bound.segments[0].name.as_ref(), "std");
+        assert_eq!(bound.segments[1].name.as_ref(), "fmt");
+        assert_eq!(bound.segments[2].name.as_ref(), "Display");
     }
 
     #[test]
@@ -2250,6 +2254,106 @@ mod tests {
     }
 
     #[test]
+    fn represents_qualified_expr_paths() {
+        // Proves qualified expression paths preserve self type, trait path, and item path.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            trait Trait {
+                const CONST: usize;
+            }
+
+            fn f<T: Trait>() {
+                <T as Trait>::CONST;
+            }
+            "#,
+        );
+
+        let path = model
+            .exprs()
+            .iter()
+            .find_map(|expr| match &expr.kind {
+                ExprKind::Path(path) if path.qself.is_some() => Some(path),
+                _ => None,
+            })
+            .expect("expected qualified expression path");
+        let qself = path.qself.as_ref().unwrap();
+        let TypeKind::Path(self_) = &model[qself.self_].kind else {
+            panic!("expected qself self type to be a path");
+        };
+
+        assert_eq!(self_.segments[0].name.as_ref(), "T");
+        assert_eq!(qself.trait_path.len(), 1);
+        assert_eq!(qself.trait_path[0].name.as_ref(), "Trait");
+        assert_eq!(path.segments.len(), 2);
+        assert_eq!(path.segments[0].name.as_ref(), "Trait");
+        assert_eq!(path.segments[1].name.as_ref(), "CONST");
+    }
+
+    #[test]
+    fn represents_method_call_generic_args() {
+        // Proves method calls distinguish absent turbofish syntax and preserve its arguments.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let model = parsed_model(
+            &ccx,
+            &scx,
+            r#"
+            fn f<T>(value: S, arg: usize) {
+                value.convert::<T, 3>(arg);
+                value.convert(arg);
+            }
+            "#,
+        );
+
+        let (generic_args, args) = model
+            .exprs()
+            .iter()
+            .find_map(|expr| match &expr.kind {
+                ExprKind::MethodCall {
+                    generic_args: Some(generic_args),
+                    args,
+                    ..
+                } => Some((generic_args, args)),
+                _ => None,
+            })
+            .expect("expected method call with generic arguments");
+        assert_eq!(generic_args.len(), 2);
+        assert_eq!(args.len(), 1);
+
+        let GenericArg::Type(ty) = generic_args[0] else {
+            panic!("expected method type argument");
+        };
+        let TypeKind::Path(path) = &model[ty].kind else {
+            panic!("expected method type argument to be a path");
+        };
+        assert_eq!(path.segments[0].name.as_ref(), "T");
+
+        let GenericArg::Const(ConstArg::Lit(Lit::Int(value))) = &generic_args[1] else {
+            panic!("expected method const argument");
+        };
+        assert_eq!(value.digits.as_ref(), "3");
+
+        let calls_without_generic_args = model
+            .exprs()
+            .iter()
+            .filter(|expr| {
+                matches!(
+                    expr.kind,
+                    ExprKind::MethodCall {
+                        generic_args: None,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(calls_without_generic_args, 1);
+    }
+
+    #[test]
     fn represents_type_param_trait_bounds() {
         // Proves type parameter trait bounds preserve param and where-clause predicates.
         let ccx = CommonCx::default();
@@ -2284,7 +2388,7 @@ mod tests {
                 let TypeParamBound::Trait(bound) = &bounds[0] else {
                     panic!("expected trait bound");
                 };
-                bound[0].name.as_ref()
+                bound.segments[0].name.as_ref()
             })
             .collect::<Vec<_>>();
         assert_eq!(predicate_bounds, ["Clone", "Iterator"]);

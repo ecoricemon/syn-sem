@@ -12,6 +12,9 @@ pub struct Import<'cx> {
     /// Path segments naming the import target.
     pub source_path: Vec<Name<'cx>>,
 
+    /// Whether the source import path starts with an absolute-path separator (`::`).
+    pub is_absolute: bool,
+
     /// Import kind.
     pub kind: ImportKind<'cx>,
 

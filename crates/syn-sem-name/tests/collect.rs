@@ -180,6 +180,7 @@ mod imports {
             "src/lib.rs",
             r#"
         use a::{b, c as d, *};
+        use ::root::{e, f as g, *};
         "#,
         );
 
@@ -189,21 +190,45 @@ mod imports {
         let b = tcx.common.intern("b");
         let c = tcx.common.intern("c");
         let d = tcx.common.intern("d");
+        let root = tcx.common.intern("root");
+        let e = tcx.common.intern("e");
+        let f = tcx.common.intern("f");
+        let g = tcx.common.intern("g");
 
-        assert_eq!(db.import_ids().len(), 3);
+        assert_eq!(db.import_ids().len(), 6);
         let single = import_for(&db, crate_scope, &[a, b]);
         let renamed = import_for(&db, crate_scope, &[a, c]);
         let glob = import_for(&db, crate_scope, &[a]);
         assert_eq!(db[single].kind, ImportKind::Single);
         assert_eq!(db[renamed].kind, ImportKind::Rename(d));
         assert_eq!(db[glob].kind, ImportKind::Glob);
+        assert!(!db[single].is_absolute);
+        assert!(!db[renamed].is_absolute);
+        assert!(!db[glob].is_absolute);
 
-        let ast::Item::Use(item) = &entry.file.items[0] else {
+        let absolute_single = import_for(&db, crate_scope, &[root, e]);
+        let absolute_renamed = import_for(&db, crate_scope, &[root, f]);
+        let absolute_glob = import_for(&db, crate_scope, &[root]);
+        assert_eq!(db[absolute_single].kind, ImportKind::Single);
+        assert_eq!(db[absolute_renamed].kind, ImportKind::Rename(g));
+        assert_eq!(db[absolute_glob].kind, ImportKind::Glob);
+        assert!(db[absolute_single].is_absolute);
+        assert!(db[absolute_renamed].is_absolute);
+        assert!(db[absolute_glob].is_absolute);
+
+        let ast::Item::Use(relative_item) = &entry.file.items[0] else {
             panic!("expected use item");
         };
         assert_eq!(
-            db.imports_for_ast_node(AstNodeId::from_ref(item)),
+            db.imports_for_ast_node(AstNodeId::from_ref(relative_item)),
             &[single, renamed, glob]
+        );
+        let ast::Item::Use(absolute_item) = &entry.file.items[1] else {
+            panic!("expected absolute use item");
+        };
+        assert_eq!(
+            db.imports_for_ast_node(AstNodeId::from_ref(absolute_item)),
+            &[absolute_single, absolute_renamed, absolute_glob]
         );
     }
 }

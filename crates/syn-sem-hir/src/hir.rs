@@ -386,7 +386,7 @@ pub struct ConstParam<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeParamBound<'cx> {
     /// Trait bound.
-    Trait(Vec<PathSegment<'cx>>),
+    Trait(Path<'cx>),
     /// Unsupported bound form.
     Unsupported,
 }
@@ -472,7 +472,7 @@ pub enum PatKind<'cx> {
     /// Struct pattern.
     Struct {
         /// Path naming the matched struct.
-        path: Vec<PathSegment<'cx>>,
+        path: Path<'cx>,
         /// Field patterns.
         fields: Vec<PatStructField<'cx>>,
         /// Whether the pattern uses a rest marker.
@@ -631,6 +631,8 @@ pub enum Visibility<'cx> {
 /// segments, not generic arguments, so this intentionally stores names only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibilityPath<'cx> {
+    /// Whether the source path starts with an absolute-path separator (`::`).
+    pub is_absolute: bool,
     /// Path segment names in source order.
     pub segments: Vec<Name<'cx>>,
 }
@@ -638,6 +640,7 @@ pub struct VisibilityPath<'cx> {
 impl<'cx> VisibilityPath<'cx> {
     fn from_ast(path: &ast::Path<'cx>) -> Self {
         Self {
+            is_absolute: path.leading_colon.is_some(),
             segments: path
                 .segments
                 .iter()
@@ -828,6 +831,8 @@ pub enum ExprKind<'cx> {
         receiver: ExprId,
         /// Method name.
         method: Name<'cx>,
+        /// Explicit generic arguments supplied with turbofish syntax.
+        generic_args: Option<Vec<GenericArg<'cx>>>,
         /// Method arguments.
         args: Vec<ExprId>,
     },
@@ -860,7 +865,7 @@ pub enum ExprKind<'cx> {
     /// Struct literal expression.
     Struct {
         /// Path naming the constructed struct.
-        path: Vec<PathSegment<'cx>>,
+        path: Path<'cx>,
         /// Field initializers.
         fields: Vec<ExprStructField<'cx>>,
         /// Optional rest expression.
@@ -1029,6 +1034,8 @@ pub enum TypeKind<'cx> {
 /// HIR-native source path in type position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path<'cx> {
+    /// Whether the source path starts with an absolute-path separator (`::`).
+    pub is_absolute: bool,
     /// Qualified self type, when the source type used qualified path syntax.
     pub qself: Option<QSelf<'cx>>,
     /// Path segments naming the type.
