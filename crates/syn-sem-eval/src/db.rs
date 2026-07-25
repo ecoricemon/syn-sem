@@ -1,33 +1,53 @@
-use crate::{roots::required_exprs, ConstInt, ConstValue};
-use syn_sem_common::{Map, MaybeResult, Result};
+use crate::{plan::resolve_const_item, ConstInt, ConstValue, EvalNode, EvalPlan};
+use syn_sem_common::{GraphNodeId, Map, MaybeResult, Result};
 use syn_sem_hir as hir;
 use syn_sem_infer::{InferDb, PrimitiveType, Type};
-use syn_sem_name::{DefId, DefKind, NameDb, ResolveResult};
+use syn_sem_name::{DefId, NameDb};
 
 /// Evaluated constant facts collected for upper semantic phases.
 #[derive(Debug, Default)]
 pub struct EvalDb {
     expr_values: Map<hir::ExprId, ConstValue>,
-    const_item_inits: Map<DefId, hir::ExprId>,
-    const_item_types: Map<DefId, hir::TypeId>,
     const_item_values: Map<DefId, ConstValue>,
 }
 
 impl EvalDb {
-    /// Builds constant-evaluation facts from HIR, name facts, and current inference facts.
+    /// Builds constant-evaluation facts from a reusable plan and current inference facts.
     ///
-    /// Evaluation starts from expressions that Rust requires to be constant, such as const item
+    /// The plan selects expressions that Rust requires to be constant, such as const item
     /// initializers, array lengths, const blocks, and const generic arguments. Unsupported runtime
-    /// expressions outside those roots do not make semantic analysis fail.
+    /// expressions outside its targets do not make semantic analysis fail.
+    ///
+    /// Successfully evaluated values are stored in the returned database. A target remains absent
+    /// when its value is unavailable, including cyclic dependencies, unresolved inputs, arithmetic
+    /// failure, and insufficient inference facts. Reaching an unsupported expression or operation
+    /// from a target returns an error. Each dependency-ordered plan node is visited once; nodes
+    /// blocked by a dependency cycle remain absent.
     pub fn analyze<'cx>(
+        plan: &EvalPlan,
         hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
     ) -> Result<Self> {
         let mut db = Self::default();
-        db.collect_const_item_inits(hir);
-        db.collect_const_item_values(hir, names, infer)?;
-        db.collect_required_expr_values(hir, names, infer)?;
+        for node in plan.order() {
+            match plan.graph()[*node] {
+                EvalNode::Expr(expr) => {
+                    if let Some(value) = db.evaluate_expr(plan, hir, infer, *node, expr)? {
+                        let old = db.expr_values.insert(expr, value);
+                        assert!(old.is_none(), "planned HIR expression nodes must be unique");
+                    }
+                }
+                EvalNode::Const(def) => {
+                    if let Some(value) = db.evaluate_const_item(plan, hir, *node, def)? {
+                        let old = db.const_item_values.insert(def, value);
+                        assert!(
+                            old.is_none(),
+                            "planned const definition nodes must be unique"
+                        );
+                    }
+                }
+            }
+        }
         Ok(db)
     }
 
@@ -41,6 +61,18 @@ impl EvalDb {
         self.const_item_values.get(&def).copied()
     }
 
+    /// Iterates over evaluated HIR expression values in unspecified order.
+    pub fn hir_expr_values(&self) -> impl ExactSizeIterator<Item = (hir::ExprId, ConstValue)> + '_ {
+        self.expr_values.iter().map(|(expr, value)| (*expr, *value))
+    }
+
+    /// Iterates over evaluated const definition values in unspecified order.
+    pub fn const_def_values(&self) -> impl ExactSizeIterator<Item = (DefId, ConstValue)> + '_ {
+        self.const_item_values
+            .iter()
+            .map(|(def, value)| (*def, *value))
+    }
+
     /// Returns the value represented by a HIR const argument.
     pub fn value_for_const_arg<'cx>(
         &self,
@@ -52,7 +84,7 @@ impl EvalDb {
                 .map_err(|e| format!("EvalDb::value_for_const_arg: {e}").into()),
             hir::ConstArg::Expr(expr) => Ok(self.value_for_hir_expr(*expr)),
             hir::ConstArg::Path { path, scope } => {
-                let def = self.resolve_const_item(names, path, *scope)?;
+                let def = resolve_const_item(names, path, *scope)?;
                 Ok(def.and_then(|def| self.value_for_const_def(def)))
             }
         }
@@ -74,62 +106,20 @@ impl EvalDb {
         }
     }
 
-    fn collect_const_item_inits(&mut self, hir: &hir::Hir<'_>) {
-        for item in hir.items() {
-            let hir::ItemKind::Const { ty, init } = item.kind else {
-                continue;
-            };
-            let Some(def) = item.def else {
-                continue;
-            };
-            self.const_item_inits.insert(def, init);
-            self.const_item_types.insert(def, ty);
-        }
-    }
-
-    fn collect_const_item_values<'cx>(
-        &mut self,
-        hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
-        infer: &InferDb<'cx>,
-    ) -> Result<()> {
-        let defs = self.const_item_inits.keys().copied().collect::<Vec<_>>();
-        for def in defs {
-            self.evaluate_const_item(hir, names, infer, def, &mut Vec::new())?;
-        }
-        Ok(())
-    }
-
-    fn collect_required_expr_values<'cx>(
-        &mut self,
-        hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
-        infer: &InferDb<'cx>,
-    ) -> Result<()> {
-        for expr in required_exprs(hir) {
-            self.evaluate_expr(hir, names, infer, expr, &mut Vec::new())?;
-        }
-        Ok(())
-    }
-
     fn evaluate_expr<'cx>(
-        &mut self,
+        &self,
+        plan: &EvalPlan,
         hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
         infer: &InferDb<'cx>,
+        node: GraphNodeId,
         expr: hir::ExprId,
-        stack: &mut Vec<DefId>,
     ) -> MaybeResult<ConstValue> {
-        if let Some(value) = self.value_for_hir_expr(expr) {
-            return Ok(Some(value));
-        }
-
         let value = match &hir[expr].kind {
             hir::ExprKind::Binary { op, left, right } => {
-                let Some(left) = self.evaluate_expr(hir, names, infer, *left, stack)? else {
+                let Some(left) = self.expr_dependency(plan, node, *left) else {
                     return Ok(None);
                 };
-                let Some(right) = self.evaluate_expr(hir, names, infer, *right, stack)? else {
+                let Some(right) = self.expr_dependency(plan, node, *right) else {
                     return Ok(None);
                 };
                 let Some(value) = Self::evaluate_binary(*op, left, right)? else {
@@ -137,14 +127,14 @@ impl EvalDb {
                 };
                 value
             }
-            hir::ExprKind::Block { block } => {
-                let Some(value) = self.evaluate_block(hir, names, infer, *block, stack)? else {
+            hir::ExprKind::Block { block } | hir::ExprKind::Const { block } => {
+                let Some(value) = self.evaluate_block(plan, hir, node, *block)? else {
                     return Ok(None);
                 };
                 value
             }
             hir::ExprKind::Cast { expr, ty } => {
-                let Some(value) = self.evaluate_expr(hir, names, infer, *expr, stack)? else {
+                let Some(value) = self.expr_dependency(plan, node, *expr) else {
                     return Ok(None);
                 };
                 let Some(primitive) = self.primitive_for_hir_type(hir, *ty)? else {
@@ -162,18 +152,19 @@ impl EvalDb {
                 value
             }
             hir::ExprKind::Paren { expr } => {
-                return self.evaluate_expr(hir, names, infer, *expr, stack);
+                let Some(value) = self.expr_dependency(plan, node, *expr) else {
+                    return Ok(None);
+                };
+                value
             }
-            hir::ExprKind::Path(path) => {
-                let Some(value) =
-                    self.evaluate_path(hir, names, infer, path, hir[expr].scope, stack)?
-                else {
+            hir::ExprKind::Path(_) => {
+                let Some(value) = self.const_dependency(plan, node) else {
                     return Ok(None);
                 };
                 value
             }
             hir::ExprKind::Unary { op, expr } => {
-                let Some(value) = self.evaluate_expr(hir, names, infer, *expr, stack)? else {
+                let Some(value) = self.expr_dependency(plan, node, *expr) else {
                     return Ok(None);
                 };
                 let Some(value) = Self::evaluate_unary(*op, value)? else {
@@ -191,19 +182,15 @@ impl EvalDb {
         let Some(value) = self.refine_with_infer_expr_type(infer, expr, value)? else {
             return Ok(None);
         };
-
-        let old = self.expr_values.insert(expr, value);
-        assert!(old.is_none(), "HIR expression ids must be unique");
         Ok(Some(value))
     }
 
     fn evaluate_block<'cx>(
-        &mut self,
+        &self,
+        plan: &EvalPlan,
         hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
-        infer: &InferDb<'cx>,
+        node: GraphNodeId,
         block: hir::BlockId,
-        stack: &mut Vec<DefId>,
     ) -> MaybeResult<ConstValue> {
         let block = &hir.lowered_blocks()[block];
         let Some(tail) = block.tail_expr else {
@@ -221,79 +208,55 @@ impl EvalDb {
         if *expr != tail {
             return Ok(None);
         }
-        self.evaluate_expr(hir, names, infer, tail, stack)
+        Ok(self.expr_dependency(plan, node, tail))
     }
 
-    fn evaluate_path<'cx>(
-        &mut self,
-        hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
-        infer: &InferDb<'cx>,
-        path: &hir::Path<'cx>,
-        scope: Option<syn_sem_name::ScopeId>,
-        stack: &mut Vec<DefId>,
-    ) -> MaybeResult<ConstValue> {
-        let Some(def) = self.resolve_const_item(names, path, scope)? else {
-            return Ok(None);
-        };
-        self.evaluate_const_item(hir, names, infer, def, stack)
+    fn expr_dependency(
+        &self,
+        plan: &EvalPlan,
+        dependent: GraphNodeId,
+        expr: hir::ExprId,
+    ) -> Option<ConstValue> {
+        let dependency = plan
+            .graph()
+            .node_id(&EvalNode::Expr(expr))
+            .expect("planned expression dependencies must have graph nodes");
+        assert!(
+            plan.graph().incoming(dependent).contains(&dependency),
+            "planned expression dependency must have an edge to its dependent"
+        );
+        self.value_for_hir_expr(expr)
+    }
+
+    fn const_dependency(&self, plan: &EvalPlan, dependent: GraphNodeId) -> Option<ConstValue> {
+        let mut dependencies = plan.graph().incoming(dependent).iter().filter_map(|node| {
+            let EvalNode::Const(def) = plan.graph()[*node] else {
+                return None;
+            };
+            Some(def)
+        });
+        let def = dependencies.next()?;
+        assert!(
+            dependencies.next().is_none(),
+            "a planned const path must resolve to at most one definition"
+        );
+        self.value_for_const_def(def)
     }
 
     fn evaluate_const_item<'cx>(
-        &mut self,
-        hir: &hir::Hir<'cx>,
-        names: &NameDb<'cx>,
-        infer: &InferDb<'cx>,
-        def: DefId,
-        stack: &mut Vec<DefId>,
-    ) -> MaybeResult<ConstValue> {
-        if stack.contains(&def) {
-            return Ok(None);
-        }
-
-        let Some(init) = self.const_item_inits.get(&def).copied() else {
-            return Ok(None);
-        };
-        if let Some(value) = self.value_for_hir_expr(init) {
-            return Ok(Some(value));
-        }
-
-        stack.push(def);
-        let value = self.evaluate_expr(hir, names, infer, init, stack);
-        let popped = stack.pop();
-        assert_eq!(
-            popped,
-            Some(def),
-            "const evaluation stack must stay balanced"
-        );
-        let value = match value? {
-            Some(value) => self.refine_with_const_item_type(hir, def, value)?,
-            None => None,
-        };
-        if let Some(value) = value {
-            self.const_item_values.insert(def, value);
-        }
-        Ok(value)
-    }
-
-    fn resolve_const_item<'cx>(
         &self,
-        names: &NameDb<'cx>,
-        path: &hir::Path<'cx>,
-        scope: Option<syn_sem_name::ScopeId>,
-    ) -> MaybeResult<DefId> {
-        if path.qself.is_some() || path.segments.iter().any(|segment| !segment.args.is_empty()) {
-            return Err("EvalDb::resolve_const_item: unsupported const path shape".into());
-        }
-        let Some(scope) = scope else {
+        plan: &EvalPlan,
+        hir: &hir::Hir<'cx>,
+        node: GraphNodeId,
+        def: DefId,
+    ) -> MaybeResult<ConstValue> {
+        let Some(init) = plan.const_item_init(def) else {
             return Ok(None);
         };
-        let ResolveResult::Found(def) =
-            names.resolve_value_path(scope, path.segments.iter().map(|segment| segment.name))
-        else {
+        let Some(value) = self.expr_dependency(plan, node, init) else {
             return Ok(None);
         };
-        Ok((names[def].kind == DefKind::Const).then_some(def))
+        self.refine_with_const_item_type(plan, hir, def, value)
     }
 
     fn primitive_for_hir_type(
@@ -336,11 +299,12 @@ impl EvalDb {
 
     fn refine_with_const_item_type(
         &self,
+        plan: &EvalPlan,
         hir: &hir::Hir<'_>,
         def: DefId,
         value: ConstValue,
     ) -> MaybeResult<ConstValue> {
-        let Some(ty) = self.const_item_types.get(&def).copied() else {
+        let Some(ty) = plan.const_item_type(def) else {
             return Ok(Some(value));
         };
         let Some(primitive) = self.primitive_for_hir_type(hir, ty)? else {
@@ -474,4 +438,50 @@ fn fits_integer_primitive(value: u128, primitive: PrimitiveType) -> bool {
         _ => return false,
     };
     value <= max
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int(value: u128, primitive: PrimitiveType) -> ConstValue {
+        ConstValue::Int(ConstInt { value, primitive })
+    }
+
+    #[test]
+    fn returns_unknown_for_invalid_arithmetic_and_integer_coercion() {
+        assert_eq!(
+            EvalDb::evaluate_binary(
+                hir::BinaryOp::Div,
+                int(1, PrimitiveType::Usize),
+                int(0, PrimitiveType::Usize),
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            EvalDb::evaluate_binary(
+                hir::BinaryOp::Add,
+                int(u128::MAX, PrimitiveType::U128),
+                int(1, PrimitiveType::U128),
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            EvalDb::coerce_value(int(300, PrimitiveType::AbstractInt), PrimitiveType::U8).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn returns_an_error_for_unsupported_constant_operations() {
+        let err = EvalDb::evaluate_binary(
+            hir::BinaryOp::Eq,
+            int(1, PrimitiveType::AbstractInt),
+            int(1, PrimitiveType::AbstractInt),
+        )
+        .expect_err("unsupported constant operations should return an error");
+        assert!(err.to_string().contains("unsupported binary op Eq"));
+    }
 }

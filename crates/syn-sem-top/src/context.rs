@@ -2,7 +2,7 @@ use crate::Semantics;
 use std::path::Path;
 use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{CommonCx, FilePath, Result};
-use syn_sem_eval::{ConstValue, EvalDb};
+use syn_sem_eval::{ConstValue, EvalDb, EvalPlan};
 use syn_sem_hir::{Hir, HirBuilder};
 use syn_sem_infer::{InferConstFacts, InferConstValue, InferDb};
 use syn_sem_name::{NameDb, NameDbBuilder};
@@ -60,43 +60,28 @@ impl<'tcx> TopCx<'tcx> {
         hir: &Hir<'tcx>,
         names: &NameDb<'tcx>,
     ) -> Result<(InferDb<'tcx>, EvalDb)> {
-        let mut const_facts = InferConstFacts::default();
-        for _ in 0..MAX_ANALYSIS_PHASE_ITERATIONS {
-            let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-            let eval = EvalDb::analyze(hir, names, &infer)?;
-            let next_const_facts = self.infer_const_facts(hir, &eval);
-            if next_const_facts == const_facts {
-                return Ok((infer, eval));
-            }
-            const_facts = next_const_facts;
-        }
-
-        let infer = InferDb::analyze(&self.common, hir, names, &const_facts);
-        let eval = EvalDb::analyze(hir, names, &infer)?;
-        Ok((infer, eval))
+        let eval_plan = EvalPlan::new(hir, names)?;
+        run_to_fixed_point(
+            InferConstFacts::default(),
+            MAX_ANALYSIS_PHASE_ITERATIONS,
+            |const_facts| {
+                let infer = InferDb::analyze(&self.common, hir, names, const_facts);
+                let eval = EvalDb::analyze(&eval_plan, hir, &infer)?;
+                let next_const_facts = self.infer_const_facts(&eval);
+                Ok(((infer, eval), next_const_facts))
+            },
+        )
     }
 
-    fn infer_const_facts(&self, hir: &Hir<'tcx>, eval: &EvalDb) -> InferConstFacts {
+    fn infer_const_facts(&self, eval: &EvalDb) -> InferConstFacts {
         let mut facts = InferConstFacts::default();
-        for expr in hir.exprs() {
-            if let Some(value) = eval
-                .value_for_hir_expr(expr.id)
-                .and_then(Self::infer_const_value)
-            {
-                facts.insert_expr_value(expr.id, value);
+        for (expr, value) in eval.hir_expr_values() {
+            if let Some(value) = Self::infer_const_value(value) {
+                facts.insert_expr_value(expr, value);
             }
         }
-        for item in hir.items() {
-            let syn_sem_hir::ItemKind::Const { .. } = item.kind else {
-                continue;
-            };
-            let Some(def) = item.def else {
-                continue;
-            };
-            if let Some(value) = eval
-                .value_for_const_def(def)
-                .and_then(Self::infer_const_value)
-            {
+        for (def, value) in eval.const_def_values() {
+            if let Some(value) = Self::infer_const_value(value) {
                 facts.insert_def_value(def, value);
             }
         }
@@ -112,6 +97,25 @@ impl<'tcx> TopCx<'tcx> {
     }
 }
 
+fn run_to_fixed_point<State, Output>(
+    mut state: State,
+    max_iterations: usize,
+    mut step: impl FnMut(&State) -> Result<(Output, State)>,
+) -> Result<Output>
+where
+    State: PartialEq,
+{
+    for _ in 0..max_iterations {
+        let (output, next_state) = step(&state)?;
+        if next_state == state {
+            return Ok(output);
+        }
+        state = next_state;
+    }
+
+    Err(format!("semantic analysis did not converge after {max_iterations} iterations").into())
+}
+
 impl<'tcx> Default for TopCx<'tcx> {
     /// Creates a top-level context with owned shared common infrastructure.
     fn default() -> Self {
@@ -123,5 +127,32 @@ impl<'tcx> Default for TopCx<'tcx> {
             syntax: SyntaxCx::new(ccx_ref),
             common,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_point_returns_the_output_from_the_converged_iteration() {
+        let output = run_to_fixed_point(0, 4, |state| {
+            let next = if *state == 0 { 1 } else { *state };
+            Ok((*state, next))
+        })
+        .unwrap();
+
+        assert_eq!(output, 1);
+    }
+
+    #[test]
+    fn fixed_point_reports_non_convergence_at_the_iteration_limit() {
+        let err = run_to_fixed_point(0, 4, |state| Ok((*state, 1 - *state)))
+            .expect_err("oscillating state should not converge");
+
+        assert_eq!(
+            err.to_string(),
+            "semantic analysis did not converge after 4 iterations"
+        );
     }
 }

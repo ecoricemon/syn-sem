@@ -1,22 +1,22 @@
 //! Discovery of HIR expressions that require compile-time evaluation.
 //!
-//! This module selects evaluation roots such as array lengths, const blocks, and const generic
-//! arguments. It does not evaluate expressions; [`crate::EvalDb`] recursively evaluates the
-//! selected roots and records their values.
+//! This module selects required expressions such as array lengths, const blocks, and const generic
+//! arguments. It does not evaluate expressions; [`crate::EvalDb`] evaluates the selected
+//! expressions and records their values.
 
 use syn_sem_common::Set;
 use syn_sem_hir as hir;
 
 pub(crate) fn required_exprs(hir: &hir::Hir<'_>) -> Vec<hir::ExprId> {
-    let mut roots = EvalRoots::default();
+    let mut required = RequiredExprs::default();
 
     for ty in hir.types() {
         match &ty.kind {
             hir::TypeKind::Array { len, .. } => {
                 let hir::ArrayLen::Expr(expr) = len;
-                roots.insert(*expr);
+                required.insert(*expr);
             }
-            hir::TypeKind::Path(path) => roots.collect_path(path),
+            hir::TypeKind::Path(path) => required.collect_path(path),
             hir::TypeKind::Infer
             | hir::TypeKind::Reference { .. }
             | hir::TypeKind::Slice { .. }
@@ -37,14 +37,14 @@ pub(crate) fn required_exprs(hir: &hir::Hir<'_>) -> Vec<hir::ExprId> {
             }
         };
         if let Some(generics) = generics {
-            roots.collect_generics(generics);
+            required.collect_generics(generics);
         }
     }
 
     for pat in hir.pats() {
         match &pat.kind {
             hir::PatKind::Path(path) | hir::PatKind::Struct { path, .. } => {
-                roots.collect_path(path);
+                required.collect_path(path);
             }
             hir::PatKind::Ident { .. }
             | hir::PatKind::Reference { .. }
@@ -56,16 +56,16 @@ pub(crate) fn required_exprs(hir: &hir::Hir<'_>) -> Vec<hir::ExprId> {
 
     for expr in hir.exprs() {
         match &expr.kind {
-            hir::ExprKind::Const { .. } => roots.insert(expr.id),
+            hir::ExprKind::Const { .. } => required.insert(expr.id),
             hir::ExprKind::MethodCall { generic_args, .. } => {
                 if let Some(args) = generic_args {
-                    roots.collect_generic_args(args);
+                    required.collect_generic_args(args);
                 }
             }
             hir::ExprKind::Path(path) | hir::ExprKind::Struct { path, .. } => {
-                roots.collect_path(path);
+                required.collect_path(path);
             }
-            hir::ExprKind::Repeat { len, .. } => roots.insert(*len),
+            hir::ExprKind::Repeat { len, .. } => required.insert(*len),
             hir::ExprKind::Array { .. }
             | hir::ExprKind::Assign { .. }
             | hir::ExprKind::Binary { .. }
@@ -84,16 +84,16 @@ pub(crate) fn required_exprs(hir: &hir::Hir<'_>) -> Vec<hir::ExprId> {
         }
     }
 
-    roots.exprs
+    required.exprs
 }
 
 #[derive(Default)]
-struct EvalRoots {
+struct RequiredExprs {
     exprs: Vec<hir::ExprId>,
     seen: Set<hir::ExprId>,
 }
 
-impl EvalRoots {
+impl RequiredExprs {
     fn insert(&mut self, expr: hir::ExprId) {
         if self.seen.insert(expr) {
             self.exprs.push(expr);
