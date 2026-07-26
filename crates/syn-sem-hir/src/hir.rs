@@ -1,12 +1,12 @@
 use std::ops::{Index, IndexMut};
 
 use crate::{
-    lower, AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId,
-    StmtId, TypeId, VariantId,
+    lower, AssocItemId, BlockId, ExprId, FieldId, FileId, HirBuilder, ItemId, LocalId, PatId,
+    SignatureId, StmtId, TypeId, VariantId,
 };
-use syn_sem_ast as ast;
+use syn_sem_ast::{self as ast, SourceInput};
 use syn_sem_common::{FilePath, InternedStr};
-use syn_sem_name::{DefId, ImportId, Name, ScopeId};
+use syn_sem_name::{DefId, ImportId, Name, NameDb, ScopeId};
 
 /// HIR container produced for upper semantic phases.
 #[derive(Debug, Default)]
@@ -27,6 +27,10 @@ pub struct Hir<'cx> {
 }
 
 impl<'cx> Hir<'cx> {
+    pub fn build(names: &NameDb<'cx>, files: impl IntoIterator<Item = SourceInput<'cx>>) -> Self {
+        HirBuilder::new(names).build(files)
+    }
+
     pub(crate) fn from_arena(arena: HirArena<'cx>) -> Self {
         let mut hir = Self {
             files: arena.files,

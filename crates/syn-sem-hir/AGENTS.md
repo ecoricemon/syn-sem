@@ -29,4 +29,4 @@
 
 ## Entry Points
 
-- Build with `HirBuilder`; consume through `Hir`.
+- Build with `Hir`.

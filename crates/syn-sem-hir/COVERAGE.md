@@ -19,7 +19,7 @@
 
 ## Item Gaps
 
-- `Item::Mod`: inline children represented; file-backed module children are not built by `HirBuilder::build`.
+- `Item::Mod`: inline children represented; file-backed module children are not built by `Hir::build`.
 - `Item::Impl`: associated item `DefId` links depend on name-layer scope coverage.
 - `Item::Trait`: associated item `DefId` links depend on name-layer scope coverage.
 - `Item::Use`: imports link to `ImportId`; alias definitions and resolution stay in `syn-sem-name`.

@@ -19,6 +19,6 @@ mod hir;
 mod id;
 pub mod lower;
 
-pub use builder::HirBuilder;
+pub(crate) use builder::*;
 pub use hir::*;
 pub use id::*;

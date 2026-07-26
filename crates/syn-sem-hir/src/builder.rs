@@ -11,8 +11,8 @@ use crate::{
     TypeId, VariantId,
 };
 use std::ops::{Index, IndexMut};
-use syn_sem_ast as ast;
-use syn_sem_common::{ArenaBuilder, FilePath};
+use syn_sem_ast::{self as ast, SourceInput};
+use syn_sem_common::ArenaBuilder;
 use syn_sem_name::{AstNodeId, DefId, DefKind, Name, NameDb, ResolveResult, ScopeId};
 
 struct HirArenaBuilder<'cx> {
@@ -203,33 +203,25 @@ impl IndexMut<BlockId> for HirArenaBuilder<'_> {
 }
 
 /// Builder for [`Hir`].
-pub struct HirBuilder<'a, 'cx> {
+pub(crate) struct HirBuilder<'a, 'cx> {
     names: &'a NameDb<'cx>,
     hir: HirArenaBuilder<'cx>,
 }
 
 impl<'a, 'cx> HirBuilder<'a, 'cx> {
     /// Creates a builder using the currently available name-resolution data.
-    pub fn new(names: &'a NameDb<'cx>) -> Self {
+    pub(crate) fn new(names: &'a NameDb<'cx>) -> Self {
         Self {
             names,
             hir: HirArenaBuilder::new(),
         }
     }
 
-    /// Builds HIR for one entry file.
-    pub fn build(self, file_path: FilePath<'cx>, file: &'cx ast::File<'cx>) -> Hir<'cx> {
-        self.build_files([ast::SourceInput { file_path, file }])
-    }
-
     /// Builds HIR for multiple root files.
     ///
     /// Each root is attached to the crate root scope. This lets callers include well-known
     /// library files alongside the entry file when those files are not reached through `mod`.
-    pub fn build_files(
-        mut self,
-        files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
-    ) -> Hir<'cx> {
+    pub(crate) fn build(mut self, files: impl IntoIterator<Item = SourceInput<'cx>>) -> Hir<'cx> {
         let crate_scope = Some(self.names.crate_scope());
         for file in files {
             let id = self.hir.reserve_file();
@@ -318,8 +310,11 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             }
             ast::Item::Fn(item) => {
                 let generics = self.collect_generics(&item.sig.generics, type_scope);
-                let signature =
-                    self.collect_signature(SignatureSource::ItemFn, &item.sig, type_scope);
+                let signature = self.collect_signature_params(
+                    SignatureSource::ItemFn,
+                    item.sig.params,
+                    type_scope,
+                );
                 let block = self.collect_block(
                     &item.block,
                     def.and_then(|def| self.names.def_body_scope(def)),
@@ -415,7 +410,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         scope: Option<ScopeId>,
     ) -> VariantId {
         let id = self.hir.reserve_variant();
-        let def = self.def_for_variant(variant);
+        let def = self.names.def_for_ast_node(AstNodeId::from_ref(variant));
         let (fields, discriminant) = match &variant.kind {
             ast::VariantKind::Fields(fields) => (
                 fields
@@ -469,7 +464,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
         let id = self.hir.reserve_assoc_item();
-        let def = self.def_for_impl_item(item);
+        let def = self.names.def_for_ast_node(AstNodeId::from_ref(item));
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::ImplItem::Const(item) => {
@@ -478,8 +473,11 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::ImplConst { ty, init }
             }
             ast::ImplItem::Fn(item) => {
-                let signature =
-                    self.collect_signature(SignatureSource::ImplFn, &item.sig, type_scope);
+                let signature = self.collect_signature_params(
+                    SignatureSource::ImplFn,
+                    item.sig.params,
+                    type_scope,
+                );
                 let block = self.collect_block(
                     &item.block,
                     def.and_then(|def| self.names.def_body_scope(def)),
@@ -509,7 +507,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         parent_scope: Option<ScopeId>,
     ) -> AssocItemId {
         let id = self.hir.reserve_assoc_item();
-        let def = self.def_for_trait_item(item);
+        let def = self.names.def_for_ast_node(AstNodeId::from_ref(item));
         let type_scope = self.type_scope_for_def(def, parent_scope);
         let kind = match item {
             ast::TraitItem::Const(item) => {
@@ -518,8 +516,11 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 AssocItemKind::TraitConst { ty, default }
             }
             ast::TraitItem::Fn(item) => {
-                let signature =
-                    self.collect_signature(SignatureSource::TraitFn, &item.sig, type_scope);
+                let signature = self.collect_signature_params(
+                    SignatureSource::TraitFn,
+                    item.sig.params,
+                    type_scope,
+                );
                 let default = item.default.as_ref().map(|block| {
                     self.collect_block(block, def.and_then(|def| self.names.def_body_scope(def)))
                 });
@@ -542,15 +543,6 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
             },
         );
         id
-    }
-
-    fn collect_signature(
-        &mut self,
-        source: SignatureSource,
-        signature: &'cx ast::Signature<'cx>,
-        scope: Option<ScopeId>,
-    ) -> SignatureId {
-        self.collect_signature_params(source, signature.params, scope)
     }
 
     fn collect_signature_params(
@@ -1210,27 +1202,15 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
         }
         def
     }
-
-    fn def_for_variant(&self, variant: &'cx ast::Variant<'cx>) -> Option<DefId> {
-        self.names.def_for_ast_node(AstNodeId::from_ref(variant))
-    }
-
-    fn def_for_impl_item(&self, item: &'cx ast::ImplItem<'cx>) -> Option<DefId> {
-        self.names.def_for_ast_node(AstNodeId::from_ref(item))
-    }
-
-    fn def_for_trait_item(&self, item: &'cx ast::TraitItem<'cx>) -> Option<DefId> {
-        self.names.def_for_ast_node(AstNodeId::from_ref(item))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Hir, HirBuilder};
-    use syn_sem_ast::{SourceKind, SyntaxCx};
+    use syn_sem_ast::{SourceInput, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{AstNodeId, DefKind, ImportKind, NameDb, NameDbBuilder};
+    use syn_sem_name::{AstNodeId, DefKind, ImportKind, NameDb};
 
     fn parsed_model<'cx>(
         ccx: &'cx CommonCx,
@@ -1243,7 +1223,7 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
-        HirBuilder::new(&names).build(file_path, file)
+        HirBuilder::new(&names).build([SourceInput { file_path, file }])
     }
 
     fn parsed_model_with_names<'cx>(
@@ -1256,9 +1236,8 @@ mod tests {
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names =
-            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
-        let hir = HirBuilder::new(&names).build(file_path, file);
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let hir = HirBuilder::new(&names).build([SourceInput { file_path, file }]);
         (file, names, hir)
     }
 
@@ -2524,12 +2503,11 @@ mod tests {
         let ast::Item::Struct(_) = item else {
             panic!("expected struct item");
         };
-        let names =
-            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let def = names
             .def_for_ast_node(AstNodeId::from_ref(item))
             .expect("struct should have a definition");
-        let model = HirBuilder::new(&names).build(file_path, file);
+        let model = HirBuilder::new(&names).build([SourceInput { file_path, file }]);
         assert_eq!(model.items()[0].def, Some(def));
     }
 
@@ -2580,8 +2558,7 @@ mod tests {
             panic!("expected second impl fn");
         };
 
-        let names =
-            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let first_impl_def = names
             .def_for_ast_node(AstNodeId::from_ref(first_impl_item))
             .expect("first impl should have a definition");
@@ -2594,7 +2571,7 @@ mod tests {
         let second_fn_def = names
             .def_for_ast_node(AstNodeId::from_ref(second_fn_item))
             .expect("second impl function should have a definition");
-        let model = HirBuilder::new(&names).build(file_path, file);
+        let model = HirBuilder::new(&names).build([SourceInput { file_path, file }]);
         assert_eq!(model.items()[1].def, Some(first_impl_def));
         assert_eq!(model.items()[2].def, Some(second_impl_def));
 

@@ -513,10 +513,10 @@ pub struct ConstInt {
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
+    use syn_sem_ast::{self as ast, SourceInput, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_hir as hir;
-    use syn_sem_name::{AstNodeId, DefId, NameDb, NameDbBuilder, Namespace, ResolveResult};
+    use syn_sem_hir::{self as hir, Hir};
+    use syn_sem_name::{AstNodeId, DefId, NameDb, Namespace, ResolveResult};
 
     fn infer_ty_ids<'cx>(
         ccx: &'cx CommonCx,
@@ -529,7 +529,7 @@ mod tests {
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
         let names = NameDb::default();
-        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let hir = Hir::build(&names, [SourceInput { file_path, file }]);
         let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, infer)
     }
@@ -544,9 +544,8 @@ mod tests {
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names =
-            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
-        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let hir = Hir::build(&names, [SourceInput { file_path, file }]);
         let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, names, infer)
     }
@@ -1074,8 +1073,7 @@ mod tests {
             panic!("expected impl associated type");
         };
 
-        let names =
-            NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
         let vec_def = names
             .def_for_ast_node(AstNodeId::from_ref(&file.items[0]))
             .expect("Vec should have a definition");
@@ -1088,7 +1086,7 @@ mod tests {
         let impl_item_def = names
             .def_for_ast_node(AstNodeId::from_ref(&impl_item.items[0]))
             .expect("impl associated type should have a definition");
-        let hir = hir::HirBuilder::new(&names).build(file_path, file);
+        let hir = Hir::build(&names, [SourceInput { file_path, file }]);
         let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());
         let [impl_assoc_type] = infer.impl_assoc_types.as_slice() else {
             panic!("expected one impl associated type");

@@ -60,16 +60,6 @@ impl<'tcx> Semantics<'tcx> {
     pub fn eval(&self) -> &EvalDb {
         &self.eval
     }
-
-    /// Consumes this semantic output and returns the collected name-resolution database.
-    pub fn into_names(self) -> NameDb<'tcx> {
-        self.names
-    }
-
-    /// Consumes this semantic output and returns the phase products.
-    pub fn into_parts(self) -> (NameDb<'tcx>, Hir<'tcx>) {
-        (self.names, self.hir)
-    }
 }
 
 impl fmt::Debug for Semantics<'_> {

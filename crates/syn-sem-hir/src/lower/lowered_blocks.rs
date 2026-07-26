@@ -154,9 +154,9 @@ fn collect_pat_bindings_into(hir: &Hir<'_>, pat: PatId, bindings: &mut Vec<DefId
 mod tests {
     use super::*;
     use crate::{HirBuilder, ItemKind};
-    use syn_sem_ast::{self as ast, SourceKind, SyntaxCx};
+    use syn_sem_ast::{self as ast, SourceInput, SourceKind, SyntaxCx};
     use syn_sem_common::CommonCx;
-    use syn_sem_name::{DefKind, NameDbBuilder};
+    use syn_sem_name::{DefKind, NameDb};
 
     fn parsed_hir<'cx>(
         ccx: &'cx CommonCx,
@@ -168,9 +168,9 @@ mod tests {
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .expect("test input should parse");
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameDbBuilder::build([ast::SourceInput { file_path, file }], [file_path])
+        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path])
             .expect("name collection should succeed");
-        let hir = HirBuilder::new(&names).build(file_path, file);
+        let hir = HirBuilder::new(&names).build([SourceInput { file_path, file }]);
         (names, hir)
     }
 

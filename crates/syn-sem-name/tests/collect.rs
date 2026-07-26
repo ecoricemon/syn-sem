@@ -1,8 +1,8 @@
 use syn_sem_ast::{self as ast, SourceKind};
-use syn_sem_common::{CommonCx, FilePath};
+use syn_sem_common::CommonCx;
 use syn_sem_name::{
-    AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name, NameDb, NameDbBuilder,
-    Namespace, ResolveResult, ScopeId, ScopeKind,
+    AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name, NameDb, Namespace,
+    ResolveResult, ScopeId, ScopeKind,
 };
 
 struct TestCx {
@@ -25,13 +25,6 @@ impl TestCx {
             file: scx.lookup_source(file_path).unwrap().ast(),
         }
     }
-}
-
-fn collect<'cx>(
-    files: impl IntoIterator<Item = ast::SourceInput<'cx>>,
-    entry_path: FilePath<'cx>,
-) -> NameDb<'cx> {
-    NameDbBuilder::build(files, [entry_path]).unwrap()
 }
 
 fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {
@@ -128,7 +121,7 @@ mod modules {
         "#,
         );
 
-        let db = collect([entry, external], entry.file_path);
+        let db = NameDb::build([entry, external], [entry.file_path]).unwrap();
 
         let root = root_type(&db, tcx.common.intern("Root"));
         assert_eq!(db[root].kind, DefKind::Struct);
@@ -184,7 +177,7 @@ mod imports {
         "#,
         );
 
-        let db = collect([entry], entry.file_path);
+        let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let crate_scope = db.crate_scope();
         let a = tcx.common.intern("a");
         let b = tcx.common.intern("b");
@@ -267,7 +260,7 @@ mod visibility {
         "#,
         );
 
-        let db = collect([entry], entry.file_path);
+        let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let crate_scope = db.crate_scope();
         let a_scope = module_scope(&db, crate_scope, tcx.common.intern("a"));
         let child_scope = module_scope(&db, a_scope, tcx.common.intern("child"));
@@ -346,7 +339,7 @@ mod visibility {
         "#,
         );
 
-        let _ = collect([entry], entry.file_path);
+        let _ = NameDb::build([entry], [entry.file_path]).unwrap();
     }
 
     #[test]
@@ -367,7 +360,7 @@ mod visibility {
         "#,
         );
 
-        let _ = collect([entry], entry.file_path);
+        let _ = NameDb::build([entry], [entry.file_path]).unwrap();
     }
 }
 
@@ -391,7 +384,7 @@ mod members {
         "#,
         );
 
-        let db = collect([entry], entry.file_path);
+        let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let iterator = root_type(&db, tcx.common.intern("Iterator"));
         let ResolveResult::Found(item) =
             db.member(iterator, Namespace::Type, tcx.common.intern("Item"))
@@ -444,7 +437,7 @@ mod scopes {
         "#,
         );
 
-        let db = collect([entry], entry.file_path);
+        let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let crate_scope = db.crate_scope();
 
         let s = direct_type_binding(&db, crate_scope, tcx.common.intern("S")).unwrap();
@@ -557,7 +550,7 @@ mod scopes {
             panic!("expected local ident pattern");
         };
 
-        let db = collect([entry], entry.file_path);
+        let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let f = direct_binding(
             &db,
             db.crate_scope(),

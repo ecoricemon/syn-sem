@@ -1,11 +1,11 @@
 use crate::Semantics;
 use std::path::Path;
-use syn_sem_ast::{SourceKind, SyntaxCx};
+use syn_sem_ast::{SourceInput, SourceKind, SyntaxCx};
 use syn_sem_common::{CommonCx, FilePath, Result};
 use syn_sem_eval::{ConstValue, EvalDb, EvalPlan};
-use syn_sem_hir::{Hir, HirBuilder};
+use syn_sem_hir::Hir;
 use syn_sem_infer::{InferConstFacts, InferConstValue, InferDb};
-use syn_sem_name::{NameDb, NameDbBuilder};
+use syn_sem_name::NameDb;
 
 const MAX_ANALYSIS_PHASE_ITERATIONS: usize = 8;
 
@@ -48,9 +48,15 @@ impl<'tcx> TopCx<'tcx> {
 
     fn analyze_entry(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
         let name_inputs = self.syntax.collect_module_tree(entry_path)?;
-        let names = NameDbBuilder::build(name_inputs, [entry_path])?;
+        let names = NameDb::build(name_inputs, [entry_path])?;
         let file = self.syntax.lookup_source(entry_path)?.ast();
-        let hir = HirBuilder::new(&names).build(entry_path, file);
+        let hir = Hir::build(
+            &names,
+            [SourceInput {
+                file_path: entry_path,
+                file,
+            }],
+        );
         let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names)?;
         Ok(Semantics::new(self, names, hir, infer, eval))
     }

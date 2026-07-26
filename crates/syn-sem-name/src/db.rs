@@ -1,8 +1,10 @@
 use crate::{
-    AstNodeId, Binding, Def, DefId, DefKind, DefScopes, Import, ImportId, ImportKind, ImportStatus,
-    Map, Name, Namespace, Origin, Scope, ScopeId, ScopeKind,
+    AstCollector, AstNodeId, Binding, Def, DefId, DefKind, DefScopes, Import, ImportId, ImportKind,
+    ImportStatus, Map, Name, Namespace, Origin, Scope, ScopeId, ScopeKind,
 };
 use std::ops::{Index, IndexMut};
+use syn_sem_ast::SourceInput;
+use syn_sem_common::{FilePath, Result};
 
 /// Name-resolution database.
 #[derive(Debug, Clone)]
@@ -16,6 +18,23 @@ pub struct NameDb<'cx> {
 }
 
 impl<'cx> NameDb<'cx> {
+    pub fn build(
+        files: impl IntoIterator<Item = SourceInput<'cx>>,
+        roots: impl IntoIterator<Item = FilePath<'cx>>,
+    ) -> Result<Self> {
+        let mut this = NameDb::default();
+        AstCollector {
+            files: files
+                .into_iter()
+                .map(|input| (input.file_path, input))
+                .collect(),
+            db: &mut this,
+        }
+        .collect_roots(roots)?;
+        this.resolve_imports();
+        Ok(this)
+    }
+
     /// Returns the synthetic visibility root containing every crate visibility domain.
     pub const fn root_scope(&self) -> ScopeId {
         ScopeId::new(0)

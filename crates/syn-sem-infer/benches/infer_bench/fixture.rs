@@ -2,9 +2,9 @@ use criterion::black_box;
 use syn_sem_ast as ast;
 use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
-use syn_sem_hir::HirBuilder;
+use syn_sem_hir::Hir;
 use syn_sem_infer::{InferConstFacts, InferDb};
-use syn_sem_name::NameDbBuilder;
+use syn_sem_name::NameDb;
 
 pub(crate) const NO_KNOWN_LIBRARIES: KnownLibraryConfig = KnownLibraryConfig {
     core: false,
@@ -37,9 +37,8 @@ pub(crate) fn run_analysis(source_text: &str, known: KnownLibraryConfig) {
         inputs.push(parse_stored_source(&scx, file_path));
     }
 
-    let names =
-        NameDbBuilder::build(inputs.clone(), roots).expect("name collection should succeed");
-    let hir = HirBuilder::new(&names).build_files(inputs);
+    let names = NameDb::build(inputs.clone(), roots).expect("name collection should succeed");
+    let hir = Hir::build(&names, inputs);
     let infer = InferDb::analyze(&ccx, &hir, &names, &InferConstFacts::default());
     black_box(infer);
 }

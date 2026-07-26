@@ -4,8 +4,8 @@ use syn_sem_ast as ast;
 use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
 use syn_sem_hir as hir;
-use syn_sem_hir::{Hir, HirBuilder, ItemKind};
-use syn_sem_name::{DefKind, NameDb, NameDbBuilder};
+use syn_sem_hir::{Hir, ItemKind};
+use syn_sem_name::{DefKind, NameDb};
 
 fn analyze<'cx>(
     ccx: &'cx CommonCx,
@@ -46,9 +46,8 @@ fn analyze_with_known<'cx>(
         inputs.push(parse_stored_source(scx, file_path));
     }
 
-    let names =
-        NameDbBuilder::build(inputs.clone(), roots).expect("name collection should succeed");
-    let hir = HirBuilder::new(&names).build_files(inputs);
+    let names = NameDb::build(inputs.clone(), roots).expect("name collection should succeed");
+    let hir = Hir::build(&names, inputs);
     let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
     (names, hir, infer)
 }

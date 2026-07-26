@@ -28,4 +28,4 @@
 
 ## Entry Points
 
-- Start from `NameDb` for name facts and `NameDbBuilder::build` for AST-aware construction.
+- Start from `NameDb` for name facts and `NameDb::build` for AST-aware construction.

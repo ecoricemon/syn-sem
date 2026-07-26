@@ -1,8 +1,6 @@
 use syn_sem_ast::{self as ast, SourceKind};
 use syn_sem_common::{CommonCx, SourceText};
-use syn_sem_name::{
-    AstNodeId, DefId, DefKind, Name, NameDb, NameDbBuilder, Namespace, ResolveResult, ScopeId,
-};
+use syn_sem_name::{AstNodeId, DefId, DefKind, Name, NameDb, Namespace, ResolveResult, ScopeId};
 
 fn parse_input<'cx>(
     scx: &'cx ast::SyntaxCx<'cx>,
@@ -62,7 +60,7 @@ fn resolves_function_generics_params_locals_and_local_items_from_ast() {
     };
     let fn_node = AstNodeId::from_ref(fn_item);
     let block_node = AstNodeId::from_ref(&fn_data.block);
-    let db = NameDbBuilder::build([input], [input.file_path]).unwrap();
+    let db = NameDb::build([input], [input.file_path]).unwrap();
     let fn_def = db
         .def_for_ast_node(fn_node)
         .expect("function should have a definition");
@@ -141,7 +139,7 @@ fn keeps_type_and_value_namespaces_separate_from_ast() {
         panic!("expected function item");
     };
     let block_node = AstNodeId::from_ref(&fn_data.block);
-    let db = NameDbBuilder::build([input], [input.file_path]).unwrap();
+    let db = NameDb::build([input], [input.file_path]).unwrap();
     let block_scope = db
         .scope_for_ast_node(block_node)
         .expect("function block should have a scope");

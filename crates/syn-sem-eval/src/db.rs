@@ -140,7 +140,7 @@ impl EvalDb {
                 let Some(primitive) = self.primitive_for_hir_type(hir, *ty)? else {
                     return Ok(None);
                 };
-                let Some(value) = Self::cast_value(value, primitive)? else {
+                let Some(value) = Self::coerce_value(value, primitive)? else {
                     return Ok(None);
                 };
                 value
@@ -310,10 +310,6 @@ impl EvalDb {
         let Some(primitive) = self.primitive_for_hir_type(hir, ty)? else {
             return Ok(Some(value));
         };
-        Self::coerce_value(value, primitive)
-    }
-
-    fn cast_value(value: ConstValue, primitive: PrimitiveType) -> MaybeResult<ConstValue> {
         Self::coerce_value(value, primitive)
     }
 

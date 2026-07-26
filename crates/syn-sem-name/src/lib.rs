@@ -2,7 +2,7 @@
 //!
 //! This crate owns the reusable vocabulary for resolving names: definitions, scopes, namespaces,
 //! bindings, imports, and simple lexical lookup. Build a database from prepared AST inputs with
-//! [`NameDbBuilder::build`].
+//! [`NameDb::build`].
 
 mod builder;
 mod db;
@@ -12,7 +12,7 @@ mod import;
 mod namespace;
 mod scope;
 
-pub use builder::*;
+pub(crate) use builder::*;
 pub use db::*;
 pub use def::*;
 pub use id::*;
