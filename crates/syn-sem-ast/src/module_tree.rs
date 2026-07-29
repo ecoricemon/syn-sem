@@ -1,12 +1,12 @@
 use crate::{File, Item, ItemMod, SyntaxCx};
 use std::path::{Path, PathBuf};
-use syn_sem_common::{FilePath, MaybeResult, Result, Set};
+use syn_sem_common::{MaybeResult, Result, Set, Str};
 
 /// Parsed source file used as input to upper semantic phases.
 #[derive(Clone, Copy)]
 pub struct SourceInput<'cx> {
     /// Interned source path for this parsed file.
-    pub file_path: FilePath<'cx>,
+    pub file_path: Str<'cx>,
     /// Parsed semantic AST for this file.
     pub file: &'cx File<'cx>,
 }
@@ -26,7 +26,7 @@ impl<'cx> ModuleTreeBuilder<'cx> {
         }
     }
 
-    pub(crate) fn collect(mut self, entry_path: FilePath<'cx>) -> Result<Vec<SourceInput<'cx>>> {
+    pub(crate) fn collect(mut self, entry_path: Str<'cx>) -> Result<Vec<SourceInput<'cx>>> {
         let file = self.scx.lookup_source(entry_path)?.ast();
         let path = ModulePath::from_entry_file(PathBuf::from(entry_path.as_ref()));
         self.add_file(entry_path, file);
@@ -34,7 +34,7 @@ impl<'cx> ModuleTreeBuilder<'cx> {
         Ok(self.files)
     }
 
-    fn add_file(&mut self, file_path: FilePath<'cx>, file: &'cx File<'cx>) -> bool {
+    fn add_file(&mut self, file_path: Str<'cx>, file: &'cx File<'cx>) -> bool {
         if !self.seen.insert(PathBuf::from(file_path.as_ref())) {
             return false;
         }
@@ -74,7 +74,7 @@ impl<'cx> ModuleTreeBuilder<'cx> {
         Ok(())
     }
 
-    fn find_child_file(&self, candidates: &[PathBuf]) -> MaybeResult<FilePath<'cx>> {
+    fn find_child_file(&self, candidates: &[PathBuf]) -> MaybeResult<Str<'cx>> {
         for path in candidates {
             let file_path = self.scx.common.intern_path(path);
             if self.scx.has_source(file_path) {

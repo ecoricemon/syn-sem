@@ -1,5 +1,6 @@
-use crate::{FilePath, FrozenMap, InternedStr, MaybeResult, RawSourceText, Result, SourceText};
+use crate::{FrozenMap, MaybeResult, Result, Str};
 use any_intern::DroplessInterner;
+use any_intern::RawInterned;
 use std::{
     fmt::{self, Debug, Display},
     fs, io,
@@ -8,8 +9,8 @@ use std::{
 
 /// Root context for shared `syn-sem` infrastructure.
 ///
-/// `CommonCx` owns the string interner. Values with the `'ccx` lifetime, such as [`FilePath`] and
-/// [`SourceText`], are valid for the lifetime of this context's interner.
+/// `CommonCx` owns the string interner. [`Str`] values with the `'ccx` lifetime are valid for the
+/// lifetime of this context's interner.
 #[derive(Debug, Default)]
 pub struct CommonCx {
     // `files` stores raw handles into `interner`. Keep it declared first so it is dropped before
@@ -25,7 +26,7 @@ impl CommonCx {
     }
 
     /// Interns a string in this context.
-    pub fn intern(&self, text: &str) -> InternedStr<'_> {
+    pub fn intern(&self, text: &str) -> Str<'_> {
         self.interner.intern(text)
     }
 
@@ -34,23 +35,23 @@ impl CommonCx {
         &self,
         value: &K,
         upper_size: usize,
-    ) -> Result<InternedStr<'_>> {
+    ) -> Result<Str<'_>> {
         self.interner.intern_display(value, upper_size)
     }
 
     /// Interns a filesystem path after converting it to UTF-8.
-    pub fn intern_path(&self, path: &Path) -> InternedStr<'_> {
+    pub fn intern_path(&self, path: &Path) -> Str<'_> {
         let path = path.to_str().unwrap();
         self.intern(path)
     }
 
     /// Returns whether `file_path` has source in this context.
-    pub fn has_source(&self, file_path: FilePath<'_>) -> bool {
+    pub fn has_source(&self, file_path: Str<'_>) -> bool {
         self.files.contains(file_path.as_ref())
     }
 
     /// Stores virtual source text and returns its interned file path.
-    pub fn insert_virtual_file(&self, file_path: &str, source_text: &str) -> Result<FilePath<'_>> {
+    pub fn insert_virtual_file(&self, file_path: &str, source_text: &str) -> Result<Str<'_>> {
         let source_text = self.intern(source_text);
         let file_path = self
             .files
@@ -59,18 +60,14 @@ impl CommonCx {
     }
 
     /// Stores virtual source text under an already interned file path.
-    pub fn insert_virtual_source(
-        &self,
-        file_path: FilePath<'_>,
-        source_text: SourceText<'_>,
-    ) -> Result<()> {
+    pub fn insert_virtual_source(&self, file_path: Str<'_>, source_text: Str<'_>) -> Result<()> {
         self.files
             .insert_virtual_file(file_path.as_ref(), source_text.raw())?;
         Ok(())
     }
 
     /// Stores physical source text and returns its interned file path.
-    pub fn insert_physical_file(&self, file_path: &str, source_text: &str) -> Result<FilePath<'_>> {
+    pub fn insert_physical_file(&self, file_path: &str, source_text: &str) -> Result<Str<'_>> {
         let source_text = self.intern(source_text);
         let file_path = self
             .files
@@ -79,7 +76,7 @@ impl CommonCx {
     }
 
     /// Reads a physical source file and returns its interned canonical file path.
-    pub fn read_physical_file(&self, file_path: impl AsRef<Path>) -> Result<FilePath<'_>> {
+    pub fn read_physical_file(&self, file_path: impl AsRef<Path>) -> Result<Str<'_>> {
         let file_path = absolute_file_path(file_path.as_ref())?;
         if self.files.contains(&file_path) {
             return Ok(self.intern_path(&file_path));
@@ -94,32 +91,28 @@ impl CommonCx {
     }
 
     /// Returns interned source text for `file_path`.
-    pub fn source_text(&self, file_path: FilePath<'_>) -> Option<SourceText<'_>> {
+    pub fn source_text(&self, file_path: Str<'_>) -> Option<Str<'_>> {
         let raw_source_text = self.files.raw_source_text(file_path.as_ref())?;
         Some(self.source_text_from_raw(raw_source_text))
     }
 
     /// Associates a known library name with an interned file path.
-    pub fn set_known_library(
-        &self,
-        name: &str,
-        file_path: FilePath<'_>,
-    ) -> MaybeResult<FilePath<'_>> {
+    pub fn set_known_library(&self, name: &str, file_path: Str<'_>) -> MaybeResult<Str<'_>> {
         let old = self.files.set_known_library(name, file_path.as_ref())?;
         Ok(old.map(|path| self.intern_path(&path)))
     }
 
     /// Returns the interned file path associated with a known library name.
-    pub fn known_library(&self, name: &str) -> Option<FilePath<'_>> {
+    pub fn known_library(&self, name: &str) -> Option<Str<'_>> {
         let path = self.files.known_library(name)?;
         Some(self.intern_path(path))
     }
 
-    fn source_text_from_raw(&self, raw_source_text: RawSourceText) -> SourceText<'_> {
+    fn source_text_from_raw(&self, raw_source_text: RawInterned<str>) -> Str<'_> {
         // Safety: `AbstractFiles` is private to this module, and every source-text raw handle
         // stored there is created from `self.interner` by `CommonCx` insertion methods. The
-        // returned `SourceText` is tied to `&self`, so it cannot outlive the owning interner.
-        unsafe { SourceText::from_raw(raw_source_text) }
+        // returned `Str` is tied to `&self`, so it cannot outlive the owning interner.
+        unsafe { Str::from_raw(raw_source_text) }
     }
 }
 
@@ -133,7 +126,7 @@ pub struct StringInterner {
 
 impl StringInterner {
     /// Interns `text` and returns a lifetime-bearing interned string.
-    pub fn intern(&self, text: &str) -> InternedStr<'_> {
+    pub fn intern(&self, text: &str) -> Str<'_> {
         self.intern_display(text, text.len()).unwrap()
     }
 
@@ -142,14 +135,14 @@ impl StringInterner {
         &self,
         value: &T,
         upper_size: usize,
-    ) -> Result<InternedStr<'_>> {
+    ) -> Result<Str<'_>> {
         self.inner
             .intern_formatted_str(value, upper_size)
             .map_err(|e| format!("failed to intern formatted string: {e}").into())
     }
 
     /// Returns the interned string if `text` has already been interned.
-    pub fn get(&self, text: &str) -> Option<InternedStr<'_>> {
+    pub fn get(&self, text: &str) -> Option<Str<'_>> {
         self.inner.get(text)
     }
 
@@ -175,7 +168,7 @@ impl Debug for StringInterner {
 #[derive(Default)]
 struct AbstractFiles {
     // Every raw source-text handle stored here is created by the owning `CommonCx`.
-    files: FrozenMap<PathBuf, Box<RawSourceText>>,
+    files: FrozenMap<PathBuf, Box<RawInterned<str>>>,
     known_libraries: FrozenMap<String, Box<Path>>,
 }
 
@@ -190,14 +183,14 @@ impl AbstractFiles {
         self.files.get(file_path.as_ref()).is_some()
     }
 
-    fn raw_source_text(&self, file_path: impl AsRef<Path>) -> Option<RawSourceText> {
+    fn raw_source_text(&self, file_path: impl AsRef<Path>) -> Option<RawInterned<str>> {
         self.files.get(file_path.as_ref()).copied()
     }
 
     fn insert_virtual_file(
         &self,
         file_path: impl AsRef<Path>,
-        raw_source_text: RawSourceText,
+        raw_source_text: RawInterned<str>,
     ) -> Result<PathBuf> {
         self.insert_source(file_path.as_ref().to_path_buf(), raw_source_text)
     }
@@ -205,7 +198,7 @@ impl AbstractFiles {
     fn insert_physical_file(
         &self,
         file_path: impl AsRef<Path>,
-        raw_source_text: RawSourceText,
+        raw_source_text: RawInterned<str>,
     ) -> Result<PathBuf> {
         validate_absolute_file_path(file_path.as_ref())?;
         self.insert_source(file_path.as_ref().to_path_buf(), raw_source_text)
@@ -238,7 +231,11 @@ impl AbstractFiles {
         self.known_libraries.get(name)
     }
 
-    fn insert_source(&self, file_path: PathBuf, raw_source_text: RawSourceText) -> Result<PathBuf> {
+    fn insert_source(
+        &self,
+        file_path: PathBuf,
+        raw_source_text: RawInterned<str>,
+    ) -> Result<PathBuf> {
         if let Some(existing) = self.raw_source_text(&file_path) {
             if existing != raw_source_text {
                 return Err(format!(
@@ -291,11 +288,7 @@ pub fn absolute_file_path(file_path: &Path) -> Result<PathBuf> {
 }
 
 /// Interns a string built from `prefix` followed by `number`.
-pub fn intern_prefixed_number<'cx>(
-    ccx: &'cx CommonCx,
-    prefix: &str,
-    number: usize,
-) -> InternedStr<'cx> {
+pub fn intern_prefixed_number<'cx>(ccx: &'cx CommonCx, prefix: &str, number: usize) -> Str<'cx> {
     struct PrefixedNumber<'a> {
         prefix: &'a str,
         number: usize,

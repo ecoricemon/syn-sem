@@ -7,7 +7,7 @@ use std::{
 };
 use syn::punctuated::Punctuated;
 use syn_locator::{Locate, Locator};
-use syn_sem_common::{FilePath, SourceText};
+use syn_sem_common::Str;
 use syn_sem_macros::CheckDropless;
 
 /// Converts a `syn` syntax node into the semantic AST representation.
@@ -22,9 +22,9 @@ pub trait FromSyn<'cx, Input: ?Sized>: 'cx {
 /// borrowed `syn` node here.
 pub struct InputDesc<'cx, 'syn, Input: ?Sized> {
     /// Interned path of the source file that owns `input`.
-    pub file_path: FilePath<'cx>,
+    pub file_path: Str<'cx>,
     /// Interned source text that owns `input`.
-    pub source_text: SourceText<'cx>,
+    pub source_text: Str<'cx>,
     /// Locator populated for the parsed source, when source locations are available.
     pub locator: Option<&'syn Locator>,
     /// Borrowed syntax node being converted.
@@ -184,14 +184,14 @@ pub struct Isize<'cx> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CheckDropless)]
 pub struct Span<'cx> {
     /// The whole source text.
-    source_text: SourceText<'cx>,
+    source_text: Str<'cx>,
     start: u32,
     end: u32,
 }
 
 impl<'cx> Span<'cx> {
     /// Creates an empty span tied to `source_text`.
-    pub fn new(source_text: SourceText<'cx>) -> Self {
+    pub fn new(source_text: Str<'cx>) -> Self {
         Self {
             source_text,
             start: 0,
@@ -210,7 +210,7 @@ impl<'cx> Span<'cx> {
 
     /// Creates a span for a `syn_locator` node in the given file.
     pub fn from_locatable<T: Locate + ?Sized>(
-        source_text: SourceText<'cx>,
+        source_text: Str<'cx>,
         locator: &Locator,
         item: &T,
     ) -> Self {

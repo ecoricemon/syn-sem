@@ -1,7 +1,7 @@
 use crate::Semantics;
 use std::path::Path;
 use syn_sem_ast::{SourceInput, SourceKind, SyntaxCx};
-use syn_sem_common::{CommonCx, FilePath, Result};
+use syn_sem_common::{CommonCx, Result, Str};
 use syn_sem_eval::{ConstValue, EvalDb, EvalPlan};
 use syn_sem_hir::Hir;
 use syn_sem_infer::{InferConstFacts, InferConstValue, InferDb};
@@ -46,7 +46,7 @@ impl<'tcx> TopCx<'tcx> {
         self.analyze_entry(entry_path)
     }
 
-    fn analyze_entry(&'tcx self, entry_path: FilePath<'tcx>) -> Result<Semantics<'tcx>> {
+    fn analyze_entry(&'tcx self, entry_path: Str<'tcx>) -> Result<Semantics<'tcx>> {
         let name_inputs = self.syntax.collect_module_tree(entry_path)?;
         let names = NameDb::build(name_inputs, [entry_path])?;
         let file = self.syntax.lookup_source(entry_path)?.ast();

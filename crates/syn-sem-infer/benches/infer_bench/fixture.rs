@@ -1,7 +1,6 @@
 use criterion::black_box;
-use syn_sem_ast as ast;
-use syn_sem_ast::{SourceKind, SyntaxCx};
-use syn_sem_common::{known::KnownLibraryConfig, CommonCx, FilePath};
+use syn_sem_ast::{SourceInput, SourceKind, SyntaxCx};
+use syn_sem_common::{known::KnownLibraryConfig, CommonCx, Str};
 use syn_sem_hir::Hir;
 use syn_sem_infer::{InferConstFacts, InferDb};
 use syn_sem_name::NameDb;
@@ -46,22 +45,19 @@ pub(crate) fn run_analysis(source_text: &str, known: KnownLibraryConfig) {
 fn parse_source<'cx>(
     ccx: &'cx CommonCx,
     scx: &'cx SyntaxCx<'cx>,
-    file_path: FilePath<'cx>,
+    file_path: Str<'cx>,
     source_text: &str,
-) -> ast::SourceInput<'cx> {
+) -> SourceInput<'cx> {
     let source_text = ccx.intern(source_text);
     scx.parse_file(file_path, source_text, SourceKind::Virtual)
         .expect("bench input should parse");
     parse_stored_source(scx, file_path)
 }
 
-fn parse_stored_source<'cx>(
-    scx: &'cx SyntaxCx<'cx>,
-    file_path: FilePath<'cx>,
-) -> ast::SourceInput<'cx> {
+fn parse_stored_source<'cx>(scx: &'cx SyntaxCx<'cx>, file_path: Str<'cx>) -> SourceInput<'cx> {
     let file = scx
         .lookup_source(file_path)
         .expect("source should be parsed")
         .ast();
-    ast::SourceInput { file_path, file }
+    SourceInput { file_path, file }
 }

@@ -15,7 +15,7 @@ pub use collections::*;
 pub use context::*;
 pub use directed_graph::*;
 
-use any_intern::{Interned, RawInterned};
+use any_intern::Interned;
 use std::{
     collections::{HashMap, HashSet},
     error::Error as StdError,
@@ -41,16 +41,4 @@ pub type FrozenMap<K, V> = elsa::FrozenMap<K, V, fxhash::FxBuildHasher>;
 pub type Set<T> = HashSet<T, fxhash::FxBuildHasher>;
 
 /// String interned in [`CommonCx`].
-pub type InternedStr<'ccx> = Interned<'ccx, str>;
-
-/// Interned absolute or virtual source file path.
-pub type FilePath<'ccx> = InternedStr<'ccx>;
-
-/// Interned source text.
-pub type SourceText<'ccx> = InternedStr<'ccx>;
-
-/// Lifetime-erased interned source text.
-pub type RawSourceText = RawInterned<str>;
-
-/// Interned known library name, such as `core` or `std`.
-pub type LibraryName<'ccx> = InternedStr<'ccx>;
+pub type Str<'ccx> = Interned<'ccx, str>;

@@ -6,7 +6,7 @@ use crate::{
     PathTypeResolution, PrimitiveType, ProjectionDb, ProjectionNormalizationResult,
     ProjectionObligation, ProjectionType, QSelf, Type, TypeId,
 };
-use syn_sem_common::{CommonCx, VecUniqueExt};
+use syn_sem_common::{CommonCx, Str, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name::{DefKind, NameDb, Namespace, ResolveResult};
 
@@ -370,12 +370,7 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         self.insert_expr_type_equality(expr, reference)
     }
 
-    fn derive_field(
-        &mut self,
-        expr: hir::ExprId,
-        base: hir::ExprId,
-        member: syn_sem_name::Name<'cx>,
-    ) -> bool {
+    fn derive_field(&mut self, expr: hir::ExprId, base: hir::ExprId, member: Str<'cx>) -> bool {
         let Some(base_ty) = self.type_relations.type_for_hir_expr(base) else {
             return false;
         };
@@ -457,11 +452,7 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         }
     }
 
-    fn field_type_for_base(
-        &self,
-        base_ty: TypeId,
-        member: syn_sem_name::Name<'cx>,
-    ) -> Option<TypeId> {
+    fn field_type_for_base(&self, base_ty: TypeId, member: Str<'cx>) -> Option<TypeId> {
         let def = self.types.nominal_def(base_ty)?;
         self.hir.items().iter().find_map(|item| {
             if item.def != Some(def) {

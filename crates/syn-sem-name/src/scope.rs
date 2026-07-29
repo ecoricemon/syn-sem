@@ -1,5 +1,5 @@
-use crate::{DefId, Map, Name, Namespace, ScopeId};
-use syn_sem_common::VecUniqueExt;
+use crate::{DefId, Map, Namespace, ScopeId};
+use syn_sem_common::{Str, VecUniqueExt};
 
 /// Lexical scope with namespace-partitioned bindings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,20 +63,20 @@ pub enum ScopeKind {
 /// Namespace-partitioned bindings for a scope.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bindings<'cx> {
-    types: Map<Name<'cx>, Binding>,
-    values: Map<Name<'cx>, Binding>,
-    macros: Map<Name<'cx>, Binding>,
-    lifetimes: Map<Name<'cx>, Binding>,
+    types: Map<Str<'cx>, Binding>,
+    values: Map<Str<'cx>, Binding>,
+    macros: Map<Str<'cx>, Binding>,
+    lifetimes: Map<Str<'cx>, Binding>,
 }
 
 impl<'cx> Bindings<'cx> {
     /// Returns the binding for `name` in `namespace`.
-    pub fn get(&self, namespace: Namespace, name: Name<'cx>) -> Option<&Binding> {
+    pub fn get(&self, namespace: Namespace, name: Str<'cx>) -> Option<&Binding> {
         self.map(namespace).get(&name)
     }
 
     /// Returns the map for `namespace`.
-    pub fn map(&self, namespace: Namespace) -> &Map<Name<'cx>, Binding> {
+    pub fn map(&self, namespace: Namespace) -> &Map<Str<'cx>, Binding> {
         match namespace {
             Namespace::Type => &self.types,
             Namespace::Value => &self.values,
@@ -86,7 +86,7 @@ impl<'cx> Bindings<'cx> {
     }
 
     /// Inserts a definition under `name` in `namespace`.
-    pub(crate) fn insert(&mut self, namespace: Namespace, name: Name<'cx>, def: DefId) {
+    pub(crate) fn insert(&mut self, namespace: Namespace, name: Str<'cx>, def: DefId) {
         self.map_mut(namespace).entry(name).or_default().push(def);
     }
 
@@ -95,7 +95,7 @@ impl<'cx> Bindings<'cx> {
     pub(crate) fn insert_unique(
         &mut self,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
         def: DefId,
     ) -> bool {
         let binding = self.map_mut(namespace).entry(name).or_default();
@@ -103,7 +103,7 @@ impl<'cx> Bindings<'cx> {
     }
 
     /// Returns the mutable map for `namespace`.
-    pub(crate) fn map_mut(&mut self, namespace: Namespace) -> &mut Map<Name<'cx>, Binding> {
+    pub(crate) fn map_mut(&mut self, namespace: Namespace) -> &mut Map<Str<'cx>, Binding> {
         match namespace {
             Namespace::Type => &mut self.types,
             Namespace::Value => &mut self.values,

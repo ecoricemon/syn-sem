@@ -2,6 +2,7 @@
 
 use super::{TypeEqualityFact, TypeRelationDb, TypeSubject};
 use crate::{InferTypes, Type, TypeId};
+use syn_sem_common::Str;
 use syn_sem_hir as hir;
 
 /// Derives binding type equalities from resolved initializer types and pattern structure.
@@ -114,11 +115,7 @@ impl<'a, 'cx> PatTypeDeriver<'a, 'cx> {
         })
     }
 
-    fn field_type(
-        &self,
-        struct_fields: &[hir::FieldId],
-        member: syn_sem_name::Name<'cx>,
-    ) -> Option<TypeId> {
+    fn field_type(&self, struct_fields: &[hir::FieldId], member: Str<'cx>) -> Option<TypeId> {
         struct_fields.iter().find_map(|field| {
             let field = &self.hir[*field];
             if field.name != member {

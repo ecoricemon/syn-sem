@@ -15,16 +15,16 @@ use crate::{
 use std::convert::TryFrom;
 use std::ops::Index;
 use syn_sem_common::{CommonCx, Map, VecUniqueExt};
-use syn_sem_hir as hir;
+use syn_sem_hir::{self as hir, ExprId, Hir};
 use syn_sem_name::{DefId, NameDb};
 
 pub(crate) struct InferDbBuilder<'a, 'cx> {
-    hir: &'a hir::Hir<'cx>,
+    hir: &'a Hir<'cx>,
     names: &'a NameDb<'cx>,
 }
 
 impl<'a, 'cx> InferDbBuilder<'a, 'cx> {
-    pub(crate) fn new(hir: &'a hir::Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
+    pub(crate) fn new(hir: &'a Hir<'cx>, names: &'a NameDb<'cx>) -> Self {
         Self { hir, names }
     }
 
@@ -73,7 +73,7 @@ impl<'cx> InferDb<'cx> {
     /// represented by the expression type derivation phase.
     pub fn analyze(
         ccx: &'cx CommonCx,
-        hir: &hir::Hir<'cx>,
+        hir: &Hir<'cx>,
         names: &NameDb<'cx>,
         const_facts: &InferConstFacts,
     ) -> Self {
@@ -99,7 +99,7 @@ impl<'cx> InferDb<'cx> {
     fn resolve_type_relations(
         &mut self,
         ccx: &'cx CommonCx,
-        hir: &hir::Hir<'cx>,
+        hir: &Hir<'cx>,
         names: &NameDb<'cx>,
         const_facts: &InferConstFacts,
         logic_session: &mut LogicSession<'cx>,
@@ -140,12 +140,12 @@ impl<'cx> InferDb<'cx> {
     }
 
     /// Returns the inference type linked to a HIR type occurrence.
-    pub fn type_for_hir_type(&self, hir_ty_id: hir::TypeId) -> Option<TypeId> {
-        self.types.type_for_hir_type(hir_ty_id)
+    pub fn type_for_hir_type(&self, hir_ty: hir::TypeId) -> Option<TypeId> {
+        self.types.type_for_hir_type(hir_ty)
     }
 
     /// Returns the resolved concrete type linked to a HIR expression occurrence.
-    pub fn type_for_hir_expr(&self, hir_expr: hir::ExprId) -> Option<TypeId> {
+    pub fn type_for_hir_expr(&self, hir_expr: ExprId) -> Option<TypeId> {
         self.type_relations.type_for_hir_expr(hir_expr)
     }
 
@@ -160,9 +160,9 @@ impl<'cx> InferDb<'cx> {
     #[cfg(test)]
     pub(crate) fn shallow_normalized_type_for_hir_type(
         &self,
-        hir_ty_id: hir::TypeId,
+        hir_ty: hir::TypeId,
     ) -> Option<TypeId> {
-        self.type_for_hir_type(hir_ty_id)
+        self.type_for_hir_type(hir_ty)
             .map(|ty| self.shallow_normalized_type(ty))
     }
 
@@ -173,17 +173,17 @@ impl<'cx> InferDb<'cx> {
     #[cfg(test)]
     pub(crate) fn normalized_projection_type_for_hir_type(
         &self,
-        hir_ty_id: hir::TypeId,
+        hir_ty: hir::TypeId,
     ) -> Option<TypeId> {
-        let ty = self.type_for_hir_type(hir_ty_id)?;
+        let ty = self.type_for_hir_type(hir_ty)?;
         self.normalized_projection_type(ty)
     }
 
     /// Returns the recursively normalized inference type linked to a HIR type occurrence.
     ///
     /// This returns `None` when the HIR type occurrence was not lowered.
-    pub fn normalized_type_for_hir_type(&mut self, hir_ty_id: hir::TypeId) -> Option<TypeId> {
-        let ty = self.type_for_hir_type(hir_ty_id)?;
+    pub fn normalized_type_for_hir_type(&mut self, hir_ty: hir::TypeId) -> Option<TypeId> {
+        let ty = self.type_for_hir_type(hir_ty)?;
         Some(self.normalized_type(ty))
     }
 
@@ -455,18 +455,18 @@ impl<'cx> Index<TypeId> for InferDb<'cx> {
 /// constants in a separate phase and feed back only the facts inference needs for a pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InferConstFacts {
-    expr_values: Map<hir::ExprId, InferConstValue>,
+    expr_values: Map<ExprId, InferConstValue>,
     def_values: Map<DefId, InferConstValue>,
 }
 
 impl InferConstFacts {
     /// Records a known const value for a HIR expression.
-    pub fn insert_expr_value(&mut self, expr: hir::ExprId, value: InferConstValue) -> bool {
+    pub fn insert_expr_value(&mut self, expr: ExprId, value: InferConstValue) -> bool {
         self.expr_values.insert(expr, value).is_none()
     }
 
     /// Returns a known const value for a HIR expression.
-    pub fn const_expr_value(&self, expr: hir::ExprId) -> Option<InferConstValue> {
+    pub fn const_expr_value(&self, expr: ExprId) -> Option<InferConstValue> {
         self.expr_values.get(&expr).copied()
     }
 
@@ -481,7 +481,7 @@ impl InferConstFacts {
     }
 
     /// Returns a known integer value converted to the expected integer type.
-    pub fn expect_integer<T>(&self, expr: hir::ExprId) -> Option<T>
+    pub fn expect_integer<T>(&self, expr: ExprId) -> Option<T>
     where
         T: TryFrom<u128>,
     {
@@ -514,15 +514,15 @@ pub struct ConstInt {
 mod tests {
     use crate::*;
     use syn_sem_ast::{self as ast, SourceInput, SourceKind, SyntaxCx};
-    use syn_sem_common::CommonCx;
-    use syn_sem_hir::{self as hir, Hir};
+    use syn_sem_common::{CommonCx, Str};
+    use syn_sem_hir::{self as hir, AssocItemKind, ExprId, Hir, ItemKind, TypeKind, TypeSource};
     use syn_sem_name::{AstNodeId, DefId, NameDb, Namespace, ResolveResult};
 
-    fn infer_ty_ids<'cx>(
+    fn infer_types<'cx>(
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
         source_text: &str,
-    ) -> (hir::Hir<'cx>, InferDb<'cx>) {
+    ) -> (Hir<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
@@ -538,21 +538,21 @@ mod tests {
         ccx: &'cx CommonCx,
         scx: &'cx SyntaxCx<'cx>,
         source_text: &str,
-    ) -> (hir::Hir<'cx>, NameDb<'cx>, InferDb<'cx>) {
+    ) -> (Hir<'cx>, NameDb<'cx>, InferDb<'cx>) {
         let file_path = ccx.intern("test.rs");
         let source_text = ccx.intern(source_text);
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .unwrap();
         let file = scx.lookup_source(file_path).unwrap().ast();
-        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let names = NameDb::build([SourceInput { file_path, file }], [file_path]).unwrap();
         let hir = Hir::build(&names, [SourceInput { file_path, file }]);
         let infer = InferDb::analyze(ccx, &hir, &names, &InferConstFacts::default());
         (hir, names, infer)
     }
 
-    fn root_type_def<'cx>(names: &NameDb<'cx>, name: syn_sem_name::Name<'cx>) -> DefId {
+    fn root_type_def<'cx>(names: &NameDb<'cx>, name: Str<'cx>) -> DefId {
         let ResolveResult::Found(def) =
-            names.resolve_type_path(names.crate_scope(), [name].into_iter())
+            names.resolve_type_path(NameDb::CRATE_SCOPE, [name].into_iter())
         else {
             panic!("expected root type definition");
         };
@@ -563,7 +563,7 @@ mod tests {
     fn const_facts_preserve_integer_primitive_state() {
         // Proves const facts preserve both integer value and primitive type state.
         let mut facts = InferConstFacts::default();
-        let expr = hir::ExprId::new(0);
+        let expr = ExprId::new(0);
         let def = syn_sem_name::DefId::new(0);
         let value = InferConstValue::Int(ConstInt {
             value: 3,
@@ -578,7 +578,7 @@ mod tests {
     }
 
     fn struct_field_path_type<'a, 'cx>(
-        hir: &'a hir::Hir<'cx>,
+        hir: &'a Hir<'cx>,
         infer: &'a InferDb<'cx>,
     ) -> &'a PathType<'cx> {
         let id = struct_field_type_id(hir, infer);
@@ -588,29 +588,29 @@ mod tests {
         path
     }
 
-    fn struct_field_type_id<'cx>(hir: &hir::Hir<'cx>, infer: &InferDb<'cx>) -> TypeId {
+    fn struct_field_type_id<'cx>(hir: &Hir<'cx>, infer: &InferDb<'cx>) -> TypeId {
         let hir_type = hir
             .types()
             .iter()
-            .find(|source| matches!(source.source, hir::TypeSource::StructField))
+            .find(|source| matches!(source.source, TypeSource::StructField))
             .unwrap();
         infer.type_for_hir_type(hir_type.id).unwrap()
     }
 
-    fn struct_field_hir_types<'cx>(hir: &hir::Hir<'cx>, struct_name: &str) -> Vec<hir::TypeId> {
+    fn struct_field_hir_types<'cx>(hir: &Hir<'cx>, struct_name: &str) -> Vec<hir::TypeId> {
         let item = hir
             .items()
             .iter()
             .find(|item| item.name.is_some_and(|name| name.as_ref() == struct_name))
             .expect("struct item should be represented");
-        let hir::ItemKind::Struct { fields, .. } = &item.kind else {
+        let ItemKind::Struct { fields, .. } = &item.kind else {
             panic!("item should be represented as a struct");
         };
         fields.iter().map(|field| hir[*field].ty).collect()
     }
 
     fn struct_field_path_resolution<'cx>(
-        hir: &hir::Hir<'cx>,
+        hir: &Hir<'cx>,
         infer: &InferDb<'cx>,
     ) -> PathTypeResolution {
         struct_field_path_type(hir, infer).resolution.clone()
@@ -621,7 +621,7 @@ mod tests {
         // Proves single-segment Rust primitive names lower to primitive inference types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_ty_ids(
+        let (hir, infer) = infer_types(
             &ccx,
             &scx,
             "fn f(a: bool, b: char, c: str, d: i32, e: usize, f: f64) {}",
@@ -651,12 +651,12 @@ mod tests {
         // Proves qualified primitive-looking names remain unresolved path types.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: crate::usize }");
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: crate::usize }");
 
         let hir_type = hir
             .types()
             .iter()
-            .find(|source| matches!(source.source, hir::TypeSource::StructField))
+            .find(|source| matches!(source.source, TypeSource::StructField))
             .unwrap();
         let id = infer.type_for_hir_type(hir_type.id).unwrap();
         let Type::Path(path) = &infer[id] else {
@@ -674,7 +674,7 @@ mod tests {
         // Proves separate `_` occurrences receive distinct inference type ids.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { first: _, second: _ }");
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { first: _, second: _ }");
 
         let field_ty_ids = struct_field_hir_types(&hir, "S");
         let [first, second] = field_ty_ids.as_slice() else {
@@ -696,7 +696,7 @@ mod tests {
         // Proves unresolved paths are not structurally interned across source scopes.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_, mut infer) = infer_ty_ids(&ccx, &scx, "struct S;");
+        let (_, mut infer) = infer_types(&ccx, &scx, "struct S;");
         let unresolved = || {
             Type::Path(PathType {
                 qself: None,
@@ -724,7 +724,7 @@ mod tests {
         // Proves container types can share when their inner types are deeply shareable.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, mut infer) = infer_ty_ids(&ccx, &scx, "struct S { first: u32, second: u32 }");
+        let (hir, mut infer) = infer_types(&ccx, &scx, "struct S { first: u32, second: u32 }");
 
         let field_ty_ids = struct_field_hir_types(&hir, "S");
         let [first, second] = field_ty_ids.as_slice() else {
@@ -838,7 +838,7 @@ mod tests {
             .and_then(|binding| binding.single())
             .expect("generic type should have a definition");
         let ResolveResult::Found(trait_def) = names.resolve_type_path(
-            names.crate_scope(),
+            NameDb::CRATE_SCOPE,
             [ccx.intern("crate"), a, b, trait_name].into_iter(),
         ) else {
             panic!("trait path should resolve");
@@ -1051,7 +1051,12 @@ mod tests {
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
         let file_path = ccx.intern("test.rs");
-        let source_text = "struct Vec; trait Iterator { type Item; } impl Iterator for Vec { type Item = u32; } struct Output { field: <Vec as Iterator>::Item }";
+        let source_text = "
+            struct Vec;
+            trait Iterator { type Item; }
+            impl Iterator for Vec { type Item = u32; }
+            struct Output { field: <Vec as Iterator>::Item }
+        ";
         let source_text = ccx.intern(source_text);
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .unwrap();
@@ -1073,7 +1078,7 @@ mod tests {
             panic!("expected impl associated type");
         };
 
-        let names = NameDb::build([ast::SourceInput { file_path, file }], [file_path]).unwrap();
+        let names = NameDb::build([SourceInput { file_path, file }], [file_path]).unwrap();
         let vec_def = names
             .def_for_ast_node(AstNodeId::from_ref(&file.items[0]))
             .expect("Vec should have a definition");
@@ -1092,7 +1097,7 @@ mod tests {
             panic!("expected one impl associated type");
         };
 
-        let hir::ItemKind::Impl {
+        let ItemKind::Impl {
             trait_,
             self_,
             items,
@@ -1107,7 +1112,7 @@ mod tests {
         };
         assert!(matches!(
             hir[*assoc_item].kind,
-            hir::AssocItemKind::ImplType { .. }
+            AssocItemKind::ImplType { .. }
         ));
         assert_eq!(hir[*assoc_item].def, Some(impl_item_def));
         assert_eq!(impl_assoc_type.assoc, trait_assoc_def);
@@ -2225,20 +2230,20 @@ mod tests {
         // Proves array length lowering preserves the source HIR expression id.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: [u8; 3] }");
-        let hir_ty_id = struct_field_hir_types(&hir, "S")[0];
-        let infer_ty_id = infer.type_for_hir_type(hir_ty_id).unwrap();
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: [u8; 3] }");
+        let hir_ty = struct_field_hir_types(&hir, "S")[0];
+        let infer_ty = infer.type_for_hir_type(hir_ty).unwrap();
 
-        let Type::Array { len, .. } = &infer[infer_ty_id] else {
+        let Type::Array { len, .. } = &infer[infer_ty] else {
             panic!("array field should lower to an array type");
         };
         let ArrayLen::Expr(expr) = len else {
             panic!("source array type length should remain a HIR expression");
         };
-        let hir::TypeKind::Array {
+        let TypeKind::Array {
             len: hir::ArrayLen::Expr(hir_expr),
             ..
-        } = hir[hir_ty_id].kind
+        } = hir[hir_ty].kind
         else {
             panic!("HIR field should be an array type");
         };
@@ -2250,15 +2255,15 @@ mod tests {
         // Proves type lowering preserves const generic literal arguments.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (hir, infer) = infer_ty_ids(
+        let (hir, infer) = infer_types(
             &ccx,
             &scx,
             "struct Array<T, const N: usize> { field: T } struct S { field: Array<u8, 3> }",
         );
-        let hir_ty_id = struct_field_hir_types(&hir, "S")[0];
-        let infer_ty_id = infer.type_for_hir_type(hir_ty_id).unwrap();
+        let hir_ty = struct_field_hir_types(&hir, "S")[0];
+        let infer_ty = infer.type_for_hir_type(hir_ty).unwrap();
 
-        let Type::Path(path) = &infer[infer_ty_id] else {
+        let Type::Path(path) = &infer[infer_ty] else {
             panic!("field should lower to a path type");
         };
         let [segment] = path.path.segments.as_slice() else {
@@ -2277,7 +2282,7 @@ mod tests {
         // Proves type lowering preserves associated const arguments on trait bounds.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_hir, infer) = infer_ty_ids(
+        let (_hir, infer) = infer_types(
             &ccx,
             &scx,
             r#"
@@ -2307,7 +2312,7 @@ mod tests {
         // Proves type lowering preserves associated type constraint bounds.
         let ccx = CommonCx::default();
         let scx = SyntaxCx::new(&ccx);
-        let (_hir, infer) = infer_ty_ids(
+        let (_hir, infer) = infer_types(
             &ccx,
             &scx,
             r#"
@@ -2345,7 +2350,7 @@ mod tests {
             "struct Maybe; enum Maybe {} struct S { field: Maybe }",
         );
         let defs = names
-            .binding(names.crate_scope(), Namespace::Type, maybe)
+            .binding(NameDb::CRATE_SCOPE, Namespace::Type, maybe)
             .expect("duplicate definitions should have a binding")
             .iter()
             .collect::<Vec<_>>();
@@ -2355,7 +2360,7 @@ mod tests {
             PathTypeResolution::Ambiguous(defs)
         );
 
-        let (hir, infer) = infer_ty_ids(&ccx, &scx, "struct S { field: Missing }");
+        let (hir, infer) = infer_types(&ccx, &scx, "struct S { field: Missing }");
 
         assert_eq!(
             struct_field_path_resolution(&hir, &infer),

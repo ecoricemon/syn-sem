@@ -1,6 +1,7 @@
-use crate::{DefId, Name, Namespace, ScopeId};
+use crate::{DefId, Namespace, ScopeId};
 use std::marker::PhantomData;
 use syn_sem_ast::{AstNode, AstNodeKind};
+use syn_sem_common::Str;
 
 /// One declaration or binding known to the name resolver.
 ///
@@ -67,7 +68,7 @@ pub struct Def<'cx> {
     /// Interned declared name, when this definition has one.
     ///
     /// Unnamed constructs such as `impl` blocks leave this unset.
-    pub name: Option<Name<'cx>>,
+    pub name: Option<Str<'cx>>,
 
     /// Kind of declaration or binding represented by this definition.
     pub kind: DefKind,

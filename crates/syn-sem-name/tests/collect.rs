@@ -1,7 +1,7 @@
-use syn_sem_ast::{self as ast, SourceKind};
-use syn_sem_common::CommonCx;
+use syn_sem_ast::{Item, SourceInput, SourceKind, SyntaxCx};
+use syn_sem_common::{CommonCx, Str};
 use syn_sem_name::{
-    AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, Name, NameDb, Namespace,
+    AstNodeId, DefId, DefKind, ImportId, ImportKind, ImportStatus, NameDb, Namespace,
     ResolveResult, ScopeId, ScopeKind,
 };
 
@@ -12,42 +12,43 @@ struct TestCx {
 impl TestCx {
     fn parse<'cx>(
         &'cx self,
-        scx: &'cx ast::SyntaxCx<'cx>,
+        scx: &'cx SyntaxCx<'cx>,
         file_path: &str,
         source_text: &str,
-    ) -> ast::SourceInput<'cx> {
+    ) -> SourceInput<'cx> {
         let file_path = self.common.intern(file_path);
         let source_text = self.common.intern(source_text);
         scx.parse_file(file_path, source_text, SourceKind::Virtual)
             .unwrap();
-        ast::SourceInput {
+        SourceInput {
             file_path,
             file: scx.lookup_source(file_path).unwrap().ast(),
         }
     }
 }
 
-fn root_type<'cx>(db: &NameDb<'cx>, name: Name<'cx>) -> DefId {
-    let ResolveResult::Found(def) = db.resolve_type_path(db.crate_scope(), [name].into_iter())
+fn root_type<'cx>(db: &NameDb<'cx>, name: Str<'cx>) -> DefId {
+    let ResolveResult::Found(def) = db.resolve_type_path(NameDb::CRATE_SCOPE, [name].into_iter())
     else {
         panic!("expected root type path {name:?} to resolve");
     };
     def
 }
 
-fn path_type<'cx>(db: &NameDb<'cx>, path: impl IntoIterator<Item = Name<'cx>>) -> DefId {
+fn path_type<'cx>(db: &NameDb<'cx>, path: impl IntoIterator<Item = Str<'cx>>) -> DefId {
     let path = path.into_iter().collect::<Vec<_>>();
-    let ResolveResult::Found(def) = db.resolve_type_path(db.crate_scope(), path.into_iter()) else {
+    let ResolveResult::Found(def) = db.resolve_type_path(NameDb::CRATE_SCOPE, path.into_iter())
+    else {
         panic!("expected type path to resolve");
     };
     def
 }
 
-fn direct_type_binding<'cx>(db: &NameDb<'cx>, scope: ScopeId, name: Name<'cx>) -> Option<DefId> {
+fn direct_type_binding<'cx>(db: &NameDb<'cx>, scope: ScopeId, name: Str<'cx>) -> Option<DefId> {
     direct_binding(db, scope, Namespace::Type, name)
 }
 
-fn direct_value_binding<'cx>(db: &NameDb<'cx>, scope: ScopeId, name: Name<'cx>) -> Option<DefId> {
+fn direct_value_binding<'cx>(db: &NameDb<'cx>, scope: ScopeId, name: Str<'cx>) -> Option<DefId> {
     direct_binding(db, scope, Namespace::Value, name)
 }
 
@@ -55,19 +56,19 @@ fn direct_binding<'cx>(
     db: &NameDb<'cx>,
     scope: ScopeId,
     namespace: Namespace,
-    name: Name<'cx>,
+    name: Str<'cx>,
 ) -> Option<DefId> {
     db.binding(scope, namespace, name)
         .and_then(|binding| binding.iter().next())
 }
 
-fn module_scope<'cx>(db: &NameDb<'cx>, parent: ScopeId, name: Name<'cx>) -> ScopeId {
+fn module_scope<'cx>(db: &NameDb<'cx>, parent: ScopeId, name: Str<'cx>) -> ScopeId {
     let def = direct_type_binding(db, parent, name).expect("expected module binding");
     assert_eq!(db[def].kind, DefKind::Module);
     db.def_path_scope(def).unwrap()
 }
 
-fn import_for<'cx>(db: &NameDb<'cx>, scope: ScopeId, source_path: &[Name<'cx>]) -> ImportId {
+fn import_for<'cx>(db: &NameDb<'cx>, scope: ScopeId, source_path: &[Str<'cx>]) -> ImportId {
     let mut imports = db
         .import_ids()
         .filter(|&import| db[import].scope == scope && db[import].source_path == source_path);
@@ -83,7 +84,7 @@ fn follow_aliases_kind<'cx>(
     db: &NameDb<'cx>,
     scope: ScopeId,
     namespace: Namespace,
-    name: Name<'cx>,
+    name: Str<'cx>,
 ) -> Option<DefKind> {
     direct_binding(db, scope, namespace, name).map(|def| db[db.follow_aliases(def)].kind)
 }
@@ -97,7 +98,7 @@ mod modules {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -167,7 +168,7 @@ mod imports {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -178,7 +179,7 @@ mod imports {
         );
 
         let db = NameDb::build([entry], [entry.file_path]).unwrap();
-        let crate_scope = db.crate_scope();
+        let crate_scope = NameDb::CRATE_SCOPE;
         let a = tcx.common.intern("a");
         let b = tcx.common.intern("b");
         let c = tcx.common.intern("c");
@@ -209,14 +210,14 @@ mod imports {
         assert!(db[absolute_renamed].is_absolute);
         assert!(db[absolute_glob].is_absolute);
 
-        let ast::Item::Use(relative_item) = &entry.file.items[0] else {
+        let Item::Use(relative_item) = &entry.file.items[0] else {
             panic!("expected use item");
         };
         assert_eq!(
             db.imports_for_ast_node(AstNodeId::from_ref(relative_item)),
             &[single, renamed, glob]
         );
-        let ast::Item::Use(absolute_item) = &entry.file.items[1] else {
+        let Item::Use(absolute_item) = &entry.file.items[1] else {
             panic!("expected absolute use item");
         };
         assert_eq!(
@@ -235,7 +236,7 @@ mod visibility {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -261,7 +262,7 @@ mod visibility {
         );
 
         let db = NameDb::build([entry], [entry.file_path]).unwrap();
-        let crate_scope = db.crate_scope();
+        let crate_scope = NameDb::CRATE_SCOPE;
         let a_scope = module_scope(&db, crate_scope, tcx.common.intern("a"));
         let child_scope = module_scope(&db, a_scope, tcx.common.intern("child"));
         let b_scope = module_scope(&db, crate_scope, tcx.common.intern("b"));
@@ -274,9 +275,9 @@ mod visibility {
         let in_a = direct_type_binding(&db, a_scope, tcx.common.intern("InA")).unwrap();
         let private = direct_type_binding(&db, a_scope, tcx.common.intern("Private")).unwrap();
 
-        assert_eq!(db[public].visibility, db.root_scope());
-        assert_eq!(db[crate_visible].visibility, db.crate_scope());
-        assert_eq!(db[super_visible].visibility, db.crate_scope());
+        assert_eq!(db[public].visibility, NameDb::ROOT_SCOPE);
+        assert_eq!(db[crate_visible].visibility, NameDb::CRATE_SCOPE);
+        assert_eq!(db[super_visible].visibility, NameDb::CRATE_SCOPE);
         assert_eq!(db[in_a].visibility, a_scope);
         assert_eq!(db[private].visibility, a_scope);
 
@@ -328,7 +329,7 @@ mod visibility {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -349,7 +350,7 @@ mod visibility {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -373,7 +374,7 @@ mod members {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -399,6 +400,7 @@ mod members {
 
 mod scopes {
     use super::*;
+    use syn_sem_ast::{GenericParam, Pat, Stmt};
 
     #[test]
     fn collects_def_scope_links_for_items_and_members() {
@@ -406,7 +408,7 @@ mod scopes {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -438,7 +440,7 @@ mod scopes {
         );
 
         let db = NameDb::build([entry], [entry.file_path]).unwrap();
-        let crate_scope = db.crate_scope();
+        let crate_scope = NameDb::CRATE_SCOPE;
 
         let s = direct_type_binding(&db, crate_scope, tcx.common.intern("S")).unwrap();
         assert_eq!(db[s].kind, DefKind::Struct);
@@ -483,9 +485,9 @@ mod scopes {
             .file
             .items
             .iter()
-            .find(|item| matches!(item, ast::Item::Impl(_)))
+            .find(|item| matches!(item, Item::Impl(_)))
             .expect("expected impl item");
-        let ast::Item::Impl(impl_item_data) = impl_item else {
+        let Item::Impl(impl_item_data) = impl_item else {
             unreachable!()
         };
         let impl_def = db
@@ -519,7 +521,7 @@ mod scopes {
         let tcx = TestCx {
             common: CommonCx::default(),
         };
-        let scx = ast::SyntaxCx::new(&tcx.common);
+        let scx = SyntaxCx::new(&tcx.common);
         let entry = tcx.parse(
             &scx,
             "src/lib.rs",
@@ -529,10 +531,10 @@ mod scopes {
         }
         "#,
         );
-        let ast::Item::Fn(item) = &entry.file.items[0] else {
+        let Item::Fn(item) = &entry.file.items[0] else {
             panic!("expected function item");
         };
-        let [ast::GenericParam::Type(type_param), ast::GenericParam::Const(const_param)] =
+        let [GenericParam::Type(type_param), GenericParam::Const(const_param)] =
             item.sig.generics.params
         else {
             panic!("expected type and const generic parameters");
@@ -540,20 +542,20 @@ mod scopes {
         let type_param_node = AstNodeId::from_ref(type_param);
         let const_param_node = AstNodeId::from_ref(const_param);
         let block_node = AstNodeId::from_ref(&item.block);
-        let ast::Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
+        let Pat::Ident(x_pat) = item.sig.params[1].pat.pat else {
             panic!("expected parameter ident pattern");
         };
-        let ast::Stmt::Local(local) = &item.block.stmts[0] else {
+        let Stmt::Local(local) = &item.block.stmts[0] else {
             panic!("expected local statement");
         };
-        let ast::Pat::Ident(y_pat) = &local.pat else {
+        let Pat::Ident(y_pat) = &local.pat else {
             panic!("expected local ident pattern");
         };
 
         let db = NameDb::build([entry], [entry.file_path]).unwrap();
         let f = direct_binding(
             &db,
-            db.crate_scope(),
+            NameDb::CRATE_SCOPE,
             Namespace::Value,
             tcx.common.intern("f"),
         )

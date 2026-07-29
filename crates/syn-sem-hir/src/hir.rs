@@ -5,8 +5,8 @@ use crate::{
     SignatureId, StmtId, TypeId, VariantId,
 };
 use syn_sem_ast::{self as ast, SourceInput};
-use syn_sem_common::{FilePath, InternedStr};
-use syn_sem_name::{DefId, ImportId, Name, NameDb, ScopeId};
+use syn_sem_common::Str;
+use syn_sem_name::{DefId, ImportId, NameDb, ScopeId};
 
 /// HIR container produced for upper semantic phases.
 #[derive(Debug, Default)]
@@ -246,7 +246,7 @@ pub struct File<'cx> {
     /// File id in HIR.
     pub id: FileId,
     /// Interned file path.
-    pub file_path: FilePath<'cx>,
+    pub file_path: Str<'cx>,
     /// Top-level represented items in source order.
     pub items: Vec<ItemId>,
 }
@@ -257,7 +257,7 @@ pub struct Item<'cx> {
     /// Item id in HIR.
     pub id: ItemId,
     /// Item name, when the item has one source-level name.
-    pub name: Option<Name<'cx>>,
+    pub name: Option<Str<'cx>>,
     /// Item visibility.
     pub visibility: Visibility<'cx>,
     /// Definition linked from the current name-resolution data, if available.
@@ -372,7 +372,7 @@ pub enum GenericParam<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParam<'cx> {
     /// Parameter name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Default type, when present.
     pub default: Option<TypeId>,
 }
@@ -381,7 +381,7 @@ pub struct TypeParam<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstParam<'cx> {
     /// Parameter name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Parameter type.
     pub ty: TypeId,
 }
@@ -456,7 +456,7 @@ pub enum PatKind<'cx> {
     /// Identifier binding pattern.
     Ident {
         /// Bound identifier.
-        name: Name<'cx>,
+        name: Str<'cx>,
         /// Local definition introduced by this binding pattern.
         def: Option<DefId>,
         /// Whether the binding uses `ref`.
@@ -505,7 +505,7 @@ pub enum PatKind<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatStructField<'cx> {
     /// Field member being matched.
-    pub member: Name<'cx>,
+    pub member: Str<'cx>,
     /// Pattern for the field value.
     pub pat: PatId,
 }
@@ -529,7 +529,7 @@ pub struct Field<'cx> {
     /// Field id in HIR.
     pub id: FieldId,
     /// Field name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Field visibility.
     pub visibility: Visibility<'cx>,
     /// Field type.
@@ -555,7 +555,7 @@ pub struct Variant<'cx> {
     /// Definition linked from the current name-resolution data, if available.
     pub def: Option<DefId>,
     /// Variant name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Represented payload fields.
     pub fields: Vec<FieldId>,
     /// Discriminant expression, if present.
@@ -568,7 +568,7 @@ pub struct AssocItem<'cx> {
     /// Associated item id in HIR.
     pub id: AssocItemId,
     /// Associated item name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Definition linked from the current name-resolution data, if available.
     pub def: Option<DefId>,
     /// Source-shaped associated item payload.
@@ -638,7 +638,7 @@ pub struct VisibilityPath<'cx> {
     /// Whether the source path starts with an absolute-path separator (`::`).
     pub is_absolute: bool,
     /// Path segment names in source order.
-    pub segments: Vec<Name<'cx>>,
+    pub segments: Vec<Str<'cx>>,
 }
 
 impl<'cx> VisibilityPath<'cx> {
@@ -818,7 +818,7 @@ pub enum ExprKind<'cx> {
         /// Base expression.
         base: ExprId,
         /// Field member name or tuple index.
-        member: Name<'cx>,
+        member: Str<'cx>,
     },
     /// Indexing expression.
     Index {
@@ -834,7 +834,7 @@ pub enum ExprKind<'cx> {
         /// Receiver expression.
         receiver: ExprId,
         /// Method name.
-        method: Name<'cx>,
+        method: Str<'cx>,
         /// Explicit generic arguments supplied with turbofish syntax.
         generic_args: Option<Vec<GenericArg<'cx>>>,
         /// Method arguments.
@@ -980,7 +980,7 @@ impl From<ast::UnOp> for UnaryOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExprStructField<'cx> {
     /// Field member being initialized.
-    pub member: Name<'cx>,
+    pub member: Str<'cx>,
     /// Initializer expression.
     pub expr: ExprId,
 }
@@ -1065,7 +1065,7 @@ pub struct QSelf<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathSegment<'cx> {
     /// Segment name.
-    pub name: Name<'cx>,
+    pub name: Str<'cx>,
     /// Generic arguments on this segment.
     pub args: Vec<GenericArg<'cx>>,
 }
@@ -1084,21 +1084,21 @@ pub enum GenericArg<'cx> {
     /// Associated type equality.
     AssocType {
         /// Associated type name.
-        name: Name<'cx>,
+        name: Str<'cx>,
         /// Assigned type.
         ty: TypeId,
     },
     /// Associated const equality.
     AssocConst {
         /// Associated const name.
-        name: Name<'cx>,
+        name: Str<'cx>,
         /// Assigned const value.
         value: ConstArg<'cx>,
     },
     /// Associated type constraint.
     Constraint {
         /// Associated type name.
-        name: Name<'cx>,
+        name: Str<'cx>,
         /// Source bounds.
         bounds: Vec<TypeParamBound<'cx>>,
     },
@@ -1144,18 +1144,18 @@ pub enum Lit<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LitInt<'cx> {
     /// Normalized base-10 digits.
-    pub digits: InternedStr<'cx>,
+    pub digits: Str<'cx>,
     /// Primitive suffix text, such as `usize`, when present.
-    pub suffix: InternedStr<'cx>,
+    pub suffix: Str<'cx>,
 }
 
 /// HIR-native floating-point literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LitFloat<'cx> {
     /// Normalized base-10 digits.
-    pub digits: InternedStr<'cx>,
+    pub digits: Str<'cx>,
     /// Primitive suffix text, such as `f32`, when present.
-    pub suffix: InternedStr<'cx>,
+    pub suffix: Str<'cx>,
 }
 
 /// Source role for a HIR type occurrence.

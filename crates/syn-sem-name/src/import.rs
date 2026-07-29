@@ -1,4 +1,5 @@
-use crate::{ImportId, Name, Origin, ScopeId};
+use crate::{ImportId, Origin, ScopeId};
+use syn_sem_common::Str;
 
 /// Import declaration collected during name resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +11,7 @@ pub struct Import<'cx> {
     pub scope: ScopeId,
 
     /// Path segments naming the import target.
-    pub source_path: Vec<Name<'cx>>,
+    pub source_path: Vec<Str<'cx>>,
 
     /// Whether the source import path starts with an absolute-path separator (`::`).
     pub is_absolute: bool,
@@ -37,7 +38,7 @@ pub enum ImportKind<'cx> {
     /// Imports one named target under a different local name.
     ///
     /// For example, `use foo::Bar as Baz;` stores `Baz` here.
-    Rename(Name<'cx>),
+    Rename(Str<'cx>),
 
     /// Imports all public names from the target.
     Glob,

@@ -1,10 +1,10 @@
 use crate::{
     AstCollector, AstNodeId, Binding, Def, DefId, DefKind, DefScopes, Import, ImportId, ImportKind,
-    ImportStatus, Map, Name, Namespace, Origin, Scope, ScopeId, ScopeKind,
+    ImportStatus, Map, Namespace, Origin, Scope, ScopeId, ScopeKind,
 };
 use std::ops::{Index, IndexMut};
 use syn_sem_ast::SourceInput;
-use syn_sem_common::{FilePath, Result};
+use syn_sem_common::{Result, Str};
 
 /// Name-resolution database.
 #[derive(Debug, Clone)]
@@ -18,9 +18,15 @@ pub struct NameDb<'cx> {
 }
 
 impl<'cx> NameDb<'cx> {
+    /// Visibility root containing every crate visibility domain.
+    pub const ROOT_SCOPE: ScopeId = ScopeId::new(0);
+
+    /// Scope used as the root of the current crate.
+    pub const CRATE_SCOPE: ScopeId = ScopeId::new(1);
+
     pub fn build(
         files: impl IntoIterator<Item = SourceInput<'cx>>,
-        roots: impl IntoIterator<Item = FilePath<'cx>>,
+        roots: impl IntoIterator<Item = Str<'cx>>,
     ) -> Result<Self> {
         let mut this = NameDb::default();
         AstCollector {
@@ -33,16 +39,6 @@ impl<'cx> NameDb<'cx> {
         .collect_roots(roots)?;
         this.resolve_imports();
         Ok(this)
-    }
-
-    /// Returns the synthetic visibility root containing every crate visibility domain.
-    pub const fn root_scope(&self) -> ScopeId {
-        ScopeId::new(0)
-    }
-
-    /// Returns the scope used as the root of the current crate.
-    pub const fn crate_scope(&self) -> ScopeId {
-        ScopeId::new(1)
     }
 
     /// Returns the number of collected imports.
@@ -108,7 +104,7 @@ impl<'cx> NameDb<'cx> {
         &self,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
     ) -> Option<&Binding> {
         self[scope].bindings.get(namespace, name)
     }
@@ -117,7 +113,7 @@ impl<'cx> NameDb<'cx> {
     ///
     /// For example, `member(owner = Iterator, namespace = Type, name = Item)` checks the
     /// path-reachable members of `Iterator` for an associated type named `Item`.
-    pub fn member(&self, owner: DefId, namespace: Namespace, name: Name<'cx>) -> ResolveResult {
+    pub fn member(&self, owner: DefId, namespace: Namespace, name: Str<'cx>) -> ResolveResult {
         let owner = self.follow_aliases(owner);
         let Some(path_scope) = self[owner].scopes.path else {
             return ResolveResult::NotFound;
@@ -155,7 +151,7 @@ impl<'cx> NameDb<'cx> {
         &mut self,
         parent_scope: ScopeId,
         kind: DefKind,
-        name: Option<Name<'cx>>,
+        name: Option<Str<'cx>>,
         visibility: ScopeId,
         origin: Origin<'cx>,
     ) -> DefId {
@@ -174,7 +170,7 @@ impl<'cx> NameDb<'cx> {
         &mut self,
         parent_scope: ScopeId,
         kind: DefKind,
-        name: Option<Name<'cx>>,
+        name: Option<Str<'cx>>,
         namespaces: impl Iterator<Item = Namespace>,
         visibility: ScopeId,
         origin: Origin<'cx>,
@@ -211,7 +207,7 @@ impl<'cx> NameDb<'cx> {
     pub(crate) fn add_import(
         &mut self,
         scope: ScopeId,
-        source_path: Vec<Name<'cx>>,
+        source_path: Vec<Str<'cx>>,
         is_absolute: bool,
         kind: ImportKind<'cx>,
         visibility: ScopeId,
@@ -322,7 +318,7 @@ impl<'cx> NameDb<'cx> {
     pub fn resolve_type_path(
         &self,
         scope: ScopeId,
-        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+        mut path: impl ExactSizeIterator<Item = Str<'cx>>,
     ) -> ResolveResult {
         if path.len() == 1 {
             let name = path.next().unwrap();
@@ -367,7 +363,7 @@ impl<'cx> NameDb<'cx> {
     pub fn resolve_value_path(
         &self,
         scope: ScopeId,
-        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+        mut path: impl ExactSizeIterator<Item = Str<'cx>>,
     ) -> ResolveResult {
         if path.len() == 1 {
             let name = path.next().unwrap();
@@ -406,7 +402,7 @@ impl<'cx> NameDb<'cx> {
     fn get_or_insert_import_def(
         &mut self,
         parent_scope: ScopeId,
-        name: Option<Name<'cx>>,
+        name: Option<Str<'cx>>,
         visibility: ScopeId,
         origin: Origin<'cx>,
         target: DefId,
@@ -437,7 +433,7 @@ impl<'cx> NameDb<'cx> {
     #[allow(clippy::too_many_arguments)]
     fn push_def(
         &mut self,
-        name: Option<Name<'cx>>,
+        name: Option<Str<'cx>>,
         kind: DefKind,
         parent_scope: ScopeId,
         scopes: DefScopes,
@@ -474,7 +470,7 @@ impl<'cx> NameDb<'cx> {
         &mut self,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
         def: DefId,
     ) -> bool {
         self[scope].bindings.insert_unique(namespace, name, def)
@@ -520,7 +516,7 @@ impl<'cx> NameDb<'cx> {
         &self,
         mut scope: ScopeId,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
     ) -> ResolveResult {
         loop {
             if let Some(binding) = self[scope].bindings.get(namespace, name) {
@@ -726,7 +722,7 @@ impl<'cx> NameDb<'cx> {
         &self,
         scope: ScopeId,
         is_absolute: bool,
-        mut path: impl ExactSizeIterator<Item = Name<'cx>>,
+        mut path: impl ExactSizeIterator<Item = Str<'cx>>,
     ) -> CandidateResolution {
         if path.len() == 0 {
             return CandidateResolution::NotFound;
@@ -749,7 +745,7 @@ impl<'cx> NameDb<'cx> {
 
             match segment.as_ref() {
                 "crate" if index == 0 => {
-                    current_scope = self.crate_scope();
+                    current_scope = NameDb::CRATE_SCOPE;
                     current_def = None;
                     index += 1;
                     continue;
@@ -823,7 +819,7 @@ impl<'cx> NameDb<'cx> {
     fn resolve_name_in_all_namespaces(
         &self,
         scope: ScopeId,
-        name: Name<'cx>,
+        name: Str<'cx>,
         is_lexical: bool,
     ) -> CandidateResolution {
         let mut defs = Vec::new();
@@ -854,7 +850,7 @@ impl<'cx> NameDb<'cx> {
         &self,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
         is_lexical: bool,
     ) -> CandidateResolution {
         if is_lexical {
@@ -910,8 +906,8 @@ impl<'cx> NameDb<'cx> {
 impl Default for NameDb<'_> {
     /// Creates a name database with synthetic visibility-root and crate scopes.
     fn default() -> Self {
-        let root_scope = Scope::new(ScopeId::new(0), ScopeKind::Root, None);
-        let crate_scope = Scope::new(ScopeId::new(1), ScopeKind::Crate, Some(root_scope.id));
+        let root_scope = Scope::new(Self::ROOT_SCOPE, ScopeKind::Root, None);
+        let crate_scope = Scope::new(Self::CRATE_SCOPE, ScopeKind::Crate, Some(root_scope.id));
 
         Self {
             scopes: vec![root_scope, crate_scope],
@@ -945,7 +941,7 @@ enum ImportResolve {
 
 enum ImportLocalName<'cx> {
     /// Import introduces this local binding name.
-    Name(Name<'cx>),
+    Name(Str<'cx>),
 
     /// Import introduces no single local binding, such as a glob or underscore import.
     NoBinding,
@@ -1040,7 +1036,7 @@ mod tests {
             let x = ccx.intern("x");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let body_scope = db.add_scope(ScopeKind::Function, Some(crate_scope));
 
             let outer = db.add_def(
@@ -1082,7 +1078,7 @@ mod tests {
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let generic_scope = db.add_scope(ScopeKind::Generic, Some(crate_scope));
             let body_scope = db.add_scope(ScopeKind::Function, Some(generic_scope));
 
@@ -1121,7 +1117,7 @@ mod tests {
             let local = ccx.intern("Local");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let body_scope = db.add_scope(ScopeKind::Function, Some(crate_scope));
             let block_scope = db.add_scope(ScopeKind::Block, Some(body_scope));
 
@@ -1163,7 +1159,7 @@ mod tests {
             let t = ccx.intern("T");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let type_param = db.add_def(
                 crate_scope,
                 DefKind::GenericType,
@@ -1203,7 +1199,7 @@ mod tests {
             let n = ccx.intern("N");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let generic_scope = db.add_scope(ScopeKind::Generic, Some(crate_scope));
 
             let const_param = db.add_def(
@@ -1244,7 +1240,7 @@ mod tests {
             let item = ccx.intern("Item");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let iterator_def = db.add_def(
                 crate_scope,
                 DefKind::Trait,
@@ -1280,7 +1276,7 @@ mod tests {
             let item = ccx.intern("Item");
 
             let mut db = NameDb::default();
-            let crate_scope = db.crate_scope();
+            let crate_scope = NameDb::CRATE_SCOPE;
             let unit_def = db.add_def(
                 crate_scope,
                 DefKind::Struct,
@@ -1299,7 +1295,7 @@ mod tests {
     fn module<'cx>(
         db: &mut NameDb<'cx>,
         parent: ScopeId,
-        name: Name<'cx>,
+        name: Str<'cx>,
         visibility: ScopeId,
     ) -> (DefId, ScopeId) {
         let def = db.add_def(
@@ -1318,7 +1314,7 @@ mod tests {
         db: &NameDb<'cx>,
         scope: ScopeId,
         namespace: Namespace,
-        name: Name<'cx>,
+        name: Str<'cx>,
     ) -> DefKind {
         let ResolveResult::Found(def) = db.resolve_lexical(scope, namespace, name) else {
             panic!("expected {name:?} to resolve in {namespace:?}");
@@ -1348,8 +1344,8 @@ mod tests {
             // Proves import resolution handles single, renamed, self, and underscore imports.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let s = ccx.intern("S");
@@ -1426,8 +1422,8 @@ mod tests {
             // Proves unsupported extern-root imports do not resolve through local lexical scopes.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let inner = ccx.intern("inner");
             let s = ccx.intern("S");
@@ -1475,8 +1471,8 @@ mod tests {
             // Proves self imports preserve ambiguous and missing parent-path failures.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let missing = ccx.intern("missing");
@@ -1538,8 +1534,8 @@ mod tests {
             // Proves chained reexports and glob imports respect visibility while resolving.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let c = ccx.intern("c");
@@ -1631,8 +1627,8 @@ mod tests {
             // Proves import resolution reports ambiguous glob results and missing names.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let c = ccx.intern("c");
@@ -1710,8 +1706,8 @@ mod tests {
             // Proves one import binding cannot resolve to different final targets by namespace.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let x = ccx.intern("X");
@@ -1763,8 +1759,8 @@ mod tests {
             // Proves imported enum variants populate both type and value namespaces.
             let ccx = CommonCx::default();
             let mut db = NameDb::default();
-            let root_scope = db.root_scope();
-            let crate_scope = db.crate_scope();
+            let root_scope = NameDb::ROOT_SCOPE;
+            let crate_scope = NameDb::CRATE_SCOPE;
             let a = ccx.intern("a");
             let b = ccx.intern("b");
             let e = ccx.intern("E");

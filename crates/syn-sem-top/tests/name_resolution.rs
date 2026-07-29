@@ -1,5 +1,8 @@
+use syn_sem_common::Str;
 use syn_sem_hir::ItemKind;
-use syn_sem_name::{AstNodeId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId};
+use syn_sem_name::{
+    AstNodeId, DefId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId,
+};
 use syn_sem_top::TopCx;
 
 mod files {
@@ -19,7 +22,7 @@ mod files {
         assert!(!semantics.hir().items().is_empty());
 
         let db = semantics.names();
-        let crate_scope = db.crate_scope();
+        let crate_scope = NameDb::CRATE_SCOPE;
 
         assert!(db
             .import_ids()
@@ -111,7 +114,7 @@ fn resolve_def<'tcx>(
     scope: ScopeId,
     namespace: Namespace,
     name: &str,
-) -> syn_sem_name::DefId {
+) -> DefId {
     let name = tcx.common.intern(name);
     let ResolveResult::Found(def) = resolve_lexical(db, scope, namespace, name) else {
         panic!("expected {name:?} to resolve in {namespace:?}");
@@ -134,7 +137,7 @@ fn resolve_lexical<'cx>(
     db: &NameDb<'cx>,
     mut scope: ScopeId,
     namespace: Namespace,
-    name: syn_sem_name::Name<'cx>,
+    name: Str<'cx>,
 ) -> ResolveResult {
     loop {
         if let Some(binding) = db.binding(scope, namespace, name) {
@@ -156,7 +159,10 @@ fn resolve_lexical<'cx>(
 mod phases {
     use super::*;
     use syn_sem_hir as hir;
-    use syn_sem_infer as infer;
+    use syn_sem_infer::{
+        GenericArg, InferConstFacts, InferDb, PrimitiveType, ProjectionNormalizationResult,
+        ProjectionType, Type, TypeId,
+    };
 
     // Validates the intended upper-phase consumption pattern:
     // traverse HIR source spine through syn-sem-hir and query definition/scope facts through
@@ -187,8 +193,7 @@ mod phases {
             .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
-        let infer =
-            infer::InferDb::analyze(&tcx.common, hir, names, &infer::InferConstFacts::default());
+        let infer = InferDb::analyze(&tcx.common, hir, names, &InferConstFacts::default());
 
         let entry = hir
             .items()
@@ -254,10 +259,10 @@ mod phases {
         let infer_usize_ty_id = infer
             .type_for_hir_type(usize_ty_id)
             .expect("signature parameter type should be lowered");
-        let infer::Type::Primitive(primitive) = infer[infer_usize_ty_id] else {
+        let Type::Primitive(primitive) = infer[infer_usize_ty_id] else {
             panic!("usize signature parameter should lower to primitive type");
         };
-        assert_eq!(primitive, infer::PrimitiveType::Usize);
+        assert_eq!(primitive, PrimitiveType::Usize);
 
         let generic = hir
             .items()
@@ -317,8 +322,7 @@ mod phases {
             .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
-        let infer =
-            infer::InferDb::analyze(&tcx.common, hir, names, &infer::InferConstFacts::default());
+        let infer = InferDb::analyze(&tcx.common, hir, names, &InferConstFacts::default());
 
         let output = hir
             .items()
@@ -337,7 +341,7 @@ mod phases {
         let projection = infer
             .type_for_hir_type(field_ty_id)
             .expect("Output.field type should be lowered");
-        let infer::ProjectionType {
+        let ProjectionType {
             assoc,
             self_,
             trait_,
@@ -348,15 +352,15 @@ mod phases {
         assert!(trait_.is_some());
         assert_eq!(names[*assoc].kind, DefKind::AssocType);
 
-        let infer::ProjectionNormalizationResult::Known(normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(normalized_ty_id) =
             infer.projection_normalization(projection)
         else {
             panic!("Output.field projection should have one normalization");
         };
-        let infer::Type::Primitive(primitive) = infer[normalized_ty_id] else {
+        let Type::Primitive(primitive) = infer[normalized_ty_id] else {
             panic!("normalized projection value should lower to primitive type");
         };
-        assert_eq!(primitive, infer::PrimitiveType::U32);
+        assert_eq!(primitive, PrimitiveType::U32);
     }
 
     #[test]
@@ -384,11 +388,11 @@ mod phases {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(
+        let infer = InferDb::analyze(
             &tcx.common,
             hir,
             semantics.names(),
-            &infer::InferConstFacts::default(),
+            &InferConstFacts::default(),
         );
 
         let output = hir
@@ -408,15 +412,15 @@ mod phases {
             .expect("Output.field type should be lowered");
         assert!(infer.projection(projection).is_some());
 
-        let infer::ProjectionNormalizationResult::Known(normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(normalized_ty_id) =
             infer.projection_normalization(projection)
         else {
             panic!("Output.field projection should have one normalization");
         };
-        let infer::Type::Primitive(primitive) = infer[normalized_ty_id] else {
+        let Type::Primitive(primitive) = infer[normalized_ty_id] else {
             panic!("normalized projection value should lower to primitive type");
         };
-        assert_eq!(primitive, infer::PrimitiveType::U32);
+        assert_eq!(primitive, PrimitiveType::U32);
     }
 
     #[test]
@@ -444,11 +448,11 @@ mod phases {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(
+        let infer = InferDb::analyze(
             &tcx.common,
             hir,
             semantics.names(),
-            &infer::InferConstFacts::default(),
+            &InferConstFacts::default(),
         );
 
         let result = hir
@@ -467,15 +471,15 @@ mod phases {
         let projection = infer
             .type_for_hir_type(field_ty_id)
             .expect("Result.field type should be lowered");
-        let infer::ProjectionNormalizationResult::Known(normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(normalized_ty_id) =
             infer.projection_normalization(projection)
         else {
             panic!("Result.field projection should have one normalization");
         };
-        let infer::Type::Primitive(primitive) = infer[normalized_ty_id] else {
+        let Type::Primitive(primitive) = infer[normalized_ty_id] else {
             panic!("normalized projection value should lower to primitive type");
         };
-        assert_eq!(primitive, infer::PrimitiveType::Bool);
+        assert_eq!(primitive, PrimitiveType::Bool);
     }
 
     #[test]
@@ -504,11 +508,11 @@ mod phases {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(
+        let infer = InferDb::analyze(
             &tcx.common,
             hir,
             semantics.names(),
-            &infer::InferConstFacts::default(),
+            &InferConstFacts::default(),
         );
 
         let result = hir
@@ -527,25 +531,25 @@ mod phases {
         let projection = infer
             .type_for_hir_type(field_ty_id)
             .expect("Result.field type should be lowered");
-        let infer::ProjectionNormalizationResult::Known(normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(normalized_ty_id) =
             infer.projection_normalization(projection)
         else {
             panic!("Result.field projection should have one normalization");
         };
-        let infer::Type::Path(path) = &infer[normalized_ty_id] else {
+        let Type::Path(path) = &infer[normalized_ty_id] else {
             panic!("normalized projection value should lower to path type");
         };
         let [segment] = path.path.segments.as_slice() else {
             panic!("Option<u32> should have one path segment");
         };
         assert_eq!(segment.name.as_ref(), "Option");
-        let [infer::GenericArg::Type(arg)] = segment.args.as_slice() else {
+        let [GenericArg::Type(arg)] = segment.args.as_slice() else {
             panic!("Option<u32> should have one type argument");
         };
-        let infer::Type::Primitive(primitive) = infer[*arg] else {
+        let Type::Primitive(primitive) = infer[*arg] else {
             panic!("Option argument should lower to primitive type");
         };
-        assert_eq!(primitive, infer::PrimitiveType::U32);
+        assert_eq!(primitive, PrimitiveType::U32);
     }
 
     #[test]
@@ -574,11 +578,11 @@ mod phases {
             )
             .unwrap();
         let hir = semantics.hir();
-        let mut infer = infer::InferDb::analyze(
+        let mut infer = InferDb::analyze(
             &tcx.common,
             hir,
             semantics.names(),
-            &infer::InferConstFacts::default(),
+            &InferConstFacts::default(),
         );
 
         let result = hir
@@ -597,7 +601,7 @@ mod phases {
         let normalized_ty_id = infer
             .normalized_type_for_hir_type(field_ty_id)
             .expect("Result.field type should be lowered");
-        assert_option_of(&infer, normalized_ty_id, infer::PrimitiveType::U32);
+        assert_option_of(&infer, normalized_ty_id, PrimitiveType::U32);
     }
 
     #[test]
@@ -632,11 +636,11 @@ mod phases {
             )
             .unwrap();
         let hir = semantics.hir();
-        let infer = infer::InferDb::analyze(
+        let infer = InferDb::analyze(
             &tcx.common,
             hir,
             semantics.names(),
-            &infer::InferConstFacts::default(),
+            &InferConstFacts::default(),
         );
 
         let result = hir
@@ -657,40 +661,36 @@ mod phases {
         let vec_projection = infer
             .type_for_hir_type(vec_field_ty_id)
             .expect("Result.vec_field type should be lowered");
-        let infer::ProjectionNormalizationResult::Known(vec_normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(vec_normalized_ty_id) =
             infer.projection_normalization(vec_projection)
         else {
             panic!("Vec projection should have one context-matched normalization");
         };
-        assert_option_of(&infer, vec_normalized_ty_id, infer::PrimitiveType::U32);
+        assert_option_of(&infer, vec_normalized_ty_id, PrimitiveType::U32);
 
         let box_projection = infer
             .type_for_hir_type(box_field_ty_id)
             .expect("Result.box_field type should be lowered");
-        let infer::ProjectionNormalizationResult::Known(box_normalized_ty_id) =
+        let ProjectionNormalizationResult::Known(box_normalized_ty_id) =
             infer.projection_normalization(box_projection)
         else {
             panic!("Box projection should have one context-matched normalization");
         };
-        assert_option_of(&infer, box_normalized_ty_id, infer::PrimitiveType::Bool);
+        assert_option_of(&infer, box_normalized_ty_id, PrimitiveType::Bool);
     }
 
-    fn assert_option_of(
-        infer: &infer::InferDb<'_>,
-        ty: infer::TypeId,
-        expected: infer::PrimitiveType,
-    ) {
-        let infer::Type::Path(path) = &infer[ty] else {
+    fn assert_option_of(infer: &InferDb<'_>, ty: TypeId, expected: PrimitiveType) {
+        let Type::Path(path) = &infer[ty] else {
             panic!("normalized projection value should lower to path type");
         };
         let [segment] = path.path.segments.as_slice() else {
             panic!("Option<T> should have one path segment");
         };
         assert_eq!(segment.name.as_ref(), "Option");
-        let [infer::GenericArg::Type(arg)] = segment.args.as_slice() else {
+        let [GenericArg::Type(arg)] = segment.args.as_slice() else {
             panic!("Option<T> should have one type argument");
         };
-        let infer::Type::Primitive(primitive) = infer[*arg] else {
+        let Type::Primitive(primitive) = infer[*arg] else {
             panic!("Option argument should lower to primitive type");
         };
         assert_eq!(primitive, expected);

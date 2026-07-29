@@ -1,5 +1,5 @@
 use syn_sem_common::MaybeResult;
-use syn_sem_hir as hir;
+use syn_sem_hir::Lit;
 pub use syn_sem_infer::ConstInt;
 use syn_sem_infer::PrimitiveType;
 
@@ -15,9 +15,9 @@ pub enum ConstValue {
 }
 
 impl ConstValue {
-    pub(crate) fn from_hir_lit(lit: &hir::Lit<'_>) -> MaybeResult<Self> {
+    pub(crate) fn from_hir_lit(lit: &Lit<'_>) -> MaybeResult<Self> {
         match lit {
-            hir::Lit::Int(lit) => {
+            Lit::Int(lit) => {
                 let value = lit.digits.as_ref().parse().map_err(|e| {
                     format!("ConstValue::from_hir_lit: invalid integer literal: {e}")
                 })?;
@@ -33,7 +33,7 @@ impl ConstValue {
                 }
                 Ok(Some(Self::Int(ConstInt { value, primitive })))
             }
-            hir::Lit::Float(lit) => {
+            Lit::Float(lit) => {
                 let value =
                     lit.digits.as_ref().parse().map_err(|e| {
                         format!("ConstValue::from_hir_lit: invalid float literal: {e}")
@@ -47,7 +47,7 @@ impl ConstValue {
                 };
                 Ok(Some(Self::Float(ConstFloat { value, primitive })))
             }
-            hir::Lit::Bool(value) => Ok(Some(Self::Bool(*value))),
+            Lit::Bool(value) => Ok(Some(Self::Bool(*value))),
         }
     }
 }

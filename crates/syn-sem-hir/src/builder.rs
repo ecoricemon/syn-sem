@@ -12,8 +12,8 @@ use crate::{
 };
 use std::ops::{Index, IndexMut};
 use syn_sem_ast::{self as ast, SourceInput};
-use syn_sem_common::ArenaBuilder;
-use syn_sem_name::{AstNodeId, DefId, DefKind, Name, NameDb, ResolveResult, ScopeId};
+use syn_sem_common::{ArenaBuilder, Str};
+use syn_sem_name::{AstNodeId, DefId, DefKind, NameDb, ResolveResult, ScopeId};
 
 struct HirArenaBuilder<'cx> {
     files: ArenaBuilder<FileId, File<'cx>>,
@@ -222,7 +222,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     /// Each root is attached to the crate root scope. This lets callers include well-known
     /// library files alongside the entry file when those files are not reached through `mod`.
     pub(crate) fn build(mut self, files: impl IntoIterator<Item = SourceInput<'cx>>) -> Hir<'cx> {
-        let crate_scope = Some(self.names.crate_scope());
+        let crate_scope = Some(NameDb::CRATE_SCOPE);
         for file in files {
             let id = self.hir.reserve_file();
             let items = self.collect_items(file.file.items, crate_scope);
@@ -675,7 +675,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
 
     fn collect_name_type(
         &mut self,
-        name: Name<'cx>,
+        name: Str<'cx>,
         scope: Option<ScopeId>,
         source: TypeSource,
     ) -> TypeId {

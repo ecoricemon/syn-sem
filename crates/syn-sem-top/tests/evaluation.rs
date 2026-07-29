@@ -1,6 +1,8 @@
 use syn_sem_eval::ConstValue;
-use syn_sem_hir::{self as hir, ItemKind};
-use syn_sem_infer::{self as infer, ArrayLen, PrimitiveType, Type};
+use syn_sem_hir::{self as hir, ConstArg, ExprKind, FieldId, GenericArg, Hir, ItemKind, TypeKind};
+use syn_sem_infer::{
+    self as infer, PrimitiveType, ProjectionNormalizationResult, ProjectionType, Type,
+};
 use syn_sem_name::DefKind;
 use syn_sem_top::{Semantics, TopCx};
 
@@ -37,27 +39,24 @@ fn assert_const_int(
     assert_eq!(value.primitive, expected_primitive, "{name} primitive");
 }
 
-fn assoc_const_arg_for_field<'cx>(
-    hir: &'cx hir::Hir<'cx>,
-    field: hir::FieldId,
-) -> &'cx hir::ConstArg<'cx> {
-    let hir::TypeKind::Path(field_path) = &hir[hir[field].ty].kind else {
+fn assoc_const_arg_for_field<'cx>(hir: &'cx Hir<'cx>, field: FieldId) -> &'cx ConstArg<'cx> {
+    let TypeKind::Path(field_path) = &hir[hir[field].ty].kind else {
         panic!("field should be a path type");
     };
     let qself = field_path
         .qself
         .as_ref()
         .expect("field should be a qualified projection");
-    let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+    let TypeKind::Path(self_path) = &hir[qself.self_].kind else {
         panic!("projection self type should be a path");
     };
-    let hir::GenericArg::Type(flag_ty) = &self_path.segments[0].args[0] else {
+    let GenericArg::Type(flag_ty) = &self_path.segments[0].args[0] else {
         panic!("Uses first argument should be a type");
     };
-    let hir::TypeKind::Path(flag_path) = &hir[*flag_ty].kind else {
+    let TypeKind::Path(flag_path) = &hir[*flag_ty].kind else {
         panic!("Flag argument should be a path type");
     };
-    let hir::GenericArg::AssocConst { value, .. } = &flag_path.segments[0].args[0] else {
+    let GenericArg::AssocConst { value, .. } = &flag_path.segments[0].args[0] else {
         panic!("Flag argument should carry an associated const equality");
     };
     value
@@ -158,7 +157,7 @@ fn keeps_unresolved_generic_const_values_unknown() {
         .types()
         .iter()
         .find_map(|ty| match ty.kind {
-            hir::TypeKind::Array {
+            TypeKind::Array {
                 len: hir::ArrayLen::Expr(expr),
                 ..
             } => Some(expr),
@@ -264,19 +263,19 @@ fn evaluates_all_required_const_expression_contexts() {
     let mut repeat_lengths = 0;
     for expr in hir.exprs() {
         match expr.kind {
-            hir::ExprKind::Repeat { len, .. } => {
+            ExprKind::Repeat { len, .. } => {
                 let Some(ConstValue::Int(value)) = semantics.eval().value_for_hir_expr(len) else {
                     panic!("repeat length should be evaluated");
                 };
                 assert_eq!(value.value, 11);
                 repeat_lengths += 1;
             }
-            hir::ExprKind::Block { .. } => {
+            ExprKind::Block { .. } => {
                 if semantics.eval().value_for_hir_expr(expr.id).is_some() {
                     const_arg_blocks += 1;
                 }
             }
-            hir::ExprKind::Const { .. } => {
+            ExprKind::Const { .. } => {
                 let Some(ConstValue::Int(value)) = semantics.eval().value_for_hir_expr(expr.id)
                 else {
                     panic!("const block should be evaluated");
@@ -315,7 +314,7 @@ fn feeds_evaluated_array_lengths_into_inference() {
     let mut saw_parenthesized = false;
 
     for expr in hir.exprs() {
-        let hir::ExprKind::Repeat { len, .. } = expr.kind else {
+        let ExprKind::Repeat { len, .. } = expr.kind else {
             continue;
         };
         let evaluated_len = semantics
@@ -324,8 +323,8 @@ fn feeds_evaluated_array_lengths_into_inference() {
             .unwrap()
             .expect("repeat length should be evaluated");
         lengths.push(evaluated_len);
-        saw_const_block |= matches!(hir[len].kind, hir::ExprKind::Const { .. });
-        saw_parenthesized |= matches!(hir[len].kind, hir::ExprKind::Paren { .. });
+        saw_const_block |= matches!(hir[len].kind, ExprKind::Const { .. });
+        saw_parenthesized |= matches!(hir[len].kind, ExprKind::Paren { .. });
 
         let ty = infer
             .type_for_hir_expr(expr.id)
@@ -338,7 +337,7 @@ fn feeds_evaluated_array_lengths_into_inference() {
             panic!("repeat expression should infer to an array type");
         };
         assert_eq!(infer[elem], Type::Primitive(PrimitiveType::Usize));
-        assert_eq!(inferred_len, ArrayLen::ConstUsize(evaluated_len));
+        assert_eq!(inferred_len, infer::ArrayLen::ConstUsize(evaluated_len));
     }
 
     lengths.sort_unstable();
@@ -387,21 +386,21 @@ fn uses_evaluated_const_expression_args_for_projection_matching() {
     let [field] = fields.as_slice() else {
         panic!("S should have one field");
     };
-    let hir::TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
+    let TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
         panic!("S.field should be a path type");
     };
     let const_arg_expr = field_path
         .qself
         .as_ref()
         .and_then(|qself| {
-            let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+            let TypeKind::Path(self_path) = &hir[qself.self_].kind else {
                 return None;
             };
             self_path.segments.first()
         })
         .and_then(|segment| segment.args.get(1))
         .and_then(|arg| {
-            let hir::GenericArg::Const(hir::ConstArg::Expr(expr)) = arg else {
+            let GenericArg::Const(ConstArg::Expr(expr)) = arg else {
                 return None;
             };
             Some(*expr)
@@ -414,13 +413,12 @@ fn uses_evaluated_const_expression_args_for_projection_matching() {
     let projection = infer
         .type_for_hir_type(hir[*field].ty)
         .expect("S.field type should be lowered");
-    let infer::ProjectionType { assoc, .. } = infer
+    let ProjectionType { assoc, .. } = infer
         .projection(projection)
         .expect("S.field should remain a projection path");
     assert_eq!(names[*assoc].kind, DefKind::AssocType);
 
-    let infer::ProjectionNormalizationResult::Known(value_ty) =
-        infer.projection_normalization(projection)
+    let ProjectionNormalizationResult::Known(value_ty) = infer.projection_normalization(projection)
     else {
         panic!("const generic projection should normalize");
     };
@@ -474,21 +472,21 @@ fn uses_evaluated_const_path_args_for_projection_matching() {
     let [field] = fields.as_slice() else {
         panic!("S should have one field");
     };
-    let hir::TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
+    let TypeKind::Path(field_path) = &hir[hir[*field].ty].kind else {
         panic!("S.field should be a path type");
     };
     let const_arg = field_path
         .qself
         .as_ref()
         .and_then(|qself| {
-            let hir::TypeKind::Path(self_path) = &hir[qself.self_].kind else {
+            let TypeKind::Path(self_path) = &hir[qself.self_].kind else {
                 return None;
             };
             self_path.segments.first()
         })
         .and_then(|segment| segment.args.get(1))
         .and_then(|arg| {
-            let hir::GenericArg::Const(arg) = arg else {
+            let GenericArg::Const(arg) = arg else {
                 return None;
             };
             Some(arg)
@@ -506,8 +504,7 @@ fn uses_evaluated_const_path_args_for_projection_matching() {
     let projection = infer
         .type_for_hir_type(hir[*field].ty)
         .expect("S.field type should be lowered");
-    let infer::ProjectionNormalizationResult::Known(value_ty) =
-        infer.projection_normalization(projection)
+    let ProjectionNormalizationResult::Known(value_ty) = infer.projection_normalization(projection)
     else {
         panic!("const path projection should normalize");
     };
@@ -589,12 +586,12 @@ fn uses_evaluated_associated_const_args_for_projection_matching() {
     let different = infer
         .type_for_hir_type(hir[*different_field].ty)
         .expect("different field should be lowered");
-    let infer::ProjectionNormalizationResult::Known(expr_ty) =
+    let ProjectionNormalizationResult::Known(expr_ty) =
         infer.projection_normalization(expr_projection)
     else {
         panic!("expr associated const projection should normalize");
     };
-    let infer::ProjectionNormalizationResult::Known(path_ty) =
+    let ProjectionNormalizationResult::Known(path_ty) =
         infer.projection_normalization(path_projection)
     else {
         panic!("path associated const projection should normalize");
@@ -610,7 +607,7 @@ fn uses_evaluated_associated_const_args_for_projection_matching() {
     assert_eq!(path_primitive, PrimitiveType::Bool);
     assert_eq!(
         infer.projection_normalization(different),
-        infer::ProjectionNormalizationResult::NoNormalization
+        ProjectionNormalizationResult::NoNormalization
     );
 }
 

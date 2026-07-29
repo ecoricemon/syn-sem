@@ -2,7 +2,7 @@
 
 use super::symbol::{Ctor, Rel, Var};
 use crate::{PrimitiveType, TypeClassId, TypeId};
-use syn_sem_common::InternedStr;
+use syn_sem_common::Str;
 use syn_sem_hir as hir;
 use syn_sem_name::DefId;
 
@@ -20,9 +20,9 @@ pub(crate) enum Atom<'cx> {
     Def(DefId),
     Expr(hir::ExprId),
     Prim(PrimitiveType),
-    Text(InternedStr<'cx>),
-    Int(InternedStr<'cx>),
-    Float(InternedStr<'cx>),
+    Text(Str<'cx>),
+    Int(Str<'cx>),
+    Float(Str<'cx>),
     Bool(bool),
     Usize(usize),
 }
@@ -81,8 +81,8 @@ impl From<PrimitiveType> for Atom<'_> {
     }
 }
 
-impl<'cx> From<InternedStr<'cx>> for Atom<'cx> {
-    fn from(value: InternedStr<'cx>) -> Self {
+impl<'cx> From<Str<'cx>> for Atom<'cx> {
+    fn from(value: Str<'cx>) -> Self {
         Self::Text(value)
     }
 }

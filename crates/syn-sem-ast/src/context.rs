@@ -3,7 +3,7 @@ use any_intern::Interned;
 use bumpalo::Bump;
 use std::{fmt::Display, io, mem, path::Path};
 use syn_locator::{LocateEntry, Locator};
-use syn_sem_common::{CommonCx, FilePath, FrozenMap, Result, SourceText};
+use syn_sem_common::{CommonCx, FrozenMap, Result, Str};
 
 /// Allocation and interning context used by the semantic AST.
 ///
@@ -14,7 +14,7 @@ pub struct SyntaxCx<'cx> {
     pub common: &'cx CommonCx,
     /// Arena used for dropless AST allocation.
     pub bump: Bump,
-    files: FrozenMap<FilePath<'cx>, Box<Source<'cx>>>,
+    files: FrozenMap<Str<'cx>, Box<Source<'cx>>>,
 }
 
 impl<'cx> SyntaxCx<'cx> {
@@ -32,8 +32,8 @@ impl<'cx> SyntaxCx<'cx> {
     /// Known-library sources skip syntax location because they do not need physical source spans.
     pub fn parse_file(
         &'cx self,
-        file_path: FilePath<'cx>,
-        source_text: SourceText<'cx>,
+        file_path: Str<'cx>,
+        source_text: Str<'cx>,
         kind: SourceKind,
     ) -> Result<()> {
         let syntax = Box::new(syn::parse_str::<syn::File>(source_text.as_ref())?);
@@ -59,17 +59,17 @@ impl<'cx> SyntaxCx<'cx> {
     }
 
     /// Returns whether `file_path` has already been parsed and stored.
-    pub fn has_source(&self, file_path: FilePath<'cx>) -> bool {
+    pub fn has_source(&self, file_path: Str<'cx>) -> bool {
         self.files.get(&file_path).is_some()
     }
 
     /// Returns the stored parsed source for `file_path`.
-    pub fn get_source(&'cx self, file_path: FilePath<'cx>) -> Option<&'cx Source<'cx>> {
+    pub fn get_source(&'cx self, file_path: Str<'cx>) -> Option<&'cx Source<'cx>> {
         self.files.get(&file_path)
     }
 
     /// Returns the stored parsed source for `file_path`.
-    pub fn lookup_source(&'cx self, file_path: FilePath<'cx>) -> Result<&'cx Source<'cx>> {
+    pub fn lookup_source(&'cx self, file_path: Str<'cx>) -> Result<&'cx Source<'cx>> {
         let source = self.get_source(file_path).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -91,15 +91,12 @@ impl<'cx> SyntaxCx<'cx> {
     /// Returns parsed module-tree inputs rooted at `entry_path`.
     ///
     /// Any missing out-of-line physical module files are read and parsed while walking the tree.
-    pub fn collect_module_tree(
-        &'cx self,
-        entry_path: FilePath<'cx>,
-    ) -> Result<Vec<SourceInput<'cx>>> {
+    pub fn collect_module_tree(&'cx self, entry_path: Str<'cx>) -> Result<Vec<SourceInput<'cx>>> {
         ModuleTreeBuilder::new(self).collect(entry_path)
     }
 
     /// Reads and parses a physical source file if it has not already been parsed.
-    pub fn read_physical_file(&'cx self, file_path: impl AsRef<Path>) -> Result<FilePath<'cx>> {
+    pub fn read_physical_file(&'cx self, file_path: impl AsRef<Path>) -> Result<Str<'cx>> {
         let file_path = self.common.read_physical_file(file_path.as_ref())?;
         if self.has_source(file_path) {
             return Ok(file_path);
@@ -157,7 +154,7 @@ pub struct Source<'cx> {
     /// Whether the source is physical or virtual.
     pub kind: SourceKind,
     /// Interned source text.
-    pub source_text: SourceText<'cx>,
+    pub source_text: Str<'cx>,
     locator: Option<Locator>,
     // `Locator` requires fixed addresses to the file.
     syntax: Box<syn::File>,
@@ -167,7 +164,7 @@ pub struct Source<'cx> {
 impl<'cx> Source<'cx> {
     fn new(
         kind: SourceKind,
-        source_text: SourceText<'cx>,
+        source_text: Str<'cx>,
         locator: Option<Locator>,
         syntax: Box<syn::File>,
         ast: AstFile<'cx>,

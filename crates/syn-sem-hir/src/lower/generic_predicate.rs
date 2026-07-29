@@ -1,5 +1,5 @@
 use syn_sem_ast as ast;
-use syn_sem_name::Name;
+use syn_sem_common::Str;
 
 pub(crate) fn generic_predicates<'cx>(
     generics: &'cx ast::Generics<'cx>,
@@ -43,7 +43,7 @@ pub(crate) struct TypeBoundPredicate<'cx> {
 }
 
 pub(crate) enum PredicateSubject<'cx> {
-    TypeParam(Name<'cx>),
+    TypeParam(Str<'cx>),
     Type(&'cx ast::Type<'cx>),
 }
 

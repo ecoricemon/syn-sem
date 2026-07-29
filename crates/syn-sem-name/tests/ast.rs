@@ -1,15 +1,12 @@
-use syn_sem_ast::{self as ast, SourceKind};
-use syn_sem_common::{CommonCx, SourceText};
-use syn_sem_name::{AstNodeId, DefId, DefKind, Name, NameDb, Namespace, ResolveResult, ScopeId};
+use syn_sem_ast::{Item, SourceInput, SourceKind, SyntaxCx};
+use syn_sem_common::{CommonCx, Str};
+use syn_sem_name::{AstNodeId, DefId, DefKind, NameDb, Namespace, ResolveResult, ScopeId};
 
-fn parse_input<'cx>(
-    scx: &'cx ast::SyntaxCx<'cx>,
-    source_text: SourceText<'cx>,
-) -> ast::SourceInput<'cx> {
+fn parse_input<'cx>(scx: &'cx SyntaxCx<'cx>, source_text: Str<'cx>) -> SourceInput<'cx> {
     let file_path = scx.common.intern("test.rs");
     scx.parse_file(file_path, source_text, SourceKind::Virtual)
         .unwrap();
-    ast::SourceInput {
+    SourceInput {
         file_path,
         file: scx.lookup_source(file_path).unwrap().ast(),
     }
@@ -19,7 +16,7 @@ fn expect_def<'cx>(
     db: &NameDb<'cx>,
     scope: ScopeId,
     namespace: Namespace,
-    name: Name<'cx>,
+    name: Str<'cx>,
     kind: DefKind,
 ) -> DefId {
     let result = match namespace {
@@ -40,7 +37,7 @@ fn expect_def<'cx>(
 fn resolves_function_generics_params_locals_and_local_items_from_ast() {
     // Proves AST collection resolves generics, params, locals, and local items by scope.
     let ccx = CommonCx::default();
-    let scx = ast::SyntaxCx::new(&ccx);
+    let scx = SyntaxCx::new(&ccx);
     let source_text = ccx.intern(
         r#"
         fn f<T, const N: usize>(x: T) {
@@ -55,7 +52,7 @@ fn resolves_function_generics_params_locals_and_local_items_from_ast() {
     );
     let input = parse_input(&scx, source_text);
     let fn_item = &input.file.items[0];
-    let ast::Item::Fn(fn_data) = fn_item else {
+    let Item::Fn(fn_data) = fn_item else {
         panic!("expected function item");
     };
     let fn_node = AstNodeId::from_ref(fn_item);
@@ -126,7 +123,7 @@ fn resolves_function_generics_params_locals_and_local_items_from_ast() {
 fn keeps_type_and_value_namespaces_separate_from_ast() {
     // Proves AST collection keeps same-spelled type and value names in separate namespaces.
     let ccx = CommonCx::default();
-    let scx = ast::SyntaxCx::new(&ccx);
+    let scx = SyntaxCx::new(&ccx);
     let source_text = ccx.intern(
         r#"
         fn f<T>(T: i32) {
@@ -135,7 +132,7 @@ fn keeps_type_and_value_namespaces_separate_from_ast() {
         "#,
     );
     let input = parse_input(&scx, source_text);
-    let ast::Item::Fn(fn_data) = &input.file.items[0] else {
+    let Item::Fn(fn_data) = &input.file.items[0] else {
         panic!("expected function item");
     };
     let block_node = AstNodeId::from_ref(&fn_data.block);

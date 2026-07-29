@@ -5,7 +5,8 @@
 //! literal primitives.
 
 use crate::TypeId;
-use syn_sem_hir as hir;
+use syn_sem_common::Str;
+use syn_sem_hir::{self as hir, ExprId};
 use syn_sem_name::DefId;
 
 /// Type shape used by inference.
@@ -208,7 +209,7 @@ pub struct Path<'cx> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PathSegment<'cx> {
     /// Segment name.
-    pub name: syn_sem_name::Name<'cx>,
+    pub name: Str<'cx>,
     /// Generic arguments on this segment.
     pub args: Vec<GenericArg<'cx>>,
 }
@@ -223,21 +224,21 @@ pub enum GenericArg<'cx> {
     /// Associated type equality.
     AssocType {
         /// Associated type name.
-        name: syn_sem_name::Name<'cx>,
+        name: Str<'cx>,
         /// Assigned type.
         ty: TypeId,
     },
     /// Associated const equality.
     AssocConst {
         /// Associated const name.
-        name: syn_sem_name::Name<'cx>,
+        name: Str<'cx>,
         /// Assigned const value.
         value: ConstArg<'cx>,
     },
     /// Associated type constraint.
     Constraint {
         /// Associated type name.
-        name: syn_sem_name::Name<'cx>,
+        name: Str<'cx>,
         /// Source bounds.
         bounds: Vec<TypeParamBound<'cx>>,
     },
@@ -249,7 +250,7 @@ pub enum GenericArg<'cx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayLen {
     /// Length is still a HIR expression.
-    Expr(hir::ExprId),
+    Expr(ExprId),
     /// Length is a known `usize` const value.
     ConstUsize(usize),
 }
@@ -272,19 +273,19 @@ pub enum ConstArg<'cx> {
         /// Source path.
         path: Path<'cx>,
         /// Resolved const item definition, when name resolution found one.
-        def: Option<syn_sem_name::DefId>,
+        def: Option<DefId>,
     },
     /// Const expression argument.
-    Expr(hir::ExprId),
+    Expr(ExprId),
 }
 
 /// Literal shape used by inference.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Lit<'cx> {
     /// Integer literal stored as normalized base-10 digits.
-    Int(syn_sem_common::InternedStr<'cx>),
+    Int(Str<'cx>),
     /// Floating-point literal stored as normalized base-10 digits.
-    Float(syn_sem_common::InternedStr<'cx>),
+    Float(Str<'cx>),
     /// Boolean literal.
     Bool(bool),
 }

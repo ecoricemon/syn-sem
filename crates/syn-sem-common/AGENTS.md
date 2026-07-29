@@ -15,8 +15,6 @@
 
 ## Model
 
-- Prefer lifetime-bearing aliases such as `InternedStr<'cx>`, `FilePath<'cx>`,
-  and `SourceText<'cx>`.
 - Do not expose or store `RawInterned<str>` in crate APIs.
 - Keep interned paths and text tied to their producing `CommonCx` or interner.
 

@@ -6,7 +6,7 @@ use crate::{
     Type, TypeId,
 };
 use std::collections::hash_map::Entry;
-use syn_sem_common::{Map, VecUniqueExt};
+use syn_sem_common::{Map, Str, VecUniqueExt};
 use syn_sem_hir as hir;
 use syn_sem_name as name;
 
@@ -20,7 +20,7 @@ pub(crate) struct TypeRelationCollector<'a, 'cx> {
 #[derive(Default)]
 struct CallTypeSubstitutions<'cx> {
     by_def: Map<name::DefId, TypeId>,
-    by_name: Map<name::Name<'cx>, TypeId>,
+    by_name: Map<Str<'cx>, TypeId>,
 }
 
 impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
@@ -369,11 +369,7 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
         })
     }
 
-    fn field_type(
-        &self,
-        struct_fields: &[hir::FieldId],
-        member: name::Name<'cx>,
-    ) -> Option<TypeId> {
+    fn field_type(&self, struct_fields: &[hir::FieldId], member: Str<'cx>) -> Option<TypeId> {
         struct_fields.iter().find_map(|field| {
             let field = &self.hir[*field];
             if field.name != member {
@@ -383,7 +379,7 @@ impl<'a, 'cx> TypeRelationCollector<'a, 'cx> {
         })
     }
 
-    fn generic_param_key(&self, ty: TypeId) -> Option<(name::DefId, Option<name::Name<'cx>>)> {
+    fn generic_param_key(&self, ty: TypeId) -> Option<(name::DefId, Option<Str<'cx>>)> {
         let Type::Path(path) = &self.types[ty] else {
             return None;
         };
