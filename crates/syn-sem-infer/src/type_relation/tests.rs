@@ -425,6 +425,42 @@ mod expressions {
     }
 
     #[test]
+    fn derives_assignment_expression_types() {
+        // Proves assignments align operand types and resolve the assignment expression to `()`.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (_names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            fn f() {
+                let mut x: usize = 0;
+                let unit = x = 1;
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(value_local), hir::lower::Stmt::Local(unit_local)] =
+            hir.lowered_blocks()[block].stmts.as_slice()
+        else {
+            panic!("expected two local statements");
+        };
+        let assign = unit_local
+            .init
+            .expect("unit local should have assignment initializer");
+        let hir::ExprKind::Assign { left, right } = hir[assign].kind else {
+            panic!("expected assignment initializer");
+        };
+
+        assert_usize(&infer, type_for_local(&infer, value_local));
+        assert_usize(&infer, infer.type_for_hir_expr(left));
+        assert_usize(&infer, infer.type_for_hir_expr(right));
+        assert_unit(&infer, infer.type_for_hir_expr(assign));
+        assert_unit(&infer, type_for_local(&infer, unit_local));
+    }
+
+    #[test]
     fn derives_repeat_expression_types_from_resolved_operand() {
         // Proves repeat expressions derive array type from value and length operands.
         let ccx = CommonCx::default();
@@ -1284,6 +1320,14 @@ fn assert_two_bindings(
 fn assert_primitive(infer: &InferDb<'_>, ty: Option<TypeId>, expected: PrimitiveType) {
     let ty_id = ty.expect("expected a resolved type");
     assert_eq!(infer[ty_id], Type::Primitive(expected));
+}
+
+fn assert_unit(infer: &InferDb<'_>, ty: Option<TypeId>) {
+    let ty_id = ty.expect("expected a resolved type");
+    let Type::Tuple { elems } = &infer[ty_id] else {
+        panic!("expected unit tuple type");
+    };
+    assert!(elems.is_empty());
 }
 
 fn first_return_operand_in_function(hir: &Hir<'_>, name: &str) -> hir::ExprId {

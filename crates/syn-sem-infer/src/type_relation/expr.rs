@@ -91,8 +91,8 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             }
             hir::ExprKind::Tuple { elems } => self.derive_tuple(expr.id, elems),
             hir::ExprKind::Unary { op, expr: inner } => self.derive_unary(expr.id, *op, *inner),
-            hir::ExprKind::Assign { .. }
-            | hir::ExprKind::Block { .. }
+            hir::ExprKind::Assign { left, right } => self.derive_assign(expr.id, *left, *right),
+            hir::ExprKind::Block { .. }
             | hir::ExprKind::Call { .. }
             | hir::ExprKind::Cast { .. }
             | hir::ExprKind::Closure { .. }
@@ -121,6 +121,11 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             len: ArrayLen::ConstUsize(elems.len()),
         });
         self.insert_expr_type_equality(expr, array)
+    }
+
+    fn derive_assign(&mut self, expr: hir::ExprId, left: hir::ExprId, right: hir::ExprId) -> bool {
+        let unit = self.types.intern_type(Type::Tuple { elems: Vec::new() });
+        self.insert_expr_equality(left, right) | self.insert_expr_type_equality(expr, unit)
     }
 
     fn derive_binary(
