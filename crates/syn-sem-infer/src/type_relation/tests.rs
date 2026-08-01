@@ -226,6 +226,107 @@ mod expressions {
     }
 
     #[test]
+    fn derives_struct_literal_expression_and_field_initializer_types() {
+        // Proves named struct literals derive the nominal result type and declared field types.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            struct Point {
+                x: usize,
+                y: bool,
+            }
+
+            fn f(x: usize) {
+                let p = Point { x, y: true };
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+            panic!("expected local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let hir::ExprKind::Struct { fields, rest, .. } = &hir[init].kind else {
+            panic!("expected struct initializer");
+        };
+        assert!(rest.is_none());
+
+        let x_field = fields
+            .iter()
+            .find(|field| field.member == ccx.intern("x"))
+            .expect("missing x field");
+        let y_field = fields
+            .iter()
+            .find(|field| field.member == ccx.intern("y"))
+            .expect("missing y field");
+        let ty = infer
+            .type_for_hir_expr(init)
+            .expect("struct literal should resolve to a nominal type");
+        let def = infer
+            .nominal_def(ty)
+            .expect("struct literal should resolve to a nominal def");
+
+        assert_eq!(names[def].kind, DefKind::Struct);
+        assert_eq!(names[def].name, Some(ccx.intern("Point")));
+        assert_eq!(infer.type_for_def(local.bindings[0]), Some(ty));
+        assert_usize(&infer, infer.type_for_hir_expr(x_field.expr));
+        assert_primitive(
+            &infer,
+            infer.type_for_hir_expr(y_field.expr),
+            PrimitiveType::Bool,
+        );
+    }
+
+    #[test]
+    fn derives_struct_literal_rest_operand_type() {
+        // Proves `..rest` is constrained to the same nominal type as the struct literal.
+        let ccx = CommonCx::default();
+        let scx = SyntaxCx::new(&ccx);
+        let (names, hir, infer) = analyze(
+            &ccx,
+            &scx,
+            r#"
+            struct Point {
+                x: usize,
+                y: bool,
+            }
+
+            fn f(base: Point) {
+                let point = Point { x: 1usize, ..base };
+            }
+            "#,
+        );
+
+        let block = function_block(&hir, "f");
+        let [hir::lower::Stmt::Local(local)] = hir.lowered_blocks()[block].stmts.as_slice() else {
+            panic!("expected local statement");
+        };
+        let init = local.init.expect("local should have initializer");
+        let hir::ExprKind::Struct { rest, .. } = &hir[init].kind else {
+            panic!("expected struct initializer");
+        };
+        let rest = rest.expect("expected struct rest operand");
+        let literal_ty = infer
+            .type_for_hir_expr(init)
+            .expect("struct literal should resolve to a nominal type");
+        let rest_ty = infer
+            .type_for_hir_expr(rest)
+            .expect("rest operand should resolve to the same nominal type");
+        let def = infer
+            .nominal_def(literal_ty)
+            .expect("struct literal should resolve to a nominal def");
+
+        assert_eq!(literal_ty, rest_ty);
+        assert_eq!(names[def].kind, DefKind::Struct);
+        assert_eq!(names[def].name, Some(ccx.intern("Point")));
+        assert_eq!(infer.type_for_def(local.bindings[0]), Some(literal_ty));
+    }
+
+    #[test]
     fn derives_tuple_expression_types_from_resolved_operands() {
         // Proves tuple expressions derive element types from resolved operands.
         let ccx = CommonCx::default();

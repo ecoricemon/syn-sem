@@ -4,7 +4,7 @@ use super::{TypeEqualityFact, TypeRelationDb, TypeSubject};
 use crate::{
     ArrayLen, GenericArg, InferConstFacts, InferTypes, Path, PathSegment, PathType,
     PathTypeResolution, PrimitiveType, ProjectionDb, ProjectionNormalizationResult,
-    ProjectionObligation, ProjectionType, QSelf, Type, TypeId,
+    ProjectionObligation, ProjectionType, QSelf, Type, TypeId, TypeLowerer,
 };
 use syn_sem_common::{CommonCx, Str, VecUniqueExt};
 use syn_sem_hir as hir;
@@ -86,6 +86,9 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             } => self.derive_reference(expr.id, *inner, *is_mut),
             hir::ExprKind::Field { base, member } => self.derive_field(expr.id, *base, *member),
             hir::ExprKind::Repeat { expr: elem, len } => self.derive_repeat(expr.id, *elem, *len),
+            hir::ExprKind::Struct { path, fields, rest } => {
+                self.derive_struct(expr.id, expr.scope, path, fields, *rest)
+            }
             hir::ExprKind::Tuple { elems } => self.derive_tuple(expr.id, elems),
             hir::ExprKind::Unary { op, expr: inner } => self.derive_unary(expr.id, *op, *inner),
             hir::ExprKind::Assign { .. }
@@ -99,8 +102,7 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             | hir::ExprKind::MethodCall { .. }
             | hir::ExprKind::Paren { .. }
             | hir::ExprKind::Path(_)
-            | hir::ExprKind::Return { .. }
-            | hir::ExprKind::Struct { .. } => false,
+            | hir::ExprKind::Return { .. } => false,
         }
     }
 
@@ -380,6 +382,34 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
         self.insert_expr_type_equality(expr, field_ty)
     }
 
+    fn derive_struct(
+        &mut self,
+        expr: hir::ExprId,
+        scope: Option<syn_sem_name::ScopeId>,
+        path: &hir::Path<'cx>,
+        fields: &[hir::ExprStructField<'cx>],
+        rest: Option<hir::ExprId>,
+    ) -> bool {
+        let ty = TypeLowerer::new(self.hir, self.names, self.types)
+            .lower_plain_path_as_type(&path.segments, scope);
+        let Some(struct_fields) = self.non_generic_struct_fields_for_type(ty) else {
+            return false;
+        };
+        let struct_fields = struct_fields.to_vec();
+
+        let mut changed = self.insert_expr_type_equality(expr, ty);
+        for field in fields {
+            let Some(field_ty) = self.field_type_from_fields(&struct_fields, field.member) else {
+                continue;
+            };
+            changed |= self.insert_expr_type_equality(field.expr, field_ty);
+        }
+        if let Some(rest) = rest {
+            changed |= self.insert_expr_type_equality(rest, ty);
+        }
+        changed
+    }
+
     fn derive_repeat(&mut self, expr: hir::ExprId, elem: hir::ExprId, len: hir::ExprId) -> bool {
         let Some(elem) = self.type_relations.type_for_hir_expr(elem) else {
             return false;
@@ -453,7 +483,12 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
     }
 
     fn field_type_for_base(&self, base_ty: TypeId, member: Str<'cx>) -> Option<TypeId> {
-        let def = self.types.nominal_def(base_ty)?;
+        let struct_fields = self.struct_fields_for_type(base_ty)?;
+        self.field_type_from_fields(struct_fields, member)
+    }
+
+    fn struct_fields_for_type(&self, ty: TypeId) -> Option<&[hir::FieldId]> {
+        let def = self.types.nominal_def(ty)?;
         self.hir.items().iter().find_map(|item| {
             if item.def != Some(def) {
                 return None;
@@ -461,13 +496,30 @@ impl<'a, 'cx> ExprTypeDeriver<'a, 'cx> {
             let hir::ItemKind::Struct { fields, .. } = &item.kind else {
                 return None;
             };
-            fields.iter().find_map(|field| {
-                let field = &self.hir[*field];
-                if field.name != member {
-                    return None;
-                }
-                self.types.type_for_hir_type(field.ty)
-            })
+            Some(fields.as_slice())
+        })
+    }
+
+    fn non_generic_struct_fields_for_type(&self, ty: TypeId) -> Option<&[hir::FieldId]> {
+        let def = self.types.nominal_def(ty)?;
+        self.hir.items().iter().find_map(|item| {
+            if item.def != Some(def) {
+                return None;
+            }
+            let hir::ItemKind::Struct { generics, fields } = &item.kind else {
+                return None;
+            };
+            generics.params.is_empty().then_some(fields.as_slice())
+        })
+    }
+
+    fn field_type_from_fields(&self, fields: &[hir::FieldId], member: Str<'cx>) -> Option<TypeId> {
+        fields.iter().find_map(|field| {
+            let field = &self.hir[*field];
+            if field.name != member {
+                return None;
+            }
+            self.types.type_for_hir_type(field.ty)
         })
     }
 
