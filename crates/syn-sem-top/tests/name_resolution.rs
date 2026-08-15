@@ -1,5 +1,6 @@
 use syn_sem_common::Str;
-use syn_sem_hir::ItemKind;
+use syn_sem_eval::ConstValue;
+use syn_sem_hir::{ArrayLen, ItemKind, TypeKind};
 use syn_sem_name::{
     AstNodeId, DefId, DefKind, ImportStatus, NameDb, Namespace, ResolveResult, ScopeId,
 };
@@ -77,6 +78,98 @@ mod files {
             resolve_kind(&tcx, db, e1_scope, Namespace::Type, "e3"),
             DefKind::Module
         );
+    }
+
+    #[test]
+    fn evaluates_constants_from_physical_modules_and_entry_array_lengths() {
+        let tcx = TopCx::default();
+        let semantics = tcx.analyze_file(fixture("a1.rs")).unwrap();
+
+        let c1_scope = get_module_scope(&tcx, semantics.names(), NameDb::CRATE_SCOPE, "c1");
+        let capacity = resolve_def(
+            &tcx,
+            semantics.names(),
+            c1_scope,
+            Namespace::Value,
+            "CAPACITY",
+        );
+        assert_eq!(semantics.names()[capacity].kind, DefKind::Const);
+
+        let c1_file = semantics
+            .hir()
+            .files()
+            .iter()
+            .find(|file| file.file_path.as_ref().ends_with("/c1.rs"))
+            .expect("c1.rs should have a HIR file");
+        assert_eq!(c1_file.scope, Some(c1_scope));
+        assert!(c1_file.items.iter().any(|item| {
+            let item = &semantics.hir()[*item];
+            item.def == Some(capacity) && item.parent_scope == Some(c1_scope)
+        }));
+
+        let c1_module = semantics
+            .hir()
+            .items()
+            .iter()
+            .find(|item| matches!(item.name, Some(name) if name.as_ref() == "c1"))
+            .expect("c1 module should have a HIR item");
+        let ItemKind::Mod {
+            external_file: Some(external_file),
+            ..
+        } = c1_module.kind
+        else {
+            panic!("c1 module should link to its external HIR file");
+        };
+        assert_eq!(external_file, c1_file.id);
+
+        assert!(
+            semantics.eval().value_for_const_def(capacity).is_some(),
+            "CAPACITY should be evaluated from the physical module file"
+        );
+
+        let buffer = semantics
+            .hir()
+            .items()
+            .iter()
+            .find(|item| matches!(item.name, Some(name) if name.as_ref() == "SizedBuffer"))
+            .expect("entry type alias should have a HIR item");
+        let ItemKind::Type { ty, .. } = buffer.kind else {
+            panic!("SizedBuffer should be a type alias");
+        };
+        let TypeKind::Array {
+            len: ArrayLen::Expr(len),
+            ..
+        } = semantics.hir()[ty].kind
+        else {
+            panic!("SizedBuffer should retain its array-length expression");
+        };
+
+        assert!(matches!(
+            semantics.eval().value_for_hir_expr(len),
+            Some(ConstValue::Int(value)) if value.value == 5
+        ));
+
+        let buffer = semantics
+            .hir()
+            .items()
+            .iter()
+            .find(|item| matches!(item.name, Some(name) if name.as_ref() == "NestedBuffer"))
+            .expect("entry type alias should have a HIR item");
+        let ItemKind::Type { ty, .. } = buffer.kind else {
+            panic!("NestedBuffer should be a type alias");
+        };
+        let TypeKind::Array {
+            len: ArrayLen::Expr(len),
+            ..
+        } = semantics.hir()[ty].kind
+        else {
+            panic!("NestedBuffer should retain its array-length expression");
+        };
+
+        assert!(matches!(
+            semantics.eval().value_for_hir_expr(len),
+            Some(ConstValue::Int(value)) if value.value == 7
+        ));
     }
 }
 

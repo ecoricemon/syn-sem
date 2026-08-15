@@ -5,3 +5,5 @@
 // Physical path: ~/c1.rs
 
 pub struct C1;
+
+pub const CAPACITY: usize = 2 + 3;

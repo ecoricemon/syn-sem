@@ -10,9 +10,13 @@ use crate::{
     AssocItemId, BlockId, ExprId, FieldId, FileId, ItemId, LocalId, PatId, SignatureId, StmtId,
     TypeId, VariantId,
 };
-use std::ops::{Index, IndexMut};
+use std::{
+    collections::BTreeMap,
+    ops::{Index, IndexMut},
+    path::PathBuf,
+};
 use syn_sem_ast::{self as ast, SourceInput};
-use syn_sem_common::{ArenaBuilder, Str};
+use syn_sem_common::{ArenaBuilder, Result, Set, Str};
 use syn_sem_name::{AstNodeId, DefId, DefKind, NameDb, ResolveResult, ScopeId};
 
 struct HirArenaBuilder<'cx> {
@@ -231,11 +235,133 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 File {
                     id,
                     file_path: file.file_path,
+                    scope: crate_scope,
                     items,
                 },
             );
         }
         Hir::from_arena(self.hir.finish())
+    }
+
+    /// Builds HIR for source files reached through Rust module declarations.
+    pub(crate) fn build_module_tree(
+        mut self,
+        files: impl IntoIterator<Item = SourceInput<'cx>>,
+        roots: impl IntoIterator<Item = Str<'cx>>,
+    ) -> Result<Hir<'cx>> {
+        let files = files
+            .into_iter()
+            .map(|input| (input.file_path, input))
+            .collect::<BTreeMap<_, _>>();
+        let mut seen = Set::default();
+        for root in roots {
+            let Some(file) = files.get(&root).copied() else {
+                return Err(format!("HIR module-tree input is missing root file: {root}").into());
+            };
+            let path = ast::ModulePath::from_entry_file(PathBuf::from(root.as_ref()));
+            self.collect_file_from_module_tree(
+                file,
+                Some(NameDb::CRATE_SCOPE),
+                &path,
+                &files,
+                &mut seen,
+            )?;
+        }
+        Ok(Hir::from_arena(self.hir.finish()))
+    }
+
+    fn collect_file_from_module_tree(
+        &mut self,
+        file: SourceInput<'cx>,
+        scope: Option<ScopeId>,
+        path: &ast::ModulePath,
+        files: &BTreeMap<Str<'cx>, SourceInput<'cx>>,
+        seen: &mut Set<Str<'cx>>,
+    ) -> Result<FileId> {
+        if !seen.insert(file.file_path) {
+            return Err(
+                format!("HIR module tree revisited source file: {}", file.file_path).into(),
+            );
+        }
+        let id = self.hir.reserve_file();
+        let items =
+            self.collect_items_from_module_tree(file.file.items, scope, path, files, seen)?;
+        self.hir.fill_file(
+            id,
+            File {
+                id,
+                file_path: file.file_path,
+                scope,
+                items,
+            },
+        );
+        Ok(id)
+    }
+
+    fn collect_items_from_module_tree(
+        &mut self,
+        items: &'cx [ast::Item<'cx>],
+        parent_scope: Option<ScopeId>,
+        path: &ast::ModulePath,
+        files: &BTreeMap<Str<'cx>, SourceInput<'cx>>,
+        seen: &mut Set<Str<'cx>>,
+    ) -> Result<Vec<ItemId>> {
+        items
+            .iter()
+            .map(|item| self.collect_item_from_module_tree(item, parent_scope, path, files, seen))
+            .collect()
+    }
+
+    fn collect_item_from_module_tree(
+        &mut self,
+        item: &'cx ast::Item<'cx>,
+        parent_scope: Option<ScopeId>,
+        path: &ast::ModulePath,
+        files: &BTreeMap<Str<'cx>, SourceInput<'cx>>,
+        seen: &mut Set<Str<'cx>>,
+    ) -> Result<ItemId> {
+        let id = self.collect_item_shallow(item, parent_scope);
+        let ast::Item::Mod(module) = item else {
+            return Ok(id);
+        };
+        let scope = self.hir[id]
+            .def
+            .and_then(|def| self.names.def_path_scope(def));
+        if let Some(children) = module.items {
+            let path = path.enter_inline_module(module)?;
+            let children =
+                self.collect_items_from_module_tree(children, scope, &path, files, seen)?;
+            let ItemKind::Mod { items, .. } = &mut self.hir[id].kind else {
+                unreachable!("module AST item must build a module HIR item");
+            };
+            *items = children;
+        } else if let Some(file) = self.child_file(path, module, files)? {
+            let path =
+                path.enter_external_module(module, PathBuf::from(file.file_path.as_ref()))?;
+            let external_file =
+                self.collect_file_from_module_tree(file, scope, &path, files, seen)?;
+            let ItemKind::Mod {
+                external_file: slot,
+                ..
+            } = &mut self.hir[id].kind
+            else {
+                unreachable!("module AST item must build a module HIR item");
+            };
+            *slot = Some(external_file);
+        }
+        Ok(id)
+    }
+
+    fn child_file(
+        &self,
+        path: &ast::ModulePath,
+        module: &ast::ItemMod<'cx>,
+        files: &BTreeMap<Str<'cx>, SourceInput<'cx>>,
+    ) -> Result<Option<SourceInput<'cx>>> {
+        Ok(path
+            .child_file_candidates(module)?
+            .into_iter()
+            .find_map(|candidate| files.get(candidate.to_str()?).copied()))
     }
 
     fn collect_items(
@@ -250,6 +376,30 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
     }
 
     fn collect_item(&mut self, item: &'cx ast::Item<'cx>, parent_scope: Option<ScopeId>) -> ItemId {
+        let id = self.collect_item_shallow(item, parent_scope);
+        if let ast::Item::Mod(item) = item {
+            let scope = self.hir[id]
+                .def
+                .and_then(|def| self.names.def_path_scope(def));
+            if let Some(children) = item.items {
+                let items = self.collect_items(children, scope);
+                if let ItemKind::Mod {
+                    items: module_items,
+                    ..
+                } = &mut self.hir[id].kind
+                {
+                    *module_items = items;
+                }
+            }
+        }
+        id
+    }
+
+    fn collect_item_shallow(
+        &mut self,
+        item: &'cx ast::Item<'cx>,
+        parent_scope: Option<ScopeId>,
+    ) -> ItemId {
         let id = self.hir.reserve_item();
         let def = self.def_for_item(item);
         let name = item.ident().map(|ident| ident.inner);
@@ -267,21 +417,6 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 kind,
             },
         );
-
-        if let ast::Item::Mod(item) = item {
-            let scope = def.and_then(|def| self.names.def_path_scope(def));
-            let Some(children) = item.items else {
-                return id;
-            };
-            let items = self.collect_items(children, scope);
-            if let ItemKind::Mod {
-                items: module_items,
-                ..
-            } = &mut self.hir[id].kind
-            {
-                *module_items = items;
-            }
-        }
 
         id
     }
@@ -349,6 +484,7 @@ impl<'a, 'cx> HirBuilder<'a, 'cx> {
                 ItemKind::Mod {
                     is_inline: item.is_inline,
                     scope,
+                    external_file: None,
                     items: Vec::new(),
                 }
             }

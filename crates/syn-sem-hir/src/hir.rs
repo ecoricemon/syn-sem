@@ -5,7 +5,7 @@ use crate::{
     SignatureId, StmtId, TypeId, VariantId,
 };
 use syn_sem_ast::{self as ast, SourceInput};
-use syn_sem_common::Str;
+use syn_sem_common::{Result, Str};
 use syn_sem_name::{DefId, ImportId, NameDb, ScopeId};
 
 /// HIR container produced for upper semantic phases.
@@ -27,8 +27,24 @@ pub struct Hir<'cx> {
 }
 
 impl<'cx> Hir<'cx> {
+    /// Builds HIR for explicitly supplied root files.
+    ///
+    /// Every supplied file is attached to the crate root scope. Use
+    /// [`Self::build_module_tree`] when inputs represent files reached through `mod` items.
     pub fn build(names: &NameDb<'cx>, files: impl IntoIterator<Item = SourceInput<'cx>>) -> Self {
         HirBuilder::new(names).build(files)
+    }
+
+    /// Builds HIR for module trees rooted at the given source files.
+    ///
+    /// Out-of-line module files are attached to the module scope established by `names`, while
+    /// inline module items remain children of their declaring module item.
+    pub fn build_module_tree(
+        names: &NameDb<'cx>,
+        files: impl IntoIterator<Item = SourceInput<'cx>>,
+        roots: impl IntoIterator<Item = Str<'cx>>,
+    ) -> Result<Self> {
+        HirBuilder::new(names).build_module_tree(files, roots)
     }
 
     pub(crate) fn from_arena(arena: HirArena<'cx>) -> Self {
@@ -247,6 +263,8 @@ pub struct File<'cx> {
     pub id: FileId,
     /// Interned file path.
     pub file_path: Str<'cx>,
+    /// Scope containing this file's top-level items.
+    pub scope: Option<ScopeId>,
     /// Top-level represented items in source order.
     pub items: Vec<ItemId>,
 }
@@ -311,6 +329,8 @@ pub enum ItemKind<'cx> {
         is_inline: bool,
         /// Scope used for module members, if linked from the current name-resolution data.
         scope: Option<ScopeId>,
+        /// HIR file containing this out-of-line module's items.
+        external_file: Option<FileId>,
         /// Inline child items represented under this module.
         items: Vec<ItemId>,
     },

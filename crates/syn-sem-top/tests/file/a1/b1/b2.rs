@@ -4,4 +4,6 @@
 // Logical path: ~::a1::b1::b2
 // Physical path: ~/a1/b1/b2.rs
 
+pub const DEPTH: usize = 7;
+
 pub struct B2;

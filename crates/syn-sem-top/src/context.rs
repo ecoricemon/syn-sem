@@ -1,6 +1,6 @@
 use crate::Semantics;
 use std::path::Path;
-use syn_sem_ast::{SourceInput, SourceKind, SyntaxCx};
+use syn_sem_ast::{SourceKind, SyntaxCx};
 use syn_sem_common::{CommonCx, Result, Str};
 use syn_sem_eval::{ConstValue, EvalDb, EvalPlan};
 use syn_sem_hir::Hir;
@@ -48,15 +48,8 @@ impl<'tcx> TopCx<'tcx> {
 
     fn analyze_entry(&'tcx self, entry_path: Str<'tcx>) -> Result<Semantics<'tcx>> {
         let name_inputs = self.syntax.collect_module_tree(entry_path)?;
-        let names = NameDb::build(name_inputs, [entry_path])?;
-        let file = self.syntax.lookup_source(entry_path)?.ast();
-        let hir = Hir::build(
-            &names,
-            [SourceInput {
-                file_path: entry_path,
-                file,
-            }],
-        );
+        let names = NameDb::build(name_inputs.iter().copied(), [entry_path])?;
+        let hir = Hir::build_module_tree(&names, name_inputs, [entry_path])?;
         let (infer, eval) = self.analyze_phases_to_fixed_point(&hir, &names)?;
         Ok(Semantics::new(self, names, hir, infer, eval))
     }

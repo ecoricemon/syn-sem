@@ -15,6 +15,9 @@ use b1::B1 as FromB1;
 mod c1;
 use c1::C1 as FromC1;
 
+type SizedBuffer = [u8; c1::CAPACITY];
+type NestedBuffer = [u8; b1::b2::DEPTH];
+
 // Logical path: ~::a1::dx
 // Physical path: ~/d1
 #[path = "d1"]
