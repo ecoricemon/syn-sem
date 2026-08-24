@@ -24,25 +24,30 @@ pub struct TopCx<'tcx> {
 }
 
 impl<'tcx> TopCx<'tcx> {
+    /// Stores virtual source text, parses it, and returns its interned file path.
+    pub fn add_virtual_file(&'tcx self, file_path: &str, source_text: &str) -> Result<Str<'tcx>> {
+        let file_path = self.common.insert_virtual_file(file_path, source_text)?;
+        let source_text = self
+            .common
+            .source_text(file_path)
+            .ok_or_else(|| format!("source file is not stored: {file_path}"))?;
+        self.syntax
+            .parse_file(file_path, source_text, SourceKind::Virtual)?;
+        Ok(file_path)
+    }
+
     /// Reads a physical entry file and analyzes its connected module tree.
     pub fn analyze_file(&'tcx self, entry_path: impl AsRef<Path>) -> Result<Semantics<'tcx>> {
         let entry_path = self.syntax.read_physical_file(entry_path)?;
         self.analyze_entry(entry_path)
     }
 
-    /// Parses a virtual entry file and analyzes its connected module tree.
-    pub fn analyze_virtual_file(
-        &'tcx self,
-        entry_path: &str,
-        source_text: &str,
-    ) -> Result<Semantics<'tcx>> {
-        let entry_path = self.common.insert_virtual_file(entry_path, source_text)?;
-        let source_text = self
-            .common
-            .source_text(entry_path)
-            .ok_or_else(|| format!("source file is not stored: {entry_path}"))?;
-        self.syntax
-            .parse_file(entry_path, source_text, SourceKind::Virtual)?;
+    /// Analyzes a stored virtual entry file and its connected module tree.
+    pub fn analyze_virtual_file(&'tcx self, entry_path: &str) -> Result<Semantics<'tcx>> {
+        let entry_path = self.common.intern_path(Path::new(entry_path));
+        if !self.syntax.has_source(entry_path) {
+            return Err(format!("virtual source file is not stored: {entry_path}").into());
+        }
         self.analyze_entry(entry_path)
     }
 

@@ -264,10 +264,9 @@ mod phases {
     fn consumes_hir_and_name_facts_together() {
         // Proves upper phases consume HIR traversal and name facts together.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "upper_phase.rs",
-                r#"
+        tcx.add_virtual_file(
+            "upper_phase.rs",
+            r#"
             pub(crate) mod inner {
                 pub fn helper() {}
             }
@@ -282,8 +281,9 @@ mod phases {
                 x
             }
             "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
+        let semantics = tcx.analyze_virtual_file("upper_phase.rs").unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
         let infer = InferDb::analyze(&tcx.common, hir, names, &InferConstFacts::default());
@@ -393,10 +393,9 @@ mod phases {
     fn consumes_projection_normalization_query_from_hir() {
         // Proves top-level semantics exposes projection normalization by HIR type.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "projection_normalization.rs",
-                r#"
+        tcx.add_virtual_file(
+            "projection_normalization.rs",
+            r#"
             struct Vec;
 
             trait Iterator {
@@ -411,7 +410,10 @@ mod phases {
                 field: <Vec as Iterator>::Item,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("projection_normalization.rs")
             .unwrap();
         let hir = semantics.hir();
         let names = semantics.names();
@@ -460,10 +462,9 @@ mod phases {
     fn consumes_generic_projection_normalization_query_from_hir() {
         // Proves top-level normalization handles generic projection values from HIR.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "generic_projection_normalization.rs",
-                r#"
+        tcx.add_virtual_file(
+            "generic_projection_normalization.rs",
+            r#"
             struct Vec<T>;
 
             trait Iterator {
@@ -478,7 +479,10 @@ mod phases {
                 field: <Vec<u32> as Iterator>::Item,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("generic_projection_normalization.rs")
             .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(
@@ -520,10 +524,9 @@ mod phases {
     fn normalizes_projection_with_multiple_generic_bindings() {
         // Proves top-level normalization selects the right binding among multiple generics.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "multi_generic_projection_normalization.rs",
-                r#"
+        tcx.add_virtual_file(
+            "multi_generic_projection_normalization.rs",
+            r#"
             struct Pair<K, V>;
 
             trait Select {
@@ -538,7 +541,10 @@ mod phases {
                 field: <Pair<u32, bool> as Select>::Output,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("multi_generic_projection_normalization.rs")
             .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(
@@ -579,10 +585,9 @@ mod phases {
     fn normalizes_nested_generic_projection_values() {
         // Proves top-level normalization substitutes nested generic projection values.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "nested_generic_projection_normalization.rs",
-                r#"
+        tcx.add_virtual_file(
+            "nested_generic_projection_normalization.rs",
+            r#"
             struct Vec<T>;
             struct Option<T>;
 
@@ -598,7 +603,10 @@ mod phases {
                 field: <Vec<u32> as Wrap>::Output,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("nested_generic_projection_normalization.rs")
             .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(
@@ -649,10 +657,9 @@ mod phases {
     fn consumes_recursive_normalization_query_from_hir() {
         // Proves top-level semantics recursively normalizes projections inside containers.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "recursive_projection_normalization.rs",
-                r#"
+        tcx.add_virtual_file(
+            "recursive_projection_normalization.rs",
+            r#"
             struct Vec<T>;
             struct Option<T>;
 
@@ -668,7 +675,10 @@ mod phases {
                 field: Option<<Vec<u32> as Iterator>::Item>,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("recursive_projection_normalization.rs")
             .unwrap();
         let hir = semantics.hir();
         let mut infer = InferDb::analyze(
@@ -701,10 +711,9 @@ mod phases {
     fn keeps_generic_substitutions_tied_to_impl_self_match() {
         // Proves top-level substitutions stay tied to their impl-self match context.
         let tcx = TopCx::default();
-        let semantics = tcx
-            .analyze_virtual_file(
-                "contextual_projection_substitution.rs",
-                r#"
+        tcx.add_virtual_file(
+            "contextual_projection_substitution.rs",
+            r#"
             struct Vec<T>;
             struct Box<T>;
             struct Option<T>;
@@ -726,7 +735,10 @@ mod phases {
                 box_field: <Box<bool> as Wrap>::Output,
             }
             "#,
-            )
+        )
+        .unwrap();
+        let semantics = tcx
+            .analyze_virtual_file("contextual_projection_substitution.rs")
             .unwrap();
         let hir = semantics.hir();
         let infer = InferDb::analyze(
@@ -787,5 +799,26 @@ mod phases {
             panic!("Option argument should lower to primitive type");
         };
         assert_eq!(primitive, expected);
+    }
+
+    #[test]
+    fn analyzes_multi_file_virtual_module_tree() {
+        let tcx = TopCx::default();
+        tcx.add_virtual_file("/virtual/sub.rs", "pub fn helper() -> usize { 42 }")
+            .unwrap();
+        tcx.add_virtual_file(
+            "/virtual/main.rs",
+            r#"
+            mod sub;
+            pub fn main() -> usize {
+                sub::helper()
+            }
+            "#,
+        )
+        .unwrap();
+
+        let semantics = tcx.analyze_virtual_file("/virtual/main.rs").unwrap();
+        let hir = semantics.hir();
+        assert_eq!(hir.files().len(), 2);
     }
 }

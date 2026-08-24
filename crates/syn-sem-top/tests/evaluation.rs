@@ -65,23 +65,23 @@ fn assoc_const_arg_for_field<'cx>(hir: &'cx Hir<'cx>, field: FieldId) -> &'cx Co
 #[test]
 fn evaluates_forward_chains_shared_dependencies_and_const_blocks() {
     let tcx = TopCx::default();
-    let semantics = tcx
-        .analyze_virtual_file(
-            "known_values.rs",
-            r#"
-            const BASE: usize = 2;
-            const LEFT: usize = BASE + 1;
-            const RIGHT: usize = BASE * 3;
-            const FORWARD: usize = LATER + 1;
-            const LATER: usize = 4;
-            const BLOCK: usize = const { LEFT + RIGHT };
-            const BOOL: bool = !false;
-            const SUFFIXED: usize = 3usize;
-            const CASTED: usize = (1 + 2) as usize;
-            type Bytes = [u8; BLOCK];
-            "#,
-        )
-        .unwrap();
+    tcx.add_virtual_file(
+        "known_values.rs",
+        r#"
+        const BASE: usize = 2;
+        const LEFT: usize = BASE + 1;
+        const RIGHT: usize = BASE * 3;
+        const FORWARD: usize = LATER + 1;
+        const LATER: usize = 4;
+        const BLOCK: usize = const { LEFT + RIGHT };
+        const BOOL: bool = !false;
+        const SUFFIXED: usize = 3usize;
+        const CASTED: usize = (1 + 2) as usize;
+        type Bytes = [u8; BLOCK];
+        "#,
+    )
+    .unwrap();
+    let semantics = tcx.analyze_virtual_file("known_values.rs").unwrap();
 
     assert_const_int(&semantics, "BASE", 2, PrimitiveType::Usize);
     assert_const_int(&semantics, "LEFT", 3, PrimitiveType::Usize);
@@ -100,17 +100,19 @@ fn evaluates_forward_chains_shared_dependencies_and_const_blocks() {
 #[test]
 fn keeps_cyclic_constants_and_their_dependents_unknown() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "cyclic_values.rs",
+        r#"
+        const DIRECT: usize = DIRECT;
+        const LEFT: usize = RIGHT;
+        const RIGHT: usize = LEFT;
+        const DOWNSTREAM: usize = LEFT + 1;
+        const KNOWN: usize = 3;
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "cyclic_values.rs",
-            r#"
-            const DIRECT: usize = DIRECT;
-            const LEFT: usize = RIGHT;
-            const RIGHT: usize = LEFT;
-            const DOWNSTREAM: usize = LEFT + 1;
-            const KNOWN: usize = 3;
-            "#,
-        )
+        .analyze_virtual_file("cyclic_values.rs")
         .expect("constant cycles should not make evaluation fail");
 
     assert_eq!(const_value(&semantics, "DIRECT"), None);
@@ -123,15 +125,17 @@ fn keeps_cyclic_constants_and_their_dependents_unknown() {
 #[test]
 fn keeps_failed_const_arithmetic_unknown_through_top_level_analysis() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "unknown_arithmetic.rs",
+        r#"
+        const DIV_ZERO: usize = 1 / 0;
+        const ADD_OVERFLOW: u128 = 340282366920938463463374607431768211455u128 + 1u128;
+        const TOO_WIDE: u8 = 300u8;
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "unknown_arithmetic.rs",
-            r#"
-            const DIV_ZERO: usize = 1 / 0;
-            const ADD_OVERFLOW: u128 = 340282366920938463463374607431768211455u128 + 1u128;
-            const TOO_WIDE: u8 = 300u8;
-            "#,
-        )
+        .analyze_virtual_file("unknown_arithmetic.rs")
         .expect("arithmetic failure should produce unknown values");
 
     assert_eq!(const_value(&semantics, "DIV_ZERO"), None);
@@ -142,15 +146,17 @@ fn keeps_failed_const_arithmetic_unknown_through_top_level_analysis() {
 #[test]
 fn keeps_unresolved_generic_const_values_unknown() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "generic_const.rs",
+        r#"
+        struct Array<const N: usize> {
+            bytes: [u8; N],
+        }
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "generic_const.rs",
-            r#"
-            struct Array<const N: usize> {
-                bytes: [u8; N],
-            }
-            "#,
-        )
+        .analyze_virtual_file("generic_const.rs")
         .expect("an unresolved generic constant should not make evaluation fail");
     let hir = semantics.hir();
     let len = hir
@@ -171,7 +177,7 @@ fn keeps_unresolved_generic_const_values_unknown() {
 #[test]
 fn ignores_unsupported_runtime_expressions_but_rejects_const_targets() {
     let tcx = TopCx::default();
-    tcx.analyze_virtual_file(
+    tcx.add_virtual_file(
         "runtime_only.rs",
         r#"
         fn runtime() {
@@ -180,27 +186,33 @@ fn ignores_unsupported_runtime_expressions_but_rejects_const_targets() {
         }
         "#,
     )
-    .expect("unsupported runtime-only expressions should not be evaluated");
+    .unwrap();
+    tcx.analyze_virtual_file("runtime_only.rs")
+        .expect("unsupported runtime-only expressions should not be evaluated");
 
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "unsupported_constant.rs",
+        r#"
+        const SAME: bool = 1 == 1;
+        "#,
+    )
+    .unwrap();
     let err = tcx
-        .analyze_virtual_file(
-            "unsupported_constant.rs",
-            r#"
-            const SAME: bool = 1 == 1;
-            "#,
-        )
+        .analyze_virtual_file("unsupported_constant.rs")
         .expect_err("an unsupported operation in a constant target should fail");
     assert!(err.to_string().contains("unsupported binary op Eq"));
 
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "unsupported_const_closure.rs",
+        r#"
+        const CLOSURE: bool = || true;
+        "#,
+    )
+    .unwrap();
     let err = tcx
-        .analyze_virtual_file(
-            "unsupported_const_closure.rs",
-            r#"
-            const CLOSURE: bool = || true;
-            "#,
-        )
+        .analyze_virtual_file("unsupported_const_closure.rs")
         .expect_err("an unsupported expression in a constant target should fail");
     assert!(err.to_string().contains("unsupported expression Closure"));
 }
@@ -208,54 +220,54 @@ fn ignores_unsupported_runtime_expressions_but_rejects_const_targets() {
 #[test]
 fn evaluates_all_required_const_expression_contexts() {
     let tcx = TopCx::default();
-    let semantics = tcx
-        .analyze_virtual_file(
-            "required_contexts.rs",
-            r#"
-            struct Array<const N: usize> {
-                bytes: [u8; N],
-            }
+    tcx.add_virtual_file(
+        "required_contexts.rs",
+        r#"
+        struct Array<const N: usize> {
+            bytes: [u8; N],
+        }
 
-            struct Holder<T> {
-                value: T,
-            }
+        struct Holder<T> {
+            value: T,
+        }
 
-            trait Trait<const N: usize> {
-                type Out;
-            }
+        trait Trait<const N: usize> {
+            type Out;
+        }
 
-            trait Flag {
-                const VALUE: usize;
-            }
+        trait Flag {
+            const VALUE: usize;
+        }
 
-            trait Container {
-                type Item;
-            }
+        trait Container {
+            type Item;
+        }
 
-            fn generic<const N: usize>() {}
+        fn generic<const N: usize>() {}
 
-            fn constrained<T>()
-            where
-                T: Trait<{ 1 + 2 }>,
-            {}
+        fn constrained<T>()
+        where
+            T: Trait<{ 1 + 2 }>,
+        {}
 
-            type Alias = Array<{ 3 + 4 }>;
-            type Assoc = Holder<Flag<VALUE = { 13 + 14 }>>;
+        type Alias = Array<{ 3 + 4 }>;
+        type Assoc = Holder<Flag<VALUE = { 13 + 14 }>>;
 
-            fn constrained_assoc<T>()
-            where
-                T: Container<Item: Trait<{ 15 + 16 }>>,
-            {}
+        fn constrained_assoc<T>()
+        where
+            T: Container<Item: Trait<{ 15 + 16 }>>,
+        {}
 
-            fn targets(value: Array<1>) {
-                let _repeat = [0; 5 + 6];
-                let _block = const { 7 + 8 };
-                generic::<{ 9 + 10 }>();
-                value.method::<{ 11 + 12 }>();
-            }
-            "#,
-        )
-        .unwrap();
+        fn targets(value: Array<1>) {
+            let _repeat = [0; 5 + 6];
+            let _block = const { 7 + 8 };
+            generic::<{ 9 + 10 }>();
+            value.method::<{ 11 + 12 }>();
+        }
+        "#,
+    )
+    .unwrap();
+    let semantics = tcx.analyze_virtual_file("required_contexts.rs").unwrap();
     let hir = semantics.hir();
 
     let mut const_arg_blocks = 0;
@@ -295,17 +307,19 @@ fn evaluates_all_required_const_expression_contexts() {
 #[test]
 fn feeds_evaluated_array_lengths_into_inference() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "array_length_fixed_point.rs",
+        r#"
+        fn arrays(value: usize) {
+            let plain = [value; 1 + 2];
+            let blocked = [value; const { 2 + 3 }];
+            let parenthesized = [value; (3 + 4)];
+        }
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "array_length_fixed_point.rs",
-            r#"
-            fn arrays(value: usize) {
-                let plain = [value; 1 + 2];
-                let blocked = [value; const { 2 + 3 }];
-                let parenthesized = [value; (3 + 4)];
-            }
-            "#,
-        )
+        .analyze_virtual_file("array_length_fixed_point.rs")
         .unwrap();
     let hir = semantics.hir();
     let infer = semantics.infer();
@@ -349,27 +363,29 @@ fn feeds_evaluated_array_lengths_into_inference() {
 #[test]
 fn uses_evaluated_const_expression_args_for_projection_matching() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "const_generic_projection.rs",
+        r#"
+        struct Array<T, const N: usize> {
+            field: T,
+        }
+
+        trait Trait {
+            type Out;
+        }
+
+        impl Trait for Array<u8, 3> {
+            type Out = u32;
+        }
+
+        struct S {
+            field: <Array<u8, { 1 + 2 }> as Trait>::Out,
+        }
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "const_generic_projection.rs",
-            r#"
-            struct Array<T, const N: usize> {
-                field: T,
-            }
-
-            trait Trait {
-                type Out;
-            }
-
-            impl Trait for Array<u8, 3> {
-                type Out = u32;
-            }
-
-            struct S {
-                field: <Array<u8, { 1 + 2 }> as Trait>::Out,
-            }
-            "#,
-        )
+        .analyze_virtual_file("const_generic_projection.rs")
         .unwrap();
     let hir = semantics.hir();
     let names = semantics.names();
@@ -431,29 +447,31 @@ fn uses_evaluated_const_expression_args_for_projection_matching() {
 #[test]
 fn uses_evaluated_const_path_args_for_projection_matching() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "const_path_projection.rs",
+        r#"
+        const N: usize = 1 + 2;
+
+        struct Array<T, const N: usize> {
+            field: T,
+        }
+
+        trait Trait {
+            type Out;
+        }
+
+        impl Trait for Array<u8, 3> {
+            type Out = u32;
+        }
+
+        struct S {
+            field: <Array<u8, N> as Trait>::Out,
+        }
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "const_path_projection.rs",
-            r#"
-            const N: usize = 1 + 2;
-
-            struct Array<T, const N: usize> {
-                field: T,
-            }
-
-            trait Trait {
-                type Out;
-            }
-
-            impl Trait for Array<u8, 3> {
-                type Out = u32;
-            }
-
-            struct S {
-                field: <Array<u8, N> as Trait>::Out,
-            }
-            "#,
-        )
+        .analyze_virtual_file("const_path_projection.rs")
         .unwrap();
     let hir = semantics.hir();
     let names = semantics.names();
@@ -517,33 +535,35 @@ fn uses_evaluated_const_path_args_for_projection_matching() {
 #[test]
 fn uses_evaluated_associated_const_args_for_projection_matching() {
     let tcx = TopCx::default();
+    tcx.add_virtual_file(
+        "assoc_const_projection.rs",
+        r#"
+        const NO: bool = false;
+
+        struct Uses<I, T>;
+
+        trait Flag {
+            const PANIC: bool;
+        }
+
+        trait Identity {
+            type Output;
+        }
+
+        impl<T> Identity for Uses<Flag<PANIC = false>, T> {
+            type Output = T;
+        }
+
+        struct Result {
+            expr: <Uses<Flag<PANIC = { false }>, u32> as Identity>::Output,
+            path: <Uses<Flag<PANIC = NO>, bool> as Identity>::Output,
+            different: <Uses<Flag<PANIC = true>, u32> as Identity>::Output,
+        }
+        "#,
+    )
+    .unwrap();
     let semantics = tcx
-        .analyze_virtual_file(
-            "assoc_const_projection.rs",
-            r#"
-            const NO: bool = false;
-
-            struct Uses<I, T>;
-
-            trait Flag {
-                const PANIC: bool;
-            }
-
-            trait Identity {
-                type Output;
-            }
-
-            impl<T> Identity for Uses<Flag<PANIC = false>, T> {
-                type Output = T;
-            }
-
-            struct Result {
-                expr: <Uses<Flag<PANIC = { false }>, u32> as Identity>::Output,
-                path: <Uses<Flag<PANIC = NO>, bool> as Identity>::Output,
-                different: <Uses<Flag<PANIC = true>, u32> as Identity>::Output,
-            }
-            "#,
-        )
+        .analyze_virtual_file("assoc_const_projection.rs")
         .unwrap();
     let hir = semantics.hir();
     let names = semantics.names();
@@ -614,23 +634,23 @@ fn uses_evaluated_associated_const_args_for_projection_matching() {
 #[test]
 fn evaluates_const_paths_through_renamed_reexports() {
     let tcx = TopCx::default();
-    let semantics = tcx
-        .analyze_virtual_file(
-            "imported_const.rs",
-            r#"
-            mod values {
-                pub const BASE: usize = 2;
-            }
+    tcx.add_virtual_file(
+        "imported_const.rs",
+        r#"
+        mod values {
+            pub const BASE: usize = 2;
+        }
 
-            mod middle {
-                pub use crate::values::BASE as REEXPORTED;
-            }
+        mod middle {
+            pub use crate::values::BASE as REEXPORTED;
+        }
 
-            use middle::REEXPORTED as RENAMED;
-            const RESULT: usize = RENAMED + 1;
-            "#,
-        )
-        .unwrap();
+        use middle::REEXPORTED as RENAMED;
+        const RESULT: usize = RENAMED + 1;
+        "#,
+    )
+    .unwrap();
+    let semantics = tcx.analyze_virtual_file("imported_const.rs").unwrap();
 
     assert_const_int(&semantics, "BASE", 2, PrimitiveType::Usize);
     assert_const_int(&semantics, "RESULT", 3, PrimitiveType::Usize);
